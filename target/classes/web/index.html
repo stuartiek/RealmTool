@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RMT Dashboard</title>
+    <style>
+        body { background: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; }
+        .accent { color: #00bcd4; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+        .card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 4px solid #00bcd4; }
+        .stat-bar { display: flex; gap: 20px; background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .console { background: #000; color: #0f0; height: 250px; overflow-y: scroll; padding: 10px; font-family: monospace; border-radius: 8px; margin-top: 20px; border: 1px solid #333; }
+        button { background: #333; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 4px; margin-right: 5px; }
+        button:hover { background: #444; }
+    </style>
+</head>
+<body>
+    <h1 class="accent">&#128737; RealmTool Professional</h1>
+    
+    <div class="stat-bar">
+        <div>TPS: <b id="tps">--</b></div>
+        <div>RAM: <b id="ram">--</b> MB</div>
+        <div>Usage: <b id="usage">--</b>%</div>
+    </div>
+
+    <div id="player-grid" class="grid"></div>
+
+    <div class="console" id="console"><div>-- Connected to Server Console --</div></div>
+
+    <script>
+    // 1. Set your API Key here (or use the prompt)
+    const apiKey = "qs1a_k7OacJtpUAN-9WIJuYVl0DNgght"; 
+    
+    // 2. Refresh Player List & System Stats
+    async function update() {
+        try {
+            const res = await fetch('/api/players');
+            const data = await res.json();
+            
+            document.getElementById("tps").innerText = data.tps;
+            document.getElementById("ram").innerText = data.usedMem + "/" + data.totalMem;
+            document.getElementById("usage").innerText = data.percentMem;
+
+            const grid = document.getElementById("player-grid");
+            grid.innerHTML = data.players.map(p => `
+                <div class="card">
+                    <h3>${p.name}</h3>
+                    <p>&#10084; ${p.health} | &#127830; ${p.food}</p>
+                    <button onclick="sendRemoteAction('warn', '${p.name}')">Warn</button>
+                    <button onclick="sendRemoteAction('kick', '${p.name}')">Kick</button>
+                    <button onclick="sendRemoteAction('heal', '${p.name}')">Heal</button>
+                </div>
+            `).join('');
+        } catch (e) { console.log("Connection to server lost..."); }
+    }
+
+    // 3. The Correct Action Function
+    async function sendRemoteAction(type, name) {
+        const reason = prompt(`Reason for ${type} on ${name}?`, "Remote Admin Action");
+        if (!reason) return;
+
+        const url = `/api/actions/${type}?player=${name}&reason=${encodeURIComponent(reason)}`;
+        
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 
+                // CRITICAL: This must match the 'Bearer' check in WebServer.java
+                'Authorization': 'Bearer ' + apiKey 
+            }
+        });
+
+        if (response.ok) {
+            alert("Success: " + type + " applied to " + name);
+        } else if (response.status === 401) {
+            alert("Error 401: Unauthorized. Check the API Key in config.yml!");
+        } else {
+            alert("Error: Server returned " + response.status);
+        }
+    }
+
+    // 4. WebSocket Console
+    const socket = new WebSocket(`ws://${location.host}/api/console`);
+    socket.onmessage = e => {
+        const el = document.getElementById("console");
+        el.innerHTML += `<div>${e.data}</div>`;
+        el.scrollTop = el.scrollHeight;
+    };
+
+    setInterval(update, 3000); // Auto-update every 3 seconds
+    update();
+</script>
+</body>
+</html>

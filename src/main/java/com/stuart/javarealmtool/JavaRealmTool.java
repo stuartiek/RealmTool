@@ -18,6 +18,7 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
+// FIX 1: Single, correct class declaration
 public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecutor {
 
     private File dataFile;
@@ -50,11 +51,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         createDataFile();
         setupConfig();
         setupPunishTeam();
+        
+        // Note: Ensure you have a 'WebServer.java' class in the same package!
+        // If not, comment out these two lines below to fix 'Cannot find symbol' errors.
         webServer = new WebServer(this);
         webServer.start();
+        
         getLogger().info("Drowsy Management Tool Fully Loaded!");
-    }
-    }
+    } 
+    // FIX 2: I removed the extra '}' that was here.
 
     @Override
     public void onDisable() {
@@ -166,7 +171,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
                     if (target != null) target.kickPlayer(ChatColor.RED + "Banned: " + reason);
                     break;
             }
-            if (ctx.targetName != null) {
+            if (ctx.targetName != null && ctx.type != ActionType.ADD_NOTE) {
                 p.sendMessage(ChatColor.AQUA + "Action applied to " + ctx.targetName + " for: " + reason);
             }
             // Add Note Logic
