@@ -1,0 +1,18 @@
+name: DrowsyManagementTool
+version: 1.0
+main: com.stuart.javarealmtool.JavaRealmTool
+api-version: 1.21
+commands:
+  rmt:
+    description: Open the Drowsy Management Tool
+    usage: /rmt
+  ticket:
+    description: Create a support ticket
+    usage: /ticket new <message>
+permissions:
+  rmt.ticket.create:
+    description: Allows creating tickets
+    default: true
+  rmt.admin:
+    description: Allows use of the RMT
+    default: op
