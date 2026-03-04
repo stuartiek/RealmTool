@@ -3,7 +3,6 @@ package com.stuart.javarealmtool;
 import org.bukkit.*;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.*;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.block.*;
@@ -28,9 +27,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     private WebServer webServer;
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
-    private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
-    private final Map<UUID, UUID> tpaRequests = new HashMap<>(); // Requester -> Target
-    private final Map<UUID, String> pendingWarpDelete = new HashMap<>(); // Player -> WarpName
 
     // --- GUI STRINGS ---
     private final String GUI_MAIN = ChatColor.AQUA + "Drowsy Management Tool";
@@ -100,6 +96,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         }
         this.apiKey = config.getString("api-key");
     }
+
+    public String getApiKey() { return apiKey; }
 
     private void createDataFile() {
         dataFile = new File(getDataFolder(), "data.yml");
@@ -176,6 +174,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             dataConfig.set(path + ".player", p.getName());
             dataConfig.set(path + ".message", String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
             dataConfig.set(path + ".status", "open");
+            dataConfig.set(path + ".priority", "medium");
+            dataConfig.set(path + ".category", "other");
             dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
             dataConfig.set("tickets.next_id", id + 1);
             saveDataFile();
@@ -1095,35 +1095,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             long min = (dataConfig.getLong("punishments." + e.getPlayer().getUniqueId()) - System.currentTimeMillis()) / 60000;
             e.getPlayer().sendMessage(ChatColor.RED + "You are punished for " + min + " more minutes.");
         }
-        trackPlayerIP(e.getPlayer().getUniqueId(), e.getPlayer().getName(), e.getPlayer().getAddress().getAddress().getHostAddress());
-        trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), true);
-        logAction("System", "player_joined", e.getPlayer().getName());
-
-        // Give Tool Logic
-        if (e.getPlayer().hasPermission("dmt.admin")) {
-            boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents())
-                .anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
-            if (!hasTool) {
-                ItemStack tool = new ItemStack(Material.DIAMOND);
-                ItemMeta m = tool.getItemMeta();
-                m.setDisplayName(TOOL_NAME);
-                m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true); 
-                m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-                tool.setItemMeta(m);
-                e.getPlayer().getInventory().addItem(tool);
-            }
-        }
-    }
-
-    @EventHandler
-    public void onQuit(PlayerQuitEvent e) {
-        trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
-        logAction("System", "player_left", e.getPlayer().getName());
-    }
-
-    @EventHandler
-    public void onChat(AsyncPlayerChatEvent e) {
-        addChatLog(e.getPlayer().getName(), e.getMessage());
     }
 
     // --- HELPERS ---
@@ -1155,112 +1126,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         if (p != null) {
             punishTeam.removeEntry(p.getName());
             p.sendMessage(ChatColor.GREEN + "Punishment lifted.");
-            
-            // Teleport back to stored location
-            Location playerLoc = getLoc("player_location." + u);
-            if (playerLoc != null) {
-                p.teleport(playerLoc);
-                p.sendMessage(ChatColor.GREEN + "You have been teleported back.");
-                dataConfig.set("player_location." + u, null);
-                saveDataFile();
-            }
         }
     }
-
-    public void logAction(String actor, String action, String target) {
-        if (!dataConfig.contains("action_history")) dataConfig.set("action_history", new ArrayList<>());
-        List<String> history = dataConfig.getStringList("action_history");
-        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        history.add(ts + " | " + actor + " " + action + " " + target);
-        if (history.size() > 500) history.remove(0);
-        dataConfig.set("action_history", history);
-        saveDataFile();
-    }
-
-    public void addWarning(UUID u, String reason) {
-        String key = "warnings." + u;
-        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
-        List<String> warnings = dataConfig.getStringList(key);
-        String ts = new SimpleDateFormat("HH:mm").format(new Date());
-        warnings.add(reason + " (" + ts + ")");
-        dataConfig.set(key, warnings);
-        saveDataFile();
-    }
-
-    public void addChatLog(String player, String message) {
-        if (!dataConfig.contains("chat_history")) dataConfig.set("chat_history", new ArrayList<>());
-        List<String> history = dataConfig.getStringList("chat_history");
-        String ts = new SimpleDateFormat("HH:mm").format(new Date());
-        history.add(ts + " " + player + ": " + message);
-        if (history.size() > 100) history.remove(0);
-        dataConfig.set("chat_history", history);
-        saveDataFile();
-    }
-
-    // --- NEW FEATURES ---
-    public void trackPlayerIP(UUID uuid, String playerName, String ip) {
-        String key = "ips." + uuid;
-        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
-        List<String> ips = dataConfig.getStringList(key);
-        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + ip;
-        ips.add(entry);
-        if (ips.size() > 50) ips.remove(0);
-        dataConfig.set(key, ips);
-        saveDataFile();
-    }
-
-    public void trackSession(UUID uuid, String playerName, boolean login) {
-        String key = "sessions." + uuid;
-        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
-        List<String> sessions = dataConfig.getStringList(key);
-        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
-        sessions.add((login ? "LOGIN" : "LOGOUT") + " " + ts);
-        if (sessions.size() > 100) sessions.remove(0);
-        dataConfig.set(key, sessions);
-        saveDataFile();
-    }
-
-    public void mutePlayer(UUID uuid, String reason) {
-        if (!dataConfig.contains("muted")) dataConfig.set("muted", new ArrayList<>());
-        List<String> muted = dataConfig.getStringList("muted");
-        muted.add(uuid + "|" + reason + "|" + System.currentTimeMillis());
-        dataConfig.set("muted", muted);
-        saveDataFile();
-    }
-
-    public void unmutePlayer(UUID uuid) {
-        if (!dataConfig.contains("muted")) return;
-        List<String> muted = dataConfig.getStringList("muted");
-        muted.removeIf(s -> s.startsWith(uuid.toString()));
-        dataConfig.set("muted", muted);
-        saveDataFile();
-    }
-
-    public boolean isMuted(UUID uuid) {
-        if (!dataConfig.contains("muted")) return false;
-        List<String> muted = dataConfig.getStringList("muted");
-        return muted.stream().anyMatch(s -> s.startsWith(uuid.toString()));
-    }
-
-    public void saveTemplate(String name, String content) {
-        dataConfig.set("templates." + name, content);
-        saveDataFile();
-    }
-
-    public String loadTemplate(String name) {
-        return dataConfig.getString("templates." + name, "");
-    }
-
-    public void scheduleRestart(long delayMinutes) {
-        long time = System.currentTimeMillis() + (delayMinutes * 60000);
-        dataConfig.set("restart_scheduled", time);
-        saveDataFile();
-    }
-
-    public void addPlayerIp(UUID uuid, String ip) {
-        trackPlayerIP(uuid, Bukkit.getOfflinePlayer(uuid).getName(), ip);
-    }
-
     private void saveLog(Location loc, String msg) {
         if (loc == null) return;
         String k = "logs." + loc.getWorld().getName() + "," + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
@@ -1284,73 +1151,4 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
 
     private ItemStack createGuiItem(Material m, String n) { ItemStack i = new ItemStack(m); ItemMeta im = i.getItemMeta(); im.setDisplayName(n); i.setItemMeta(im); return i; }
     private ItemStack createGuiItem(Material m, String n, List<String> l) { ItemStack i = createGuiItem(m, n); ItemMeta im = i.getItemMeta(); im.setLore(l); i.setItemMeta(im); return i; }
-    
-    private void fillGUIBorders(Inventory gui) {
-        // Fill edges with black glass panes
-        for (int i = 0; i < 9; i++) {
-            if (gui.getItem(i) == null) gui.setItem(i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(45 + i) == null) gui.setItem(45 + i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-        }
-        for (int i = 1; i < 5; i++) {
-            if (gui.getItem(i * 9) == null) gui.setItem(i * 9, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(i * 9 + 8) == null) gui.setItem(i * 9 + 8, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-        }
-    }
-
-    private void fillGUIEmpty(Inventory gui) {
-        // Fill all empty spaces with gray glass panes
-        for (int i = 0; i < gui.getSize(); i++) {
-            if (gui.getItem(i) == null) {
-                gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
-            }
-        }
-    }
-
-    private void addItemToGrid(Inventory gui, ItemStack item) {
-        // Add items in a grid pattern: slots 11-17, 20-26, 29-35, 38-44
-        int[] slotOffsets = {11, 20, 29, 38};
-        int slotIndex = 0;
-        int rowIndex = 0;
-        
-        for (int i = 0; i < gui.getSize(); i++) {
-            if (gui.getItem(i) == null) {
-                if (rowIndex < slotOffsets.length) {
-                    int baseSlot = slotOffsets[rowIndex];
-                    int row = baseSlot / 9;
-                    int col = baseSlot % 9;
-                    int targetSlot = row * 9 + col + slotIndex;
-                    if (slotIndex < 7) {
-                        gui.setItem(targetSlot, item);
-                        slotIndex++;
-                        if (slotIndex == 7) {
-                            slotIndex = 0;
-                            rowIndex++;
-                        }
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    private int gridSlotIndex = 0;
-    private int gridRowIndex = 0;
-
-    private void resetGridSlots() {
-        gridSlotIndex = 0;
-        gridRowIndex = 0;
-    }
-
-    private int getNextGridSlot() {
-        if (gridRowIndex >= 4) return -1;
-        int[] slotOffsets = {10, 19, 28, 37};
-        int baseSlot = slotOffsets[gridRowIndex];
-        int slot = baseSlot + gridSlotIndex;
-        gridSlotIndex++;
-        if (gridSlotIndex >= 7) {
-            gridSlotIndex = 0;
-            gridRowIndex++;
-        }
-        return slot;
-    }
 }
