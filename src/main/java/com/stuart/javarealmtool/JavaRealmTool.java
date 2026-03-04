@@ -3,6 +3,7 @@ package com.stuart.javarealmtool;
 import org.bukkit.*;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.*;
+import org.bukkit.configuration.*;
 import org.bukkit.entity.Player;
 import org.bukkit.event.*;
 import org.bukkit.event.block.*;
@@ -27,6 +28,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     private WebServer webServer;
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
+    private final Map<UUID, Long> loginTimes = new HashMap<>();
 
     // --- GUI STRINGS ---
     private final String GUI_MAIN = ChatColor.AQUA + "Drowsy Management Tool";
@@ -137,6 +139,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             dataConfig.set(path + ".player", p.getName());
             dataConfig.set(path + ".message", String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
             dataConfig.set(path + ".status", "open");
+            dataConfig.set(path + ".priority", "medium");
+            dataConfig.set(path + ".category", "other");
             dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
             dataConfig.set("tickets.next_id", id + 1);
             saveDataFile();
@@ -409,6 +413,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             long min = (dataConfig.getLong("punishments." + e.getPlayer().getUniqueId()) - System.currentTimeMillis()) / 60000;
             e.getPlayer().sendMessage(ChatColor.RED + "You are punished for " + min + " more minutes.");
         }
+        loginTimes.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        trackPlayerIP(e.getPlayer().getUniqueId(), e.getPlayer().getName(), e.getPlayer().getAddress().getAddress().getHostAddress());
+        trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), true);
+        logAction("System", "player_joined", e.getPlayer().getName());
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        UUID uuid = e.getPlayer().getUniqueId();
+        if (loginTimes.containsKey(uuid)) {
+            long sessionDuration = System.currentTimeMillis() - loginTimes.remove(uuid);
+            long totalPlaytime = dataConfig.getLong("playtime." + uuid, 0) + sessionDuration;
+            dataConfig.set("playtime." + uuid, totalPlaytime);
+            saveDataFile();
+        }
+        trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
+        logAction("System", "player_left", e.getPlayer().getName());
     }
 
     @EventHandler
@@ -465,6 +486,110 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         dataConfig.set("chat_history", history);
         saveDataFile();
     }
+
+    // --- NEW FEATURES ---
+    public void trackPlayerIP(UUID uuid, String playerName, String ip) {
+        String key = "ips." + uuid;
+        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
+        List<String> ips = dataConfig.getStringList(key);
+        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + ip;
+        ips.add(entry);
+        if (ips.size() > 50) ips.remove(0);
+        dataConfig.set(key, ips);
+        saveDataFile();
+    }
+
+    public void trackSession(UUID uuid, String playerName, boolean login) {
+        String key = "sessions." + uuid;
+        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
+        List<String> sessions = dataConfig.getStringList(key);
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        sessions.add((login ? "LOGIN" : "LOGOUT") + " " + ts);
+        if (sessions.size() > 100) sessions.remove(0);
+        dataConfig.set(key, sessions);
+        saveDataFile();
+    }
+
+    public void mutePlayer(UUID uuid, String reason) {
+        if (!dataConfig.contains("muted")) dataConfig.set("muted", new ArrayList<>());
+        List<String> muted = dataConfig.getStringList("muted");
+        muted.add(uuid + "|" + reason + "|" + System.currentTimeMillis());
+        dataConfig.set("muted", muted);
+        saveDataFile();
+    }
+
+    public void unmutePlayer(UUID uuid) {
+        if (!dataConfig.contains("muted")) return;
+        List<String> muted = dataConfig.getStringList("muted");
+        muted.removeIf(s -> s.startsWith(uuid.toString()));
+        dataConfig.set("muted", muted);
+        saveDataFile();
+    }
+
+    public boolean isMuted(UUID uuid) {
+        if (!dataConfig.contains("muted")) return false;
+        List<String> muted = dataConfig.getStringList("muted");
+        return muted.stream().anyMatch(s -> s.startsWith(uuid.toString()));
+    }
+
+    public void saveTemplate(String name, String content) {
+        dataConfig.set("templates." + name, content);
+        saveDataFile();
+    }
+
+    public String loadTemplate(String name) {
+        return dataConfig.getString("templates." + name, "");
+    }
+
+    public void scheduleRestart(long delayMinutes) {
+        long time = System.currentTimeMillis() + (delayMinutes * 60000);
+        dataConfig.set("restart_scheduled", time);
+        saveDataFile();
+    }
+
+    public void addPlayerIp(UUID uuid, String ip) {
+        trackPlayerIP(uuid, Bukkit.getOfflinePlayer(uuid).getName(), ip);
+    }
+
+    // --- ENHANCED TICKET SYSTEM ---
+    public void updateTicketField(int ticketId, String field, Object value) {
+        dataConfig.set("tickets." + ticketId + "." + field, value);
+        saveDataFile();
+    }
+
+    public void addTicketResponse(int ticketId, String admin, String message) {
+        String responseKey = "tickets." + ticketId + ".responses." + System.currentTimeMillis();
+        dataConfig.set(responseKey + ".admin", admin);
+        dataConfig.set(responseKey + ".message", message);
+        dataConfig.set(responseKey + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+        saveDataFile();
+    }
+
+    public void resolveTicket(int ticketId, String reason) {
+        updateTicketField(ticketId, "status", "closed");
+        updateTicketField(ticketId, "resolution_reason", reason);
+        updateTicketField(ticketId, "resolved_at", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+    }
+
+    public Map<String, Object> getTicketData(int ticketId) {
+        ConfigurationSection section = dataConfig.getConfigurationSection("tickets." + ticketId);
+        if (section == null) return new HashMap<>();
+        Map<String, Object> data = new HashMap<>();
+        data.put("id", ticketId);
+        data.put("player", section.getString("player", "Unknown"));
+        data.put("message", section.getString("message", ""));
+        data.put("status", section.getString("status", "open"));
+        data.put("priority", section.getString("priority", "medium"));
+        data.put("category", section.getString("category", "other"));
+        data.put("assignee", section.getString("assignee", ""));
+        data.put("timestamp", section.getString("timestamp", ""));
+        data.put("resolved_at", section.getString("resolved_at", ""));
+        data.put("resolution_reason", section.getString("resolution_reason", ""));
+        data.put("responses", section.getConfigurationSection("responses") != null ? 
+            section.getConfigurationSection("responses").getValues(false) : new HashMap<>());
+        return data;
+    }
+
     private void saveLog(Location loc, String msg) {
         if (loc == null) return;
         String k = "logs." + loc.getWorld().getName() + "," + loc.getBlockX() + "," + loc.getBlockY() + "," + loc.getBlockZ();
@@ -485,4 +610,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     }
     private ItemStack createGuiItem(Material m, String n) { ItemStack i = new ItemStack(m); ItemMeta im = i.getItemMeta(); im.setDisplayName(n); i.setItemMeta(im); return i; }
     private ItemStack createGuiItem(Material m, String n, List<String> l) { ItemStack i = createGuiItem(m, n); ItemMeta im = i.getItemMeta(); im.setLore(l); i.setItemMeta(im); return i; }
+
+    public double getPlaytimeHours(UUID uuid) {
+        long playtimeMs = dataConfig.getLong("playtime." + uuid, 0);
+        return Math.round(playtimeMs / 3600000.0 * 100.0) / 100.0;
+    }
 }
