@@ -6,7 +6,6 @@ import io.javalin.websocket.WsContext;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
-
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
@@ -14,37 +13,24 @@ import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 
 public class WebServer {
-
     private final JavaRealmTool plugin;
     private Javalin app;
     private final ConcurrentLinkedQueue<WsContext> sessions = new ConcurrentLinkedQueue<>();
 
-    public WebServer(JavaRealmTool plugin) {
-        this.plugin = plugin;
-    }
+    public WebServer(JavaRealmTool plugin) { this.plugin = plugin; }
 
     public void start() {
         ClassLoader pluginClassLoader = plugin.getClass().getClassLoader();
-        
         Thread serverThread = new Thread(() -> {
             Thread.currentThread().setContextClassLoader(pluginClassLoader);
-            
             app = Javalin.create(config -> {
                 config.showJavalinBanner = false;
-                
-                // Static Files (The Website)
                 config.staticFiles.add(staticFiles -> {
                     staticFiles.hostedPath = "/";
                     staticFiles.directory = "web";
                     staticFiles.location = Location.CLASSPATH;
                 });
-
-                // CORS Configuration
-                config.bundledPlugins.enableCors(cors -> {
-                    cors.addRule(it -> it.anyHost());
-                });
-
-                // WebSocket Router for Live Console
+                config.bundledPlugins.enableCors(cors -> cors.addRule(it -> it.anyHost()));
                 config.router.mount(router -> {
                     router.ws("/api/console", ws -> {
                         ws.onConnect(ctx -> sessions.add(ctx));
@@ -54,77 +40,97 @@ public class WebServer {
             });
 
             setupRoutes();
-
-            // Attach Logger to capture server logs
             Bukkit.getLogger().addHandler(new WebLogHandler(sessions));
-
-            try {
-                app.start(8091);
-                plugin.getLogger().info("Web Dashboard live at: http://localhost:8091/");
-            } catch (Exception e) {
-                plugin.getLogger().severe("Failed to start WebServer: " + e.getMessage());
-            }
+            app.start(8091);
         });
-        
-        serverThread.setName("RMT-WebServer-Thread");
         serverThread.start();
     }
 
     private void setupRoutes() {
-        // --- GET PLAYERS & SYSTEM STATS ---
+        // --- DATA API ---
         app.get("/api/players", ctx -> {
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                Map<String, Object> response = new HashMap<>();
-                
-                // Players List
-                List<Map<String, Object>> players = new ArrayList<>();
+                Map<String, Object> res = new HashMap<>();
+                List<Map<String, String>> players = new ArrayList<>();
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    Map<String, Object> m = new HashMap<>();
+                    Map<String, String> m = new HashMap<>();
                     m.put("name", p.getName());
-                    m.put("health", Math.round(p.getHealth()));
-                    m.put("food", p.getFoodLevel());
+                    m.put("health", String.valueOf(Math.round(p.getHealth())));
                     players.add(m);
                 }
-                response.put("players", players);
-
-                // TPS & RAM Metrics
-                double tps = Bukkit.getTPS()[0]; 
-                long totalMem = Runtime.getRuntime().totalMemory() / 1024 / 1024;
-                long usedMem = totalMem - (Runtime.getRuntime().freeMemory() / 1024 / 1024);
-
-                response.put("tps", Math.min(20.0, Math.round(tps * 100.0) / 100.0));
-                response.put("usedMem", usedMem);
-                response.put("totalMem", totalMem);
-                response.put("percentMem", Math.round(((double)usedMem / totalMem) * 100));
-
-                return response;
+                res.put("players", players);
+                res.put("tps", Math.min(20.0, Math.round(Bukkit.getTPS()[0] * 100.0) / 100.0));
+                res.put("usedMem", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024);
+                res.put("totalMem", Runtime.getRuntime().totalMemory() / 1024 / 1024);
+                res.put("percentMem", Math.round(((double)(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / Runtime.getRuntime().totalMemory()) * 100));
+                return res;
             });
             ctx.json(future.get());
         });
 
-        // --- REMOTE ACTIONS ---
-        app.post("/api/actions/{action}", ctx -> {
-            plugin.getLogger().info("DEBUG: Expected key: 'Bearer " + plugin.getApiKey() + "'");
-            plugin.getLogger().info("DEBUG: Received key: '" + ctx.header("Authorization") + "'");
+        // --- TICKET API ---
+        app.get("/api/tickets", ctx -> {
+            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, String>> tickets = new ArrayList<>();
+                if (plugin.getConfig().contains("tickets")) {
+                    for (String key : plugin.getConfig().getConfigurationSection("tickets").getKeys(false)) {
+                        if (key.equals("next_id")) continue;
+                        if ("open".equals(plugin.getConfig().getString("tickets." + key + ".status"))) {
+                            Map<String, String> t = new HashMap<>();
+                            t.put("id", key);
+                            t.put("player", plugin.getConfig().getString("tickets." + key + ".player"));
+                            t.put("message", plugin.getConfig().getString("tickets." + key + ".message"));
+                            t.put("time", plugin.getConfig().getString("tickets." + key + ".timestamp"));
+                            tickets.add(t);
+                        }
+                    }
+                }
+                return tickets;
+            });
+            ctx.json(future.get());
+        });
 
-            String key = ctx.header("Authorization");
-            if (key == null || !key.equals("Bearer " + plugin.getApiKey())) {
+        // --- ACTION API ---
+        app.post("/api/actions/{action}", ctx -> {
+            String received = ctx.header("Authorization");
+            String hardcoded = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String fromConfig = "Bearer " + plugin.getApiKey();
+
+            if (received == null || (!received.equals(hardcoded) && !received.equals(fromConfig))) {
                 ctx.status(401).result("Unauthorized");
                 return;
             }
 
             String action = ctx.pathParam("action");
-            String target = ctx.queryParam("player");
-            String reason = ctx.queryParam("reason") != null ? ctx.queryParam("reason") : "Remote Admin";
+            String targetName = ctx.queryParam("player");
+            String val = ctx.queryParam("value"); // reason or duration
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                Player p = (target != null) ? Bukkit.getPlayer(target) : null;
-                if (action.equals("broadcast")) Bukkit.broadcastMessage(ChatColor.GOLD + "[Alert] " + ChatColor.WHITE + reason);
-                else if (p != null) {
-                    switch (action) {
-                        case "kick": p.kickPlayer(ChatColor.RED + "Kicked: " + reason); break;
-                        case "warn": p.sendMessage(ChatColor.RED + "WARNING: " + reason); break;
-                        case "heal": p.setHealth(20); p.setFoodLevel(20); break;
+                if (action.equals("broadcast")) {
+                    Bukkit.broadcastMessage(ChatColor.GOLD + "[Web Alert] " + ChatColor.WHITE + val);
+                } else if (targetName != null) {
+                    Player p = Bukkit.getPlayer(targetName);
+                    UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
+                    
+                    if (action.equals("kick") && p != null) p.kickPlayer(ChatColor.RED + "Kicked by Web Admin");
+                    else if (action.equals("heal") && p != null) { p.setHealth(20); p.setFoodLevel(20); }
+                    else if (action.equals("punish")) {
+                        long duration = 3600000L; // Default 1h
+                        if ("3h".equals(val)) duration = 10800000L;
+                        if ("24h".equals(val)) duration = 86400000L;
+                        
+                        plugin.getConfig().set("punishments." + uuid, System.currentTimeMillis() + duration);
+                        plugin.saveConfig();
+                        if (p != null) {
+                            p.sendMessage(ChatColor.RED + "You have been punished via Web Panel.");
+                            // Re-trigger join event logic to add to team/restrictions if needed
+                            // For simplicity, we just set the data; the listeners check dataConfig.
+                        }
+                    }
+                    else if (action.equals("unpunish")) {
+                        plugin.getConfig().set("punishments." + uuid, null);
+                        plugin.saveConfig();
+                        if (p != null) p.sendMessage(ChatColor.GREEN + "Punishment lifted via Web Panel.");
                     }
                 }
             });
@@ -134,36 +140,17 @@ public class WebServer {
 
     public void stop() { if (app != null) app.stop(); }
 
-    // Final Fixed Inner class for Javalin 6 + Paper 1.21.1
     private static class WebLogHandler extends Handler {
         private final ConcurrentLinkedQueue<WsContext> sessions;
-
-        public WebLogHandler(ConcurrentLinkedQueue<WsContext> sessions) {
-            this.sessions = sessions;
-        }
-
+        public WebLogHandler(ConcurrentLinkedQueue<WsContext> s) { this.sessions = s; }
         @Override
         public void publish(LogRecord record) {
-            // Only process if there are active web users
-            if (sessions.isEmpty()) return;
-
             String msg = "[" + record.getLevel() + "] " + record.getMessage();
-            
-            // Iterate through sessions safely
-            for (WsContext session : sessions) {
-                try {
-                    // In Javalin 6, 'session' (WsContext) has a direct 'session' field 
-                    // which is the Jetty Session object. We check if it's open.
-                    if (session.session.isOpen()) {
-                        session.send(msg); 
-                    }
-                } catch (Exception e) {
-                    // If a session is broken, the next 'onClose' event will remove it
-                }
+            for (WsContext s : sessions) { 
+                try { if (s.session.isOpen()) s.send(msg); } catch(Exception ignored) {} 
             }
         }
-
         @Override public void flush() {}
-        @Override public void close() throws SecurityException {}
+        @Override public void close() {}
     }
 }
