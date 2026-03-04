@@ -1,6 +1,7 @@
 package com.stuart.javarealmtool;
 
 import org.bukkit.*;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.command.*;
 import org.bukkit.configuration.file.*;
 import org.bukkit.entity.Player;
@@ -18,7 +19,7 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
-public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecutor {
+public class JavaRealmTool extends JavaPlugin implements Listener {
 
     private File dataFile;
     private FileConfiguration dataConfig;
@@ -27,6 +28,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     private WebServer webServer;
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
+    private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
+    private final Map<UUID, UUID> tpaRequests = new HashMap<>();
+    private final Map<UUID, String> pendingWarpDelete = new HashMap<>();
+    private final Map<UUID, String> pendingClaimAction = new HashMap<>();
+    private final Map<UUID, String> pendingTrustAction = new HashMap<>();
+    private final Map<UUID, Integer> menuPages = new HashMap<>();
+    private final Map<UUID, String> currentChunk = new HashMap<>();
+    private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
+    private int gridSlotIndex = 0;
+    private int gridRowIndex = 0;
 
     // --- GUI STRINGS ---
     private final String GUI_MAIN = ChatColor.AQUA + "Drowsy Management Tool";
@@ -36,11 +47,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     private final String GUI_PLAYER_ACTION = ChatColor.AQUA + "Manage: ";
     private final String INSPECTOR_NAME = ChatColor.AQUA + "" + ChatColor.BOLD + "Inspector Wand";
     private final String TOOL_NAME = ChatColor.AQUA + "" + ChatColor.BOLD + "Drowsy Tool";
+    private final String CLAIM_WAND_NAME = ChatColor.BLUE + "" + ChatColor.BOLD + "Claim Wand";
     
     private final String GUI_MENU_SELECTOR = ChatColor.AQUA + "Menu Selection";
     private final String GUI_PLAYER_MENU = ChatColor.GREEN + "Player Menu";
     private final String GUI_PLAYER_LIST_TPA = ChatColor.GREEN + "Players (TPA)";
     private final String GUI_WARP_MANAGEMENT = ChatColor.BLUE + "Manage Warp: ";
+    private final String GUI_CLAIMS = ChatColor.BLUE + "Chunk Claims";
+    private final String GUI_CLAIM_CONFIRM = ChatColor.YELLOW + "Confirm Claim";
+    private final String GUI_UNCLAIM_CONFIRM = ChatColor.YELLOW + "Confirm Unclaim";
+    private final String GUI_TRUST_PLAYER = ChatColor.BLUE + "Trust Player";
+    private final String GUI_UNTRUST_PLAYER = ChatColor.BLUE + "Remove Trusted";
 
     private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP }
     private static class PunishmentContext {
@@ -64,6 +81,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         webServer = new WebServer(this);
         webServer.start();
 
+        // Start playtime tracker (every 60 seconds = 1200 ticks)
+        startPlaytimeTracker();
+        
+        // Start punishment expiry checker (every 1 second = 20 ticks)
+        startPunishmentChecker();
+
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
 
@@ -74,7 +97,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     }
 
     public FileConfiguration getDataConfig() { return dataConfig; }
-    public String getApiKey() { return apiKey; }
+    public String fetchApiKey() { return apiKey; }
     
     public void saveDataConfig() { saveDataFile(); }
 
@@ -155,8 +178,35 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
                     p.teleport(jailLoc);
                     p.sendMessage(ChatColor.AQUA + "Teleported to jail.");
                     break;
+                case "punish":
+                    if (args.length < 3) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt punish <username> <duration>");
+                        p.sendMessage(ChatColor.GRAY + "Duration format: 20s, 5m, 2hr, 2.5hr");
+                        return true;
+                    }
+                    String targetName = args[1];
+                    String durationStr = args[2];
+                    long durationMs = parseDuration(durationStr);
+                    if (durationMs == -1) {
+                        p.sendMessage(ChatColor.RED + "Invalid duration format. Use: 20s, 5m, 2hr");
+                        return true;
+                    }
+                    Player target = Bukkit.getPlayer(targetName);
+                    if (target == null) {
+                        p.sendMessage(ChatColor.RED + "Player not found.");
+                        return true;
+                    }
+                    setPunished(target.getUniqueId(), durationMs);
+                    p.sendMessage(ChatColor.GREEN + "Punished " + targetName + " for " + durationStr);
+                    break;
                 case "menu":
-                    openMainMenu(p);
+                    try {
+                        openMainMenu(p);
+                    } catch (Exception ex) {
+                        p.sendMessage(ChatColor.RED + "An unexpected error occurred while opening the menu.");
+                        getLogger().severe("Failed to open admin menu: " + ex.getMessage());
+                        ex.printStackTrace();
+                    }
                     break;
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
@@ -361,6 +411,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         viewWarps.setItemMeta(vwMeta);
         gui.setItem(getNextGridSlot(), viewWarps);
         
+        // Chunk Claims
+        ItemStack claims = new ItemStack(Material.CRYING_OBSIDIAN);
+        ItemMeta cMeta = claims.getItemMeta();
+        cMeta.setDisplayName(ChatColor.BLUE + "Chunk Claims");
+        cMeta.setLore(Arrays.asList(ChatColor.GRAY + "Manage your claims"));
+        claims.setItemMeta(cMeta);
+        gui.setItem(getNextGridSlot(), claims);
+        
         // Player List (TPA)
         ItemStack playerList = new ItemStack(Material.PLAYER_HEAD);
         ItemMeta plMeta = playerList.getItemMeta();
@@ -438,6 +496,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         gui.setItem(11, createGuiItem(Material.SUNFLOWER, ChatColor.GOLD + "Weather: Clear"));
         gui.setItem(12, createGuiItem(Material.WATER_BUCKET, ChatColor.AQUA + "Weather: Rain"));
         gui.setItem(13, createGuiItem(Material.BEACON, ChatColor.DARK_GRAY + "Weather: Thunder"));
+        // Nether lock item (use an item type that supports metadata reliably)
+        boolean netherLocked = dataConfig.getBoolean("locks.nether", false);
+        ItemStack netherItem = new ItemStack(Material.CRYING_OBSIDIAN);
+        ItemMeta nm = netherItem.getItemMeta();
+        if (nm != null) {
+            nm.setDisplayName(ChatColor.DARK_PURPLE + "Nether Access");
+            nm.setLore(Arrays.asList(ChatColor.GRAY + (netherLocked ? "Locked" : "Unlocked")));
+            netherItem.setItemMeta(nm);
+        }
+        gui.setItem(14, netherItem);
+        // End lock item
+        boolean endLocked = dataConfig.getBoolean("locks.end", false);
+        ItemStack endItem = new ItemStack(Material.END_STONE);
+        ItemMeta em = endItem.getItemMeta();
+        if (em != null) {
+            em.setDisplayName(ChatColor.DARK_PURPLE + "The End Access");
+            em.setLore(Arrays.asList(ChatColor.GRAY + (endLocked ? "Locked" : "Unlocked")));
+            endItem.setItemMeta(em);
+        }
+        gui.setItem(15, endItem);
         gui.setItem(16, createGuiItem(Material.REDSTONE_BLOCK, ChatColor.RED + "Punished: " + ChatColor.WHITE + punished));
         
         // Row 2 (19-25): Time and Gamemodes
@@ -462,9 +540,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     }
 
     private void openPlayerListMenu(Player p) {
+        openPlayerListMenu(p, 0);
+    }
+
+    private void openPlayerListMenu(Player p, int page) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_PLAYER_LIST);
         resetGridSlots();
-        for (Player target : Bukkit.getOnlinePlayers()) {
+        
+        List<Player> players = new ArrayList<>(Bukkit.getOnlinePlayers());
+        int playersPerPage = 28; // This fits the grid layout
+        int start = page * playersPerPage;
+        int end = Math.min(start + playersPerPage, players.size());
+        
+        for (int i = start; i < end; i++) {
+            Player target = players.get(i);
             ItemStack head = new ItemStack(Material.PLAYER_HEAD);
             SkullMeta meta = (SkullMeta) head.getItemMeta();
             meta.setOwningPlayer(target);
@@ -473,9 +562,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             int slot = getNextGridSlot();
             if (slot != -1) gui.setItem(slot, head);
         }
-        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Main Menu"));
+        
+        // Add navigation buttons
+        ItemStack back = createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Main Menu");
+        gui.setItem(53, back);
+        
+        if (end < players.size()) {
+            ItemStack next = createGuiItem(Material.ARROW, ChatColor.GREEN + "Next Page");
+            gui.setItem(52, next);
+        }
+        
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
+        menuPages.put(p.getUniqueId(), page);
         p.openInventory(gui);
     }
 
@@ -733,6 +832,183 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         p.openInventory(gui);
     }
 
+    private void openClaimsMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_CLAIMS);
+        for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        
+        UUID uuid = p.getUniqueId();
+        int chunkLimit = getChunkLimit(uuid);
+        int claimedChunks = getClaimedChunks(uuid).size();
+        
+        ItemStack chunks = new ItemStack(Material.ARMOR_STAND);
+        ItemMeta chkMeta = chunks.getItemMeta();
+        chkMeta.setDisplayName(ChatColor.AQUA + "Chunks Available");
+        chkMeta.setLore(Arrays.asList(ChatColor.YELLOW + "Limit: " + chunkLimit, ChatColor.YELLOW + "Claimed: " + claimedChunks));
+        chunks.setItemMeta(chkMeta);
+        gui.setItem(10, chunks);
+        
+        ItemStack claim = new ItemStack(Material.GRASS_BLOCK);
+        ItemMeta clmMeta = claim.getItemMeta();
+        clmMeta.setDisplayName(ChatColor.GREEN + "Claim Chunk");
+        clmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Claims current chunk"));
+        claim.setItemMeta(clmMeta);
+        gui.setItem(12, claim);
+        
+        ItemStack unclaim = new ItemStack(Material.DIRT);
+        ItemMeta unclMeta = unclaim.getItemMeta();
+        unclMeta.setDisplayName(ChatColor.RED + "Unclaim Chunk");
+        unclMeta.setLore(Arrays.asList(ChatColor.GRAY + "Unclaims current chunk"));
+        unclaim.setItemMeta(unclMeta);
+        gui.setItem(14, unclaim);
+        
+        ItemStack trust = new ItemStack(Material.EMERALD_BLOCK);
+        ItemMeta trMeta = trust.getItemMeta();
+        trMeta.setDisplayName(ChatColor.GREEN + "Trust Player");
+        trMeta.setLore(Arrays.asList(ChatColor.GRAY + "Add trusted player"));
+        trust.setItemMeta(trMeta);
+        gui.setItem(11, trust);
+        
+        ItemStack untrust = new ItemStack(Material.REDSTONE_BLOCK);
+        ItemMeta untrMeta = untrust.getItemMeta();
+        untrMeta.setDisplayName(ChatColor.RED + "Remove Trusted");
+        untrMeta.setLore(Arrays.asList(ChatColor.GRAY + "Remove trusted player"));
+        untrust.setItemMeta(untrMeta);
+        gui.setItem(13, untrust);
+        
+        ItemStack wand = new ItemStack(Material.AMETHYST_SHARD);
+        ItemMeta wMeta = wand.getItemMeta();
+        wMeta.setDisplayName(CLAIM_WAND_NAME);
+        wMeta.setLore(Arrays.asList(ChatColor.GRAY + "Right-click to check chunks", ChatColor.GRAY + "Sneak + Right-click to list your claims"));
+        wand.setItemMeta(wMeta);
+        gui.setItem(15, wand);
+        
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back");
+        back.setItemMeta(bMeta);
+        gui.setItem(26, back);
+        
+        p.openInventory(gui);
+    }
+
+    private void openClaimConfirmMenu(Player p, String action) {
+        Inventory gui = Bukkit.createInventory(null, 27, action.equals("claim") ? GUI_CLAIM_CONFIRM : GUI_UNCLAIM_CONFIRM);
+        for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        
+        String chunkKey = getChunkKey(p.getLocation());
+        String message = action.equals("claim") ? 
+            "Do you want to claim this chunk?" : 
+            "Do you want to unclaim this chunk?";
+        
+        ItemStack confirm = new ItemStack(Material.EMERALD_BLOCK);
+        ItemMeta confMeta = confirm.getItemMeta();
+        confMeta.setDisplayName(ChatColor.GREEN + "Confirm");
+        confMeta.setLore(Arrays.asList(ChatColor.GRAY + message));
+        confirm.setItemMeta(confMeta);
+        gui.setItem(11, confirm);
+        
+        ItemStack cancel = new ItemStack(Material.REDSTONE_BLOCK);
+        ItemMeta canMeta = cancel.getItemMeta();
+        canMeta.setDisplayName(ChatColor.RED + "Cancel");
+        cancel.setItemMeta(canMeta);
+        gui.setItem(15, cancel);
+        
+        pendingClaimAction.put(p.getUniqueId(), action + ":" + chunkKey);
+        p.openInventory(gui);
+    }
+
+    private void openTrustPlayerMenu(Player p) {
+        openTrustPlayerMenu(p, 0);
+    }
+
+    private void openTrustPlayerMenu(Player p, int page) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_TRUST_PLAYER);
+        for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        
+        List<Player> onlinePlayers = new ArrayList<>();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (!online.getUniqueId().equals(p.getUniqueId())) {
+                onlinePlayers.add(online);
+            }
+        }
+        
+        int playersPerPage = 7;
+        int start = page * playersPerPage;
+        int end = Math.min(start + playersPerPage, onlinePlayers.size());
+        
+        int slot = 10;
+        for (int i = start; i < end; i++) {
+            Player online = onlinePlayers.get(i);
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta hMeta = (SkullMeta) head.getItemMeta();
+            hMeta.setOwningPlayer(online);
+            hMeta.setDisplayName(ChatColor.YELLOW + online.getName());
+            head.setItemMeta(hMeta);
+            gui.setItem(slot, head);
+            slot++;
+        }
+        
+        // Add navigation buttons
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back");
+        back.setItemMeta(bMeta);
+        gui.setItem(26, back);
+        
+        if (end < onlinePlayers.size()) {
+            ItemStack next = new ItemStack(Material.ARROW);
+            ItemMeta nMeta = next.getItemMeta();
+            nMeta.setDisplayName(ChatColor.GREEN + "Next Page");
+            next.setItemMeta(nMeta);
+            gui.setItem(25, next);
+        }
+        
+        menuPages.put(p.getUniqueId(), page);
+        p.openInventory(gui);
+    }
+
+    private void openUntrustPlayerMenu(Player p) {
+        openUntrustPlayerMenu(p, 0);
+    }
+
+    private void openUntrustPlayerMenu(Player p, int page) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_UNTRUST_PLAYER);
+        for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        
+        List<String> trusted = dataConfig.getStringList("claims." + p.getUniqueId() + ".trusted");
+        int playersPerPage = 7;
+        int start = page * playersPerPage;
+        int end = Math.min(start + playersPerPage, trusted.size());
+        
+        int slot = 10;
+        for (int i = start; i < end; i++) {
+            String trustedName = trusted.get(i);
+            ItemStack item = new ItemStack(Material.NAME_TAG);
+            ItemMeta iMeta = item.getItemMeta();
+            iMeta.setDisplayName(ChatColor.YELLOW + trustedName);
+            item.setItemMeta(iMeta);
+            gui.setItem(slot, item);
+            slot++;
+        }
+        
+        // Add navigation buttons
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back");
+        back.setItemMeta(bMeta);
+        gui.setItem(26, back);
+        
+        if (end < trusted.size()) {
+            ItemStack next = new ItemStack(Material.ARROW);
+            ItemMeta nMeta = next.getItemMeta();
+            nMeta.setDisplayName(ChatColor.GREEN + "Next Page");
+            next.setItemMeta(nMeta);
+            gui.setItem(25, next);
+        }
+        
+        menuPages.put(p.getUniqueId(), page);
+        p.openInventory(gui);
+    }
 
     private Location getHomeLocation(UUID uuid) {
         if (!dataConfig.contains("homes." + uuid)) return null;
@@ -773,7 +1049,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             && !title.startsWith(GUI_PLAYER_ACTION) && !title.startsWith(GUI_NOTES_VIEW) && !title.equals(ChatColor.RED + "Punished Players")
             && !title.startsWith(ChatColor.YELLOW + "Note:") && !title.equals(GUI_MENU_SELECTOR) && !title.equals(GUI_PLAYER_MENU)
             && !title.equals(GUI_PLAYER_LIST_TPA) && !title.equals(ChatColor.BLUE + "Warps") && !title.startsWith(GUI_WARP_MANAGEMENT)
-            && !title.startsWith(ChatColor.RED + "Delete:")) return;
+            && !title.startsWith(ChatColor.RED + "Delete:") && !title.equals(GUI_CLAIMS) && !title.equals(GUI_CLAIM_CONFIRM)
+            && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)) return;
 
         e.setCancelled(true);
         if (e.getCurrentItem() == null) return;
@@ -820,6 +1097,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
                 p.sendMessage(ChatColor.GOLD + "Enter warp name:");
             } else if (itemName.equals("View Warps")) {
                 openWarpListMenu(p);
+            } else if (itemName.equals("Chunk Claims")) {
+                openClaimsMenu(p);
             } else if (itemName.equals("Players (TPA)")) {
                 openPlayerListTPA(p);
             } else if (type == Material.BARRIER) {
@@ -899,6 +1178,102 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             return;
         }
 
+        // Claims Menu
+        if (title.equals(GUI_CLAIMS)) {
+            if (type == Material.GRASS_BLOCK) {
+                openClaimConfirmMenu(p, "claim");
+            } else if (type == Material.DIRT) {
+                openClaimConfirmMenu(p, "unclaim");
+            } else if (type == Material.EMERALD_BLOCK) {
+                openTrustPlayerMenu(p);
+            } else if (type == Material.REDSTONE_BLOCK) {
+                openUntrustPlayerMenu(p);
+            } else if (type == Material.AMETHYST_SHARD) {
+                p.closeInventory();
+                ItemStack wand = new ItemStack(Material.AMETHYST_SHARD);
+                ItemMeta wMeta = wand.getItemMeta();
+                wMeta.setDisplayName(CLAIM_WAND_NAME);
+                wand.setItemMeta(wMeta);
+                p.getInventory().addItem(wand);
+                p.sendMessage(ChatColor.BLUE + "Claim Wand added to your inventory!");
+            } else if (type == Material.BARRIER) {
+                openPlayerMenu(p);
+            }
+            return;
+        }
+
+        // Claim Confirmation Menu
+        if (title.equals(GUI_CLAIM_CONFIRM) || title.equals(GUI_UNCLAIM_CONFIRM)) {
+            String action = pendingClaimAction.get(p.getUniqueId());
+            if (action == null) {
+                p.closeInventory();
+                return;
+            }
+            
+            String[] parts = action.split(":");
+            String actionType = parts[0];
+            String chunkKey = action.substring(actionType.length() + 1);
+            
+            if (type == Material.EMERALD_BLOCK) {
+                // Confirm
+                p.closeInventory();
+                if (actionType.equals("claim")) {
+                    int limit = getChunkLimit(p.getUniqueId());
+                    int claimed = getClaimedChunks(p.getUniqueId()).size();
+                    if (claimed < limit) {
+                        claimChunk(p.getUniqueId(), chunkKey);
+                        p.sendMessage(ChatColor.GREEN + "Chunk claimed!");
+                    } else {
+                        p.sendMessage(ChatColor.RED + "You have reached your claim limit!");
+                    }
+                } else {
+                    unclaimChunk(p.getUniqueId(), chunkKey);
+                    p.sendMessage(ChatColor.GREEN + "Chunk unclaimed!");
+                }
+                pendingClaimAction.remove(p.getUniqueId());
+            } else if (type == Material.REDSTONE_BLOCK) {
+                // Cancel
+                p.closeInventory();
+                pendingClaimAction.remove(p.getUniqueId());
+                openClaimsMenu(p);
+            }
+            return;
+        }
+
+        // Trust Player Menu
+        if (title.equals(GUI_TRUST_PLAYER)) {
+            if (type == Material.PLAYER_HEAD) {
+                String playerName = itemName;
+                trustPlayer(p.getUniqueId(), playerName);
+                p.sendMessage(ChatColor.GREEN + "Trusted " + playerName + "!");
+                p.closeInventory();
+                openClaimsMenu(p);
+            } else if (type == Material.BARRIER) {
+                openClaimsMenu(p);
+            } else if (type == Material.ARROW) {
+                int currentPage = menuPages.getOrDefault(p.getUniqueId(), 0);
+                openTrustPlayerMenu(p, currentPage + 1);
+            }
+            return;
+        }
+
+        // Untrust Player Menu
+        if (title.equals(GUI_UNTRUST_PLAYER)) {
+            if (type == Material.NAME_TAG) {
+                String playerName = itemName;
+                untrustPlayer(p.getUniqueId(), playerName);
+                p.sendMessage(ChatColor.RED + "Removed trust from " + playerName + "!");
+                p.closeInventory();
+                openClaimsMenu(p);
+            } else if (type == Material.BARRIER) {
+                openClaimsMenu(p);
+            } else if (type == Material.ARROW) {
+                int currentPage = menuPages.getOrDefault(p.getUniqueId(), 0);
+                openUntrustPlayerMenu(p, currentPage + 1);
+            }
+            return;
+        }
+
 
         if (title.equals(GUI_MAIN)) {
 
@@ -907,6 +1282,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
                 case 11: p.getWorld().setStorm(false); break;
                 case 12: p.getWorld().setThundering(false); p.getWorld().setStorm(true); break;
                 case 13: p.getWorld().setThundering(true); p.getWorld().setStorm(true); break;
+                case 14:
+                    // Toggle nether lock
+                    boolean currentNether = dataConfig.getBoolean("locks.nether", false);
+                    dataConfig.set("locks.nether", !currentNether);
+                    saveDataFile();
+                    p.sendMessage(ChatColor.AQUA + "Nether access " + (currentNether ? "unlocked" : "locked") + "!");
+                    openMainMenu(p);
+                    break;
+                case 15:
+                    // Toggle end lock
+                    boolean currentEnd = dataConfig.getBoolean("locks.end", false);
+                    dataConfig.set("locks.end", !currentEnd);
+                    saveDataFile();
+                    p.sendMessage(ChatColor.AQUA + "The End access " + (currentEnd ? "unlocked" : "locked") + "!");
+                    openMainMenu(p);
+                    break;
                 case 19: p.getWorld().setTime(1000); break;
                 case 20: p.getWorld().setTime(13000); break;
                 case 21: openPlayerListMenu(p); break;
@@ -937,6 +1328,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         } else if (title.equals(GUI_PLAYER_LIST)) {
             if (type == Material.PLAYER_HEAD) openPlayerActionMenu(p, itemName);
             else if (type == Material.REDSTONE) openMainMenu(p);
+            else if (type == Material.ARROW) {
+                int currentPage = menuPages.getOrDefault(p.getUniqueId(), 0);
+                openPlayerListMenu(p, currentPage + 1);
+            }
         } else if (title.startsWith(GUI_NOTES_VIEW)) {
             String target = title.replace(GUI_NOTES_VIEW, "");
             if (type == Material.WRITABLE_BOOK) {
@@ -1041,18 +1436,106 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         }
     }
     @EventHandler
+    public void onPlayerPortal(PlayerPortalEvent e) {
+        Location to = e.getTo();
+        if (to == null) return;
+        World.Environment env = to.getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "Nether access is currently locked.");
+            return;
+        }
+        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "The End access is currently locked.");
+        }
+    }
+
+    @EventHandler
+    public void onPlayerTeleport(PlayerTeleportEvent e) {
+        PlayerTeleportEvent.TeleportCause c = e.getCause();
+        if (c == PlayerTeleportEvent.TeleportCause.NETHER_PORTAL || c == PlayerTeleportEvent.TeleportCause.END_PORTAL || c == PlayerTeleportEvent.TeleportCause.END_GATEWAY) {
+            Location to = e.getTo();
+            if (to == null) return;
+            World.Environment env = to.getWorld().getEnvironment();
+            if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+                e.setCancelled(true);
+                e.getPlayer().sendMessage(ChatColor.RED + "Nether access is currently locked.");
+            }
+            if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+                e.setCancelled(true);
+                e.getPlayer().sendMessage(ChatColor.RED + "The End access is currently locked.");
+            }
+        }
+    }
+
+    @EventHandler
+    public void onPlayerChangedWorld(PlayerChangedWorldEvent e) {
+        World.Environment env = e.getPlayer().getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            // Move player back to their previous world's spawn
+            Player p = e.getPlayer();
+            World overworld = Bukkit.getWorlds().get(0);
+            Bukkit.getScheduler().runTask(this, () -> {
+                p.teleport(overworld.getSpawnLocation());
+                p.sendMessage(ChatColor.RED + "Nether access is locked. You have been returned.");
+            });
+        }
+        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            Player p = e.getPlayer();
+            World overworld = Bukkit.getWorlds().get(0);
+            Bukkit.getScheduler().runTask(this, () -> {
+                p.teleport(overworld.getSpawnLocation());
+                p.sendMessage(ChatColor.RED + "The End access is locked. You have been returned.");
+            });
+        }
+    }
+
+    @EventHandler
+    public void onRespawn(PlayerRespawnEvent e) {
+        Location loc = e.getRespawnLocation();
+        if (loc == null) return;
+        World.Environment env = loc.getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setRespawnLocation(Bukkit.getWorlds().get(0).getSpawnLocation());
+            e.getPlayer().sendMessage(ChatColor.RED + "Nether access is locked. Respawning in overworld.");
+        }
+        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setRespawnLocation(Bukkit.getWorlds().get(0).getSpawnLocation());
+            e.getPlayer().sendMessage(ChatColor.RED + "The End access is locked. Respawning in overworld.");
+        }
+    }
+    @EventHandler
     public void onPunishDamage(EntityDamageEvent e) {
         if (e.getEntity() instanceof Player p && isPunished(p.getUniqueId())) e.setCancelled(true);
     }
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
-        else saveLog(e.getBlock().getLocation(), ChatColor.GREEN + "Placed by " + e.getPlayer().getName());
+        else {
+            // Check chunk claims
+            String chunkKey = getChunkKey(e.getBlock().getLocation());
+            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(e.getPlayer(), chunkKey)) {
+                e.setCancelled(true);
+                e.getPlayer().sendMessage(ChatColor.RED + "You cannot build in this claimed chunk!");
+                return;
+            }
+            saveLog(e.getBlock().getLocation(), ChatColor.GREEN + "Placed by " + e.getPlayer().getName());
+        }
     }
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
-        else saveLog(e.getBlock().getLocation(), ChatColor.RED + "Broken by " + e.getPlayer().getName());
+        else {
+            // Check chunk claims
+            String chunkKey = getChunkKey(e.getBlock().getLocation());
+            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(e.getPlayer(), chunkKey)) {
+                e.setCancelled(true);
+                e.getPlayer().sendMessage(ChatColor.RED + "You cannot break blocks in this claimed chunk!");
+                return;
+            }
+            saveLog(e.getBlock().getLocation(), ChatColor.RED + "Broken by " + e.getPlayer().getName());
+        }
     }
     @EventHandler
     public void onChestAccess(InventoryOpenEvent e) {
@@ -1060,13 +1543,54 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     }
     @EventHandler
     public void onWandUse(PlayerInteractEvent e) {
-        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getItem() != null && e.getItem().hasItemMeta() 
-            && e.getItem().getItemMeta().getDisplayName().equals(INSPECTOR_NAME)) {
-            e.setCancelled(true);
-            List<String> logs = getLogs(e.getClickedBlock().getLocation());
-            e.getPlayer().sendMessage(ChatColor.AQUA + "--- Block History ---");
-            if (logs.isEmpty()) e.getPlayer().sendMessage(ChatColor.RED + "No history.");
-            else logs.forEach(l -> e.getPlayer().sendMessage(ChatColor.GRAY + "- " + l));
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getItem() != null && e.getItem().hasItemMeta()) {
+            String wandName = e.getItem().getItemMeta().getDisplayName();
+            
+            // Inspector Wand
+            if (wandName.equals(INSPECTOR_NAME)) {
+                e.setCancelled(true);
+                Location checkLocation = e.getClickedBlock().getLocation();
+                if (e.getPlayer().isSneaking()) {
+                    checkLocation = checkLocation.add(0, 1, 0);
+                    e.getPlayer().sendMessage(ChatColor.AQUA + "--- Block Above History ---");
+                } else {
+                    e.getPlayer().sendMessage(ChatColor.AQUA + "--- Block History ---");
+                }
+                List<String> logs = getLogs(checkLocation);
+                if (logs.isEmpty()) e.getPlayer().sendMessage(ChatColor.RED + "No history.");
+                else logs.forEach(l -> e.getPlayer().sendMessage(ChatColor.GRAY + "- " + l));
+            }
+            // Claim Wand
+            else if (wandName.equals(CLAIM_WAND_NAME)) {
+                e.setCancelled(true);
+                Player p = e.getPlayer();
+                String chunkKey = getChunkKey(e.getClickedBlock().getLocation());
+                
+                if (p.isSneaking()) {
+                    // List all claimed chunks
+                    List<String> claimed = getClaimedChunks(p.getUniqueId());
+                    p.sendMessage(ChatColor.BLUE + "--- Your Claimed Chunks ---");
+                    if (claimed.isEmpty()) {
+                        p.sendMessage(ChatColor.RED + "You have no claimed chunks.");
+                    } else {
+                        for (String chunk : claimed) {
+                            String coords = formatChunkCoordinates(chunk);
+                            p.sendMessage(ChatColor.YELLOW + coords);
+                        }
+                    }
+                } else {
+                    // Check current chunk and highlight corners
+                    highlightChunkCorners(e.getClickedBlock().getLocation());
+                    if (isChunkClaimed(chunkKey)) {
+                        UUID owner = getChunkOwner(chunkKey);
+                        Player ownerPlayer = Bukkit.getPlayer(owner);
+                        String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                        p.sendMessage(ChatColor.YELLOW + "Chunk claimed by " + ownerName);
+                    } else {
+                        p.sendMessage(ChatColor.GRAY + "Unclaimed");
+                    }
+                }
+            }
         }
     }
 
@@ -1090,14 +1614,107 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
-        if (isPunished(e.getPlayer().getUniqueId())) {
+        UUID uuid = e.getPlayer().getUniqueId();
+        
+        if (isPunished(uuid)) {
             punishTeam.addEntry(e.getPlayer().getName());
-            long min = (dataConfig.getLong("punishments." + e.getPlayer().getUniqueId()) - System.currentTimeMillis()) / 60000;
+            long min = (dataConfig.getLong("punishments." + uuid) - System.currentTimeMillis()) / 60000;
             e.getPlayer().sendMessage(ChatColor.RED + "You are punished for " + min + " more minutes.");
+        } else {
+            // Player is not currently punished - check if they were punished while offline
+            Location playerLoc = getLoc("player_location." + uuid);
+            if (playerLoc != null) {
+                // Restore to original location and clean up (delay 1 tick)
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    if (e.getPlayer().isOnline()) {
+                        e.getPlayer().teleport(playerLoc);
+                        e.getPlayer().sendMessage(ChatColor.GREEN + "You have been restored to your original location.");
+                    }
+                }, 1L);
+                dataConfig.set("player_location." + uuid, null);
+                dataConfig.set("respawn_location." + uuid, null);
+                saveDataFile();
+            }
+        }
+        
+        // Also check for respawn location (backup in case it was set)
+        Location respawnLoc = getLoc("respawn_location." + uuid);
+        if (respawnLoc != null) {
+            // Delay respawn teleport by 1 tick to ensure player is fully ready
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (e.getPlayer().isOnline()) {
+                    e.getPlayer().teleport(respawnLoc);
+                    e.getPlayer().sendMessage(ChatColor.GREEN + "You have been restored to your original location.");
+                }
+            }, 1L);
+            dataConfig.set("respawn_location." + uuid, null);
+            saveDataFile();
+        }
+        
+        // Track IPs, sessions and log join
+        try {
+            this.trackPlayerIP(uuid, e.getPlayer().getName(), e.getPlayer().getAddress().getAddress().getHostAddress());
+        } catch (Exception ignored) {}
+        this.trackSession(uuid, e.getPlayer().getName(), true);
+        this.logAction("System", "player_joined", e.getPlayer().getName());
+
+        // Give admin tool if missing
+        if (e.getPlayer().hasPermission("dmt.admin")) {
+            boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
+            if (!hasTool) {
+                ItemStack tool = new ItemStack(Material.DIAMOND);
+                ItemMeta m = tool.getItemMeta();
+                m.setDisplayName(TOOL_NAME);
+                m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+                m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                tool.setItemMeta(m);
+                e.getPlayer().getInventory().addItem(tool);
+            }
         }
     }
 
-    // --- HELPERS ---
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        this.trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
+        this.logAction("System", "player_left", e.getPlayer().getName());
+    }
+
+    @EventHandler
+    public void onChat(AsyncPlayerChatEvent e) {
+        this.addChatLog(e.getPlayer().getName(), e.getMessage());
+    }
+
+    @EventHandler
+    public void onPlayerMove(PlayerMoveEvent e) {
+        Player p = e.getPlayer();
+        String newChunk = getChunkKey(e.getTo());
+        String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
+        
+        if (!newChunk.equals(oldChunk)) {
+            // Check if old chunk is claimed
+            if (!oldChunk.equals(newChunk) && isChunkClaimed(oldChunk)) {
+                UUID owner = getChunkOwner(oldChunk);
+                if (owner != null && !p.getUniqueId().equals(owner)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have left " + ownerName + "'s claim!");
+                }
+            }
+            
+            // Check if new chunk is claimed
+            if (isChunkClaimed(newChunk)) {
+                UUID owner = getChunkOwner(newChunk);
+                if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
+                }
+            }
+            
+            currentChunk.put(p.getUniqueId(), newChunk);
+        }
+    }
+
     public void setPunished(UUID u, long d) {
         dataConfig.set("punishments." + u, System.currentTimeMillis() + d);
         
@@ -1123,10 +1740,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         dataConfig.set("punishments." + u, null);
         saveDataFile();
         Player p = Bukkit.getPlayer(u);
-        if (p != null) {
-            punishTeam.removeEntry(p.getName());
-            p.sendMessage(ChatColor.GREEN + "Punishment lifted.");
+        // Restore player's original location
+        Location originalLoc = getLoc("player_location." + u);
+        if (originalLoc != null) {
+            if (p != null) {
+                // Player is online - schedule teleport next tick to ensure they're fully loaded
+                punishTeam.removeEntry(p.getName());
+                p.sendMessage(ChatColor.GREEN + "Punishment lifted.");
+                Bukkit.getScheduler().runTask(this, () -> {
+                    if (p.isOnline()) {
+                        p.teleport(originalLoc);
+                        p.sendMessage(ChatColor.GREEN + "You have been restored to your original location.");
+                    }
+                });
+            } else {
+                    // Player is offline - store spawn location for when they rejoin
+                    // Use saveLoc to ensure a consistent string format the plugin expects
+                    saveLoc("respawn_location." + u, originalLoc);
+                }
         }
+        // Clear stored location
+        dataConfig.set("player_location." + u, null);
+        saveDataFile();
     }
     private void saveLog(Location loc, String msg) {
         if (loc == null) return;
@@ -1145,10 +1780,430 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
     private void saveLoc(String p, Location l) { dataConfig.set(p, l.getWorld().getName()+","+l.getX()+","+l.getY()+","+l.getZ()+","+l.getYaw()+","+l.getPitch()); saveDataFile(); }
     private Location getLoc(String p) {
         if (!dataConfig.contains(p)) return null;
-        String[] s = dataConfig.getString(p).split(",");
-        return new Location(Bukkit.getWorld(s[0]), Double.parseDouble(s[1]), Double.parseDouble(s[2]), Double.parseDouble(s[3]), Float.parseFloat(s[4]), Float.parseFloat(s[5]));
+        try {
+            // Prefer the CSV string format produced by saveLoc
+            if (dataConfig.isString(p)) {
+                String raw = dataConfig.getString(p);
+                if (raw == null) return null;
+                String[] s = raw.split(",");
+                if (s.length == 6) {
+                    World w = Bukkit.getWorld(s[0]);
+                    if (w == null) return null;
+                    return new Location(w, Double.parseDouble(s[1]), Double.parseDouble(s[2]), Double.parseDouble(s[3]), Float.parseFloat(s[4]), Float.parseFloat(s[5]));
+                } else {
+                    getLogger().warning("Invalid saved location string for key '" + p + "': " + raw);
+                    return null;
+                }
+            }
+
+            // Also accept the alternative structured format used elsewhere (world/x/y/z/yaw/pitch)
+            if (dataConfig.contains(p + ".world")) {
+                String worldName = dataConfig.getString(p + ".world");
+                World world = Bukkit.getWorld(worldName);
+                if (world == null) return null;
+                double x = dataConfig.getDouble(p + ".x");
+                double y = dataConfig.getDouble(p + ".y");
+                double z = dataConfig.getDouble(p + ".z");
+                float yaw = (float) dataConfig.getDouble(p + ".yaw");
+                float pitch = (float) dataConfig.getDouble(p + ".pitch");
+                return new Location(world, x, y, z, yaw, pitch);
+            }
+
+            // If the value was stored as a Location object (unlikely), try casting
+            Object obj = dataConfig.get(p);
+            if (obj instanceof Location) return (Location) obj;
+
+            // Unknown format
+            getLogger().warning("Unknown location format for key '" + p + "' (type: " + (obj == null ? "null" : obj.getClass().getName()) + ")");
+            return null;
+        } catch (NumberFormatException ex) {
+            getLogger().warning("Failed to parse numeric value for location key '" + p + "': " + ex.getMessage());
+            return null;
+        } catch (Exception ex) {
+            getLogger().warning("Unexpected error parsing location for key '" + p + "': " + ex.getMessage());
+            return null;
+        }
     }
 
     private ItemStack createGuiItem(Material m, String n) { ItemStack i = new ItemStack(m); ItemMeta im = i.getItemMeta(); im.setDisplayName(n); i.setItemMeta(im); return i; }
     private ItemStack createGuiItem(Material m, String n, List<String> l) { ItemStack i = createGuiItem(m, n); ItemMeta im = i.getItemMeta(); im.setLore(l); i.setItemMeta(im); return i; }
+
+    // --- WebServer helper methods (added to satisfy WebServer calls) ---
+    public long getPlaytimeHours(UUID u) {
+        try {
+            return dataConfig.getLong("playtime." + u, 0L);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    public void logAction(String actor, String action, String target) {
+        List<String> history = dataConfig.getStringList("action_history");
+        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + actor + " " + action + " " + target;
+        history.add(entry);
+        if (history.size() > 200) history.remove(0);
+        dataConfig.set("action_history", history);
+        saveDataFile();
+    }
+
+    public void addChatLog(String source, String msg) {
+        List<String> chat = dataConfig.getStringList("chat_history");
+        String entry = new SimpleDateFormat("HH:mm:ss").format(new Date()) + " | " + source + ": " + msg;
+        chat.add(entry);
+        if (chat.size() > 500) chat.remove(0);
+        dataConfig.set("chat_history", chat);
+        saveDataFile();
+    }
+
+    public void addWarning(UUID uuid, String reason) {
+        List<String> warns = dataConfig.getStringList("warnings." + uuid);
+        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + reason;
+        warns.add(entry);
+        dataConfig.set("warnings." + uuid, warns);
+        saveDataFile();
+    }
+
+    public Map<String, Object> getTicketData(int id) {
+        Map<String, Object> m = new HashMap<>();
+        String base = "tickets." + id;
+        if (!dataConfig.contains(base)) return m;
+        m.put("id", id);
+        m.put("player", dataConfig.getString(base + ".player", ""));
+        m.put("message", dataConfig.getString(base + ".message", ""));
+        m.put("status", dataConfig.getString(base + ".status", "open"));
+        m.put("priority", dataConfig.getString(base + ".priority", "medium"));
+        m.put("category", dataConfig.getString(base + ".category", "other"));
+        m.put("assignee", dataConfig.getString(base + ".assignee", ""));
+        m.put("timestamp", dataConfig.getString(base + ".timestamp", ""));
+        m.put("responses", new ArrayList<>(dataConfig.getStringList(base + ".responses")));
+        return m;
+    }
+
+    public void addTicketResponse(int id, String admin, String message) {
+        String path = "tickets." + id + ".responses";
+        List<String> responses = dataConfig.getStringList(path);
+        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + admin + " | " + message;
+        responses.add(entry);
+        dataConfig.set(path, responses);
+        saveDataFile();
+    }
+
+    public void updateTicketField(int id, String field, String value) {
+        dataConfig.set("tickets." + id + "." + field, value);
+        saveDataFile();
+    }
+
+    public void resolveTicket(int id, String reason) {
+        dataConfig.set("tickets." + id + ".status", "resolved");
+        dataConfig.set("tickets." + id + ".resolution", reason);
+        saveDataFile();
+    }
+
+    public void mutePlayer(UUID u, String reason) {
+        List<String> m = dataConfig.getStringList("muted");
+        String id = u.toString();
+        if (!m.contains(id)) m.add(id);
+        dataConfig.set("muted", m);
+        saveDataFile();
+    }
+
+    public void unmutePlayer(UUID u) {
+        List<String> m = dataConfig.getStringList("muted");
+        m.remove(u.toString());
+        dataConfig.set("muted", m);
+        saveDataFile();
+    }
+
+    public void saveTemplate(String name, String content) {
+        dataConfig.set("templates." + name, content);
+        saveDataFile();
+    }
+
+    public String loadTemplate(String name) {
+        return dataConfig.getString("templates." + name, "");
+    }
+
+    public void trackPlayerIP(UUID uuid, String playerName, String ip) {
+        String key = "ips." + uuid;
+        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
+        List<String> ips = dataConfig.getStringList(key);
+        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + ip;
+        ips.add(entry);
+        if (ips.size() > 50) ips.remove(0);
+        dataConfig.set(key, ips);
+        saveDataFile();
+    }
+
+    public void trackSession(UUID uuid, String playerName, boolean login) {
+        String key = "sessions." + uuid;
+        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
+        List<String> sessions = dataConfig.getStringList(key);
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        sessions.add((login ? "LOGIN" : "LOGOUT") + " " + ts);
+        if (sessions.size() > 100) sessions.remove(0);
+        dataConfig.set(key, sessions);
+        saveDataFile();
+    }
+
+    public void addPlayerIp(UUID uuid, String ip) {
+        this.trackPlayerIP(uuid, Bukkit.getOfflinePlayer(uuid).getName(), ip);
+    }
+
+    public boolean isMuted(UUID uuid) {
+        if (!dataConfig.contains("muted")) return false;
+        List<String> muted = dataConfig.getStringList("muted");
+        return muted.stream().anyMatch(s -> s.startsWith(uuid.toString()));
+    }
+
+    private void fillGUIBorders(Inventory gui) {
+        for (int i = 0; i < 9; i++) {
+            if (gui.getItem(i) == null) gui.setItem(i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            if (gui.getItem(45 + i) == null) gui.setItem(45 + i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+        }
+        for (int i = 1; i < 5; i++) {
+            if (gui.getItem(i * 9) == null) gui.setItem(i * 9, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            if (gui.getItem(i * 9 + 8) == null) gui.setItem(i * 9 + 8, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+        }
+    }
+
+    private void fillGUIEmpty(Inventory gui) {
+        for (int i = 0; i < gui.getSize(); i++) {
+            if (gui.getItem(i) == null) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        }
+    }
+
+    private void addItemToGrid(Inventory gui, ItemStack item) {
+        int[] slotOffsets = new int[]{11,20,29,38};
+        int slotIndex = 0;
+        int rowIndex = 0;
+        for (int i = 0; i < gui.getSize(); i++) {
+            if (gui.getItem(i) != null || rowIndex >= slotOffsets.length) continue;
+            int baseSlot = slotOffsets[rowIndex];
+            int row = baseSlot / 9;
+            int col = baseSlot % 9;
+            int targetSlot = row * 9 + col + slotIndex;
+            if (slotIndex >= 7) continue;
+            gui.setItem(targetSlot, item);
+            if (++slotIndex == 7) { slotIndex = 0; rowIndex++; }
+            return;
+        }
+    }
+
+    private void resetGridSlots() { this.gridSlotIndex = 0; this.gridRowIndex = 0; }
+
+    private int getNextGridSlot() {
+        if (this.gridRowIndex >= 4) return -1;
+        int[] slotOffsets = new int[]{10,19,28,37};
+        int baseSlot = slotOffsets[this.gridRowIndex];
+        int slot = baseSlot + this.gridSlotIndex;
+        this.gridSlotIndex++;
+        if (this.gridSlotIndex >= 7) { this.gridSlotIndex = 0; this.gridRowIndex++; }
+        return slot;
+    }
+
+    public void scheduleRestart(long minutes) {
+        dataConfig.set("scheduled_restart", System.currentTimeMillis() + minutes * 60000L);
+        saveDataFile();
+    }
+
+    private String getChunkKey(Location loc) {
+        Chunk c = loc.getChunk();
+        return c.getWorld().getName() + ":" + c.getX() + ":" + c.getZ();
+    }
+
+    private String formatChunkCoordinates(String chunkKey) {
+        // Format: "world:chunkX:chunkZ" -> "startX startY startZ - endX endY endZ"
+        String[] parts = chunkKey.split(":");
+        if (parts.length != 3) return chunkKey;
+        
+        try {
+            int chunkX = Integer.parseInt(parts[1]);
+            int chunkZ = Integer.parseInt(parts[2]);
+            
+            int startX = chunkX * 16;
+            int startZ = chunkZ * 16;
+            int endX = startX + 15;
+            int endZ = startZ + 15;
+            
+            return startX + " 72 " + startZ + " - " + endX + " 72 " + endZ;
+        } catch (NumberFormatException e) {
+            return chunkKey;
+        }
+    }
+
+    private void highlightChunkCorners(Location loc) {
+        World world = loc.getWorld();
+        Chunk chunk = loc.getChunk();
+        int chunkX = chunk.getX();
+        int chunkZ = chunk.getZ();
+        int y = loc.getBlockY();
+        
+        // Four corners of the chunk
+        Location[] corners = {
+            new Location(world, chunkX * 16, y, chunkZ * 16),           // Northwest
+            new Location(world, chunkX * 16 + 15, y, chunkZ * 16),      // Northeast
+            new Location(world, chunkX * 16, y, chunkZ * 16 + 15),      // Southwest
+            new Location(world, chunkX * 16 + 15, y, chunkZ * 16 + 15)  // Southeast
+        };
+        
+        // Store original blocks and change to glowstone
+        for (Location corner : corners) {
+            String key = corner.getBlockX() + ":" + corner.getBlockY() + ":" + corner.getBlockZ() + ":" + world.getName();
+            Material original = corner.getBlock().getType();
+            chunksCornerBlocks.put(key, original);
+            corner.getBlock().setType(Material.GLOWSTONE);
+        }
+        
+        // Schedule revert after 4 seconds (80 ticks)
+        Bukkit.getScheduler().scheduleSyncDelayedTask(this, () -> {
+            for (Location corner : corners) {
+                String key = corner.getBlockX() + ":" + corner.getBlockY() + ":" + corner.getBlockZ() + ":" + world.getName();
+                Material original = chunksCornerBlocks.remove(key);
+                if (original != null) {
+                    corner.getBlock().setType(original);
+                }
+            }
+        }, 80L);
+    }
+
+    private int getChunkLimit(UUID uuid) {
+        int hours = (int) getPlaytimeHours(uuid);
+        return 16 + hours;
+    }
+
+    private List<String> getClaimedChunks(UUID uuid) {
+        return dataConfig.getStringList("claims." + uuid + ".claimed");
+    }
+
+    private void claimChunk(UUID uuid, String chunkKey) {
+        String path = "claims." + uuid + ".claimed";
+        List<String> claimed = dataConfig.getStringList(path);
+        if (!claimed.contains(chunkKey)) {
+            claimed.add(chunkKey);
+            dataConfig.set(path, claimed);
+            saveDataFile();
+        }
+    }
+
+    private void unclaimChunk(UUID uuid, String chunkKey) {
+        String path = "claims." + uuid + ".claimed";
+        List<String> claimed = dataConfig.getStringList(path);
+        claimed.remove(chunkKey);
+        dataConfig.set(path, claimed);
+        saveDataFile();
+    }
+
+    private void trustPlayer(UUID owner, String trustedName) {
+        String path = "claims." + owner + ".trusted";
+        List<String> trusted = dataConfig.getStringList(path);
+        if (!trusted.contains(trustedName)) {
+            trusted.add(trustedName);
+            dataConfig.set(path, trusted);
+            saveDataFile();
+        }
+    }
+
+    private void untrustPlayer(UUID owner, String trustedName) {
+        String path = "claims." + owner + ".trusted";
+        List<String> trusted = dataConfig.getStringList(path);
+        trusted.remove(trustedName);
+        dataConfig.set(path, trusted);
+        saveDataFile();
+    }
+
+    private boolean isChunkClaimed(String chunkKey) {
+        for (String key : dataConfig.getKeys(true)) {
+            if (key.contains("claims") && key.contains("claimed")) {
+                List<String> chunks = dataConfig.getStringList(key);
+                if (chunks.contains(chunkKey)) return true;
+            }
+        }
+        return false;
+    }
+
+    private UUID getChunkOwner(String chunkKey) {
+        for (String key : dataConfig.getKeys(true)) {
+            if (key.contains("claims") && key.contains("claimed")) {
+                List<String> chunks = dataConfig.getStringList(key);
+                if (chunks.contains(chunkKey)) {
+                    String[] parts = key.split("\\.");
+                    if (parts.length > 1) {
+                        try {
+                            return UUID.fromString(parts[1]);
+                        } catch (IllegalArgumentException e) {
+                            return null;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isTrustedInChunk(Player p, String chunkKey) {
+        UUID owner = getChunkOwner(chunkKey);
+        if (owner == null) return true;
+        if (p.getUniqueId().equals(owner)) return true;
+        
+        List<String> trusted = dataConfig.getStringList("claims." + owner + ".trusted");
+        return trusted.contains(p.getName());
+    }
+
+    private void startPlaytimeTracker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                String path = "playtime." + p.getUniqueId();
+                long currentMinutes = dataConfig.getLong(path, 0);
+                dataConfig.set(path, currentMinutes + 1);
+            }
+            saveDataFile();
+        }, 1200L, 1200L); // Run every 60 seconds
+    }
+
+    private void startPunishmentChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (String key : dataConfig.getKeys(true)) {
+                if (key.startsWith("punishments.")) {
+                    String uuidStr = key.replace("punishments.", "");
+                    try {
+                        UUID uuid = UUID.fromString(uuidStr);
+                        long expiry = dataConfig.getLong(key);
+                        if (System.currentTimeMillis() > expiry) {
+                            removePunishment(uuid);
+                        }
+                    } catch (IllegalArgumentException e) {
+                        // Invalid UUID format
+                    }
+                }
+            }
+        }, 20L, 20L); // Run every 1 second
+    }
+
+    private long parseDuration(String duration) {
+        if (duration == null || duration.isEmpty()) return -1;
+        
+        try {
+            String lower = duration.toLowerCase();
+            double value = 0;
+            long multiplier = 0;
+            
+            if (lower.endsWith("s")) {
+                value = Double.parseDouble(lower.substring(0, lower.length() - 1));
+                multiplier = 1000; // seconds to milliseconds
+            } else if (lower.endsWith("m")) {
+                value = Double.parseDouble(lower.substring(0, lower.length() - 1));
+                multiplier = 60 * 1000; // minutes to milliseconds
+            } else if (lower.endsWith("hr")) {
+                value = Double.parseDouble(lower.substring(0, lower.length() - 2));
+                multiplier = 60 * 60 * 1000; // hours to milliseconds
+            } else {
+                return -1;
+            }
+            
+            return (long) (value * multiplier);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
 }
