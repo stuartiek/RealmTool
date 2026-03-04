@@ -1,5 +1,5 @@
 name: DrowsyManagementTool
-version: 1.0
+version: 4.0
 main: com.stuart.javarealmtool.JavaRealmTool
 api-version: 1.21
 commands:

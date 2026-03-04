@@ -77,6 +77,21 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
 
     public String getApiKey() { return apiKey; }
 
+    public org.bukkit.configuration.file.FileConfiguration getDataConfig() { return dataConfig; }
+
+    public void saveDataConfig() { saveDataFile(); }
+
+    public boolean isPunished(UUID u) {
+        if (!dataConfig.contains("punishments." + u)) return false;
+        long expiry = dataConfig.getLong("punishments." + u);
+        if (System.currentTimeMillis() > expiry) {
+            dataConfig.set("punishments." + u, null);
+            saveDataFile();
+            return false;
+        }
+        return true;
+    }
+
     private void createDataFile() {
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) {
@@ -96,15 +111,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         if (punishTeam == null) punishTeam = scoreboard.registerNewTeam("DrowsyPunish");
         punishTeam.setPrefix(ChatColor.RED + "PUNISH ");
         punishTeam.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
-    }
-
-    private boolean isPunished(UUID u) {
-        if (!dataConfig.contains("punishments." + u)) return false;
-        if (System.currentTimeMillis() > dataConfig.getLong("punishments." + u)) {
-            removePunishment(u);
-            return false;
-        }
-        return true;
     }
 
     // --- COMMANDS ---
@@ -405,6 +411,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
         }
     }
 
+    @EventHandler
+    public void onChat(AsyncPlayerChatEvent e) {
+        addChatLog(e.getPlayer().getName(), e.getMessage());
+    }
+
     // --- HELPERS ---
     private void setPunished(UUID u, long d) {
         dataConfig.set("punishments." + u, System.currentTimeMillis() + d);
@@ -423,6 +434,36 @@ public class JavaRealmTool extends JavaPlugin implements Listener, CommandExecut
             punishTeam.removeEntry(p.getName());
             p.sendMessage(ChatColor.GREEN + "Punishment lifted.");
         }
+    }
+
+    public void logAction(String actor, String action, String target) {
+        if (!dataConfig.contains("action_history")) dataConfig.set("action_history", new ArrayList<>());
+        List<String> history = dataConfig.getStringList("action_history");
+        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+        history.add(ts + " | " + actor + " " + action + " " + target);
+        if (history.size() > 500) history.remove(0);
+        dataConfig.set("action_history", history);
+        saveDataFile();
+    }
+
+    public void addWarning(UUID u, String reason) {
+        String key = "warnings." + u;
+        if (!dataConfig.contains(key)) dataConfig.set(key, new ArrayList<>());
+        List<String> warnings = dataConfig.getStringList(key);
+        String ts = new SimpleDateFormat("HH:mm").format(new Date());
+        warnings.add(reason + " (" + ts + ")");
+        dataConfig.set(key, warnings);
+        saveDataFile();
+    }
+
+    public void addChatLog(String player, String message) {
+        if (!dataConfig.contains("chat_history")) dataConfig.set("chat_history", new ArrayList<>());
+        List<String> history = dataConfig.getStringList("chat_history");
+        String ts = new SimpleDateFormat("HH:mm").format(new Date());
+        history.add(ts + " " + player + ": " + message);
+        if (history.size() > 100) history.remove(0);
+        dataConfig.set("chat_history", history);
+        saveDataFile();
     }
     private void saveLog(Location loc, String msg) {
         if (loc == null) return;

@@ -83,7 +83,7 @@
                 <directory>src/main/resources</directory>
                 <filtering>false</filtering>
                 <includes>
-                    <include>web/**</include>
+                    <include>webapp/**</include>
                 </includes>
             </resource>
         </resources>
