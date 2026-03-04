@@ -3,14 +3,17 @@ version: 1.0
 main: com.stuart.javarealmtool.JavaRealmTool
 api-version: 1.21
 commands:
-  rmt:
+  dmt:
     description: Main management command
-    permission: rmt.admin
-    usage: /rmt
+    permission: dmt.admin
+    usage: /dmt help
   ticket:
     description: Submit a ticket
     usage: /ticket new <message>
+  tpa:
+    description: Teleport request system
+    usage: /tpa accept|deny <player>
 permissions:
-  rmt.admin:
+  dmt.admin:
     description: Allows use of admin tools
     default: op
