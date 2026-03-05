@@ -1855,16 +1855,13 @@
 
     async function loadMuted() {
         const muted = await apiCall('/muted');
-        const html = muted ? muted.map(m => {
-            const parts = m.split('|');
-            return `
+        const html = muted && muted.length ? muted.map(m => `
                 <tr>
-                    <td>${parts[0] || 'Unknown'}</td>
-                    <td>${parts[1] || 'No reason'}</td>
-                    <td><button onclick="unmutePlayer('${parts[0]}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unmute</button></td>
+                    <td>${m.name || 'Unknown'}</td>
+                    <td>${m.reason || 'No reason'}</td>
+                    <td><button onclick="unmutePlayer('${m.name}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unmute</button></td>
                 </tr>
-            `;
-        }).join('') : '<tr><td colspan="3">No muted players</td></tr>';
+            `).join('') : '<tr><td colspan="3">No muted players</td></tr>';
         document.getElementById('muted-list').innerHTML = html;
     }
 
@@ -1905,15 +1902,45 @@
         let html = '';
         if (templates && Object.keys(templates).length > 0) {
             html = Object.entries(templates).map(([name, content]) => `
-                <div style="background: #2d2d30; padding: 15px; margin: 10px 0; border-radius: 4px;">
-                    <h4>${name}</h4>
-                    <p>${content}</p>
+                <div style="background: #2d2d30; padding: 15px; margin: 10px 0; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h4 style="margin-bottom: 5px;">${name}</h4>
+                        <p style="color: #ccc;">${content}</p>
+                    </div>
+                    <div style="display: flex; gap: 5px; flex-shrink: 0;">
+                        <button onclick="useTemplate('${content.replace(/'/g, "\\'")}')" class="btn-success" style="padding: 6px 12px; font-size: 11px;">📋 Use</button>
+                        <button onclick="deleteTemplate('${name.replace(/'/g, "\\'")}')" class="btn-danger" style="padding: 6px 12px; font-size: 11px;">🗑️ Delete</button>
+                    </div>
                 </div>
             `).join('');
         } else {
             html = 'No templates saved';
         }
         document.getElementById('templates-list').innerHTML = html;
+    }
+
+    function useTemplate(content) {
+        navigator.clipboard.writeText(content).then(() => {
+            alert('Template copied to clipboard!');
+        }).catch(() => {
+            // Fallback: fill into broadcast field if clipboard fails
+            const broadcastField = document.getElementById('broadcast-msg');
+            if (broadcastField) broadcastField.value = content;
+            alert('Template pasted into broadcast field!');
+        });
+    }
+
+    async function deleteTemplate(name) {
+        if (!confirm('Delete template "' + name + '"?')) return;
+        try {
+            const url = `${API_URL}/template/delete`;
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            loadTemplates();
+        } catch (e) { console.error('Error deleting template:', e); }
     }
 
     async function loadWorlds() {
@@ -3175,23 +3202,59 @@
     }
 
     async function loadMaintenanceMode() {
-        console.log('Loading maintenance mode...');
-        // TODO: Fetch /api/maintenance/status
+        const data = await apiCall('/maintenance');
+        if (!data) return;
+        document.getElementById('maintenance-status').value = data.enabled ? 'on' : 'off';
+        document.getElementById('maintenance-msg').value = data.message || '';
+        document.getElementById('maintenance-end').value = data.endTime || '';
+        const whitelist = data.whitelist || [];
+        document.getElementById('maintenance-whitelist-table').innerHTML = whitelist.length > 0
+            ? whitelist.map(p => `<tr><td>${p}</td><td><button class="btn-danger" style="padding:4px 8px;font-size:11px;" onclick="removeMaintenanceWhitelist('${p}')">Remove</button></td></tr>`).join('')
+            : '<tr><td colspan="2" style="text-align:center;color:#999;">No exempt players</td></tr>';
     }
 
     async function setMaintenance() {
         const status = document.getElementById('maintenance-status').value;
         const msg = document.getElementById('maintenance-msg').value;
         const endTime = document.getElementById('maintenance-end').value;
-        console.log('Setting maintenance', status, msg, endTime);
-        // TODO: POST /api/maintenance/set
+        try {
+            const url = `${API_URL}/maintenance/set`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status, message: msg, endTime })
+            });
+            if (response.ok) {
+                alert('Maintenance mode ' + (status === 'on' ? 'enabled' : 'disabled') + '!');
+                loadMaintenanceMode();
+            }
+        } catch (e) { console.error('Error setting maintenance:', e); }
     }
 
     async function addMaintenanceWhitelist() {
         const player = document.getElementById('maintenance-whitelist-player').value;
         if (!player) return;
-        console.log('Adding to whitelist', player);
-        // TODO: POST /api/maintenance/whitelist/add
+        try {
+            const url = `${API_URL}/maintenance/whitelist/add`;
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ player })
+            });
+            document.getElementById('maintenance-whitelist-player').value = '';
+            loadMaintenanceMode();
+        } catch (e) { console.error('Error adding to whitelist:', e); }
+    }
+
+    async function removeMaintenanceWhitelist(player) {
+        try {
+            const url = `${API_URL}/maintenance/whitelist/${encodeURIComponent(player)}`;
+            await fetch(url, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${API_KEY}` }
+            });
+            loadMaintenanceMode();
+        } catch (e) { console.error('Error removing from whitelist:', e); }
     }
 
     async function createPermissionGroup() {

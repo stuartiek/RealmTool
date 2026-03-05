@@ -549,7 +549,27 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> plugin.getDataConfig().getStringList("muted"));
+            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<String> raw = plugin.getDataConfig().getStringList("muted");
+                List<Map<String, String>> result = new ArrayList<>();
+                for (String entry : raw) {
+                    Map<String, String> m = new HashMap<>();
+                    String[] parts = entry.split("\\|", 3);
+                    if (parts.length >= 3) {
+                        m.put("uuid", parts[0]);
+                        m.put("name", parts[1]);
+                        m.put("reason", parts[2]);
+                    } else if (parts.length == 1) {
+                        // Legacy UUID-only entry
+                        String name = Bukkit.getOfflinePlayer(UUID.fromString(parts[0])).getName();
+                        m.put("uuid", parts[0]);
+                        m.put("name", name != null ? name : parts[0]);
+                        m.put("reason", "No reason");
+                    }
+                    result.add(m);
+                }
+                return result;
+            });
             ctx.json(future.get());
         });
 
@@ -581,7 +601,7 @@ public class WebServer {
                 final String finalReason = reasonParam;
             Bukkit.getScheduler().runTask(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(targetPlayer).getUniqueId();
-                plugin.mutePlayer(uuid, finalReason != null ? finalReason : "No reason");
+                plugin.mutePlayer(uuid, targetPlayer, finalReason != null ? finalReason : "No reason");
                 plugin.logAction("WebAdmin", "muted", targetPlayer);
             });
             ctx.result("OK");
@@ -653,8 +673,13 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> new HashMap<>(plugin.getDataConfig().getConfigurationSection("templates").getValues(false)));
-            try { ctx.json(future.get()); } catch (Exception e) { ctx.json(new HashMap<>()); }
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (plugin.getDataConfig().contains("templates") && plugin.getDataConfig().getConfigurationSection("templates") != null) {
+                    return new HashMap<>(plugin.getDataConfig().getConfigurationSection("templates").getValues(false));
+                }
+                return new HashMap<String, Object>();
+            });
+            ctx.json(future.get());
         });
 
         app.post("/api/template/save", ctx -> {
@@ -662,11 +687,50 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            String name = ctx.queryParam("name");
-            String content = ctx.queryParam("content");
+            String name = null;
+            String content = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    name = (String) bodyMap.get("name");
+                    content = (String) bodyMap.get("content");
+                }
+            } catch (Exception e) { /* ignore */ }
+            if (name == null) name = ctx.queryParam("name");
+            if (content == null) content = ctx.queryParam("content");
+            if (name == null || content == null) { ctx.status(400).result("Missing name or content"); return; }
+            final String fName = name;
+            final String fContent = content;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.saveTemplate(name, content);
-                plugin.logAction("WebAdmin", "saved template", name);
+                plugin.saveTemplate(fName, fContent);
+                plugin.logAction("WebAdmin", "saved template", fName);
+            });
+            ctx.result("OK");
+        });
+
+        app.post("/api/template/delete", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String name = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    name = (String) bodyMap.get("name");
+                }
+            } catch (Exception e) { /* ignore */ }
+            if (name == null) name = ctx.queryParam("name");
+            if (name == null) { ctx.status(400).result("Missing name"); return; }
+            final String fName = name;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("templates." + fName, null);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", "deleted template", fName);
             });
             ctx.result("OK");
         });
@@ -859,6 +923,136 @@ public class WebServer {
                 return recent.stream().limit(50).collect(Collectors.toList());
             });
             ctx.json(future.get());
+        });
+
+        // --- MAINTENANCE MODE ---
+        app.get("/api/maintenance", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> res = new HashMap<>();
+                res.put("enabled", plugin.getDataConfig().getBoolean("maintenance.enabled", false));
+                res.put("message", plugin.getDataConfig().getString("maintenance.message", "Server is under maintenance..."));
+                res.put("endTime", plugin.getDataConfig().getString("maintenance.endTime", ""));
+                res.put("whitelist", plugin.getDataConfig().getStringList("maintenance.whitelist"));
+                return res;
+            });
+            ctx.json(future.get());
+        });
+
+        app.post("/api/maintenance/set", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            String status = null;
+            String message = null;
+            String endTime = null;
+
+            // Parse JSON body first
+            try {
+                String body = ctx.body();
+                Bukkit.getLogger().info("[Maintenance] Received body: " + body);
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    status = (String) bodyMap.get("status");
+                    message = (String) bodyMap.get("message");
+                    endTime = (String) bodyMap.get("endTime");
+                }
+            } catch (Exception e) {
+                Bukkit.getLogger().warning("[Maintenance] Failed to parse body: " + e.getMessage());
+            }
+
+            // Fallback to query params
+            if (status == null) status = ctx.queryParam("status");
+            if (message == null) message = ctx.queryParam("message");
+            if (endTime == null) endTime = ctx.queryParam("endTime");
+
+            Bukkit.getLogger().info("[Maintenance] status=" + status + " message=" + message + " endTime=" + endTime);
+
+            if (status == null) {
+                ctx.status(400).result("Missing status parameter");
+                return;
+            }
+
+            final boolean enabled = "on".equalsIgnoreCase(status);
+            final String fMessage = (message != null && !message.isEmpty()) ? message : "Server is under maintenance...";
+            final String fEndTime = endTime;
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("maintenance.enabled", enabled);
+                plugin.getDataConfig().set("maintenance.message", fMessage);
+                if (fEndTime != null) plugin.getDataConfig().set("maintenance.endTime", fEndTime);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", enabled ? "enabled" : "disabled", "maintenance mode");
+                Bukkit.getLogger().info("[Maintenance] Mode set to " + (enabled ? "ON" : "OFF"));
+
+                if (enabled) {
+                    Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.RED + fMessage);
+                    List<String> whitelist = plugin.getDataConfig().getStringList("maintenance.whitelist");
+                    for (Player p : Bukkit.getOnlinePlayers()) {
+                        if (!whitelist.contains(p.getName())) {
+                            p.kickPlayer(ChatColor.RED + fMessage);
+                        }
+                    }
+                } else {
+                    Bukkit.broadcastMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.GREEN + "Maintenance mode has been disabled.");
+                }
+            });
+            ctx.result("OK");
+        });
+
+        app.post("/api/maintenance/whitelist/add", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            String player = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    player = (String) bodyMap.get("player");
+                }
+            } catch (Exception e) { /* ignore */ }
+            if (player == null) player = ctx.queryParam("player");
+
+            final String fPlayer = player;
+            if (fPlayer == null || fPlayer.isEmpty()) { ctx.status(400).result("Missing player"); return; }
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                List<String> whitelist = new ArrayList<>(plugin.getDataConfig().getStringList("maintenance.whitelist"));
+                if (!whitelist.contains(fPlayer)) {
+                    whitelist.add(fPlayer);
+                    plugin.getDataConfig().set("maintenance.whitelist", whitelist);
+                    plugin.saveDataFile();
+                    plugin.logAction("WebAdmin", "added to maintenance whitelist", fPlayer);
+                }
+            });
+            ctx.result("OK");
+        });
+
+        app.delete("/api/maintenance/whitelist/{player}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            String player = ctx.pathParam("player");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                List<String> whitelist = new ArrayList<>(plugin.getDataConfig().getStringList("maintenance.whitelist"));
+                whitelist.remove(player);
+                plugin.getDataConfig().set("maintenance.whitelist", whitelist);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", "removed from maintenance whitelist", player);
+            });
+            ctx.result("OK");
         });
     }
 
