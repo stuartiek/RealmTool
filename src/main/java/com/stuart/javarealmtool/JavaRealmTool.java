@@ -1760,6 +1760,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLogin(PlayerLoginEvent e) {
+        if (dataConfig.getBoolean("maintenance.enabled", false)) {
+            String name = e.getPlayer().getName();
+            List<String> whitelist = dataConfig.getStringList("maintenance.whitelist");
+            boolean isExempt = whitelist.contains(name);
+            if (!isExempt) {
+                String msg = dataConfig.getString("maintenance.message", "Server is under maintenance...");
+                e.disallow(PlayerLoginEvent.Result.KICK_OTHER, ChatColor.RED + msg);
+            }
+        }
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         UUID uuid = e.getPlayer().getUniqueId();
@@ -1829,6 +1842,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
+        if (isMuted(e.getPlayer().getUniqueId())) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "You are muted and cannot chat.");
+            return;
+        }
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
     }
 
@@ -2047,17 +2065,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         saveDataFile();
     }
 
-    public void mutePlayer(UUID u, String reason) {
-        List<String> m = dataConfig.getStringList("muted");
-        String id = u.toString();
-        if (!m.contains(id)) m.add(id);
+    public void mutePlayer(UUID u, String playerName, String reason) {
+        List<String> m = new ArrayList<>(dataConfig.getStringList("muted"));
+        // Remove existing entry for this player
+        m.removeIf(s -> s.startsWith(u.toString() + "|"));
+        m.add(u.toString() + "|" + playerName + "|" + (reason != null ? reason : "No reason"));
         dataConfig.set("muted", m);
         saveDataFile();
     }
 
     public void unmutePlayer(UUID u) {
-        List<String> m = dataConfig.getStringList("muted");
-        m.remove(u.toString());
+        List<String> m = new ArrayList<>(dataConfig.getStringList("muted"));
+        m.removeIf(s -> s.startsWith(u.toString() + "|") || s.equals(u.toString()));
         dataConfig.set("muted", m);
         saveDataFile();
     }
