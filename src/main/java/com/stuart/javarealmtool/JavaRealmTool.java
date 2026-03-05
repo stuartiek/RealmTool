@@ -1820,17 +1820,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         this.logAction("System", "player_joined", e.getPlayer().getName());
 
         // Give admin tool if missing
-        if (e.getPlayer().hasPermission("dmt.admin")) {
-            boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
-            if (!hasTool) {
-                ItemStack tool = new ItemStack(Material.DIAMOND);
-                ItemMeta m = tool.getItemMeta();
-                m.setDisplayName(TOOL_NAME);
-                m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
-                m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-                tool.setItemMeta(m);
-                e.getPlayer().getInventory().addItem(tool);
-            }
+        boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
+        if (!hasTool) {
+            ItemStack tool = new ItemStack(Material.DIAMOND);
+            ItemMeta m = tool.getItemMeta();
+            m.setDisplayName(TOOL_NAME);
+            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            tool.setItemMeta(m);
+            e.getPlayer().getInventory().addItem(tool);
         }
     }
 
