@@ -34,6 +34,24 @@ commands:
   crate:
     description: Open crate menu
     usage: /crate
+  nick:
+    description: Set or reset your nickname
+    usage: /nick [name]
+  rules:
+    description: View server rules
+    usage: /rules
+  duel:
+    description: Challenge a player to a duel
+    usage: /duel <player> [wager]
+  pwarp:
+    description: Player warp system
+    usage: /pwarp [set|delete <name>]
+  achievements:
+    description: View your achievements
+    usage: /achievements
+  stats:
+    description: View PvP stats
+    usage: /stats [player]
 permissions:
   dmt.admin:
     description: Allows use of admin tools

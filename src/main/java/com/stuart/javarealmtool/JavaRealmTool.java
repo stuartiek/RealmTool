@@ -75,12 +75,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_BOUNTY_LIST = ChatColor.RED + "Bounties";
     private final String GUI_SHOP_LIST = ChatColor.GREEN + "Player Shops";
     private final String GUI_QUEST_LIST = ChatColor.GOLD + "Quests";
+    private final String GUI_AUCTION_HOUSE = ChatColor.GOLD + "Auction House";
+    private final String GUI_DUEL_CONFIRM = ChatColor.RED + "Duel Request: ";
+    private final String GUI_PWARP_LIST = ChatColor.AQUA + "Player Warps";
+    private final String GUI_ACHIEVEMENTS = ChatColor.GOLD + "Achievements";
     private final Map<UUID, Long> kitCooldowns = new HashMap<>();
     private final Map<UUID, String> pendingShopAction = new HashMap<>();
     private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
     private final List<String> chatFilterWords = new ArrayList<>();
     private final Map<UUID, Integer> spamCounter = new HashMap<>();
     private final Map<UUID, Long> lastChatTime = new HashMap<>();
+    private final Map<UUID, UUID> duelRequests = new HashMap<>();
+    final Map<UUID, Integer> duelWagers = new HashMap<>();
+    final Map<UUID, UUID> activeDuels = new HashMap<>();
+    private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
 
     private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
     private static class PunishmentContext {
@@ -107,6 +115,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
         if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
         if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
+        if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
+        if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
+        if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
+        if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
+        if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
+        if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -122,6 +136,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         // Start playtime rewards checker (every 5 min = 6000 ticks)
         startPlaytimeRewardsChecker();
+
+        // Start scheduled announcements (every 60 seconds = 1200 ticks)
+        startScheduledAnnouncements();
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
@@ -270,13 +287,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (!(sender instanceof Player p)) return true;
 
         if (cmd.getName().equalsIgnoreCase("dmt")) {
-            if (!p.hasPermission("dmt.admin")) {
-                p.sendMessage(ChatColor.RED + "No permission.");
+            if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
+                sendHelpMessage(p);
                 return true;
             }
 
-            if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
-                sendHelpMessage(p);
+            if (!p.hasPermission("dmt.admin")) {
+                p.sendMessage(ChatColor.RED + "No permission.");
                 return true;
             }
 
@@ -497,17 +514,237 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             }
             return true;
         }
+
+        // ========== NICKNAME ==========
+        if (cmd.getName().equalsIgnoreCase("nick")) {
+            if (args.length == 0) {
+                // Reset nickname
+                String current = dataConfig.getString("nicknames." + p.getUniqueId(), "");
+                if (!current.isEmpty()) {
+                    dataConfig.set("nicknames." + p.getUniqueId(), null);
+                    saveDataFile();
+                    p.setDisplayName(p.getName());
+                    p.sendMessage(ChatColor.GREEN + "Nickname removed.");
+                } else {
+                    p.sendMessage(ChatColor.YELLOW + "Usage: /nick <name> or /nick to reset");
+                }
+            } else {
+                String nick = String.join(" ", args);
+                String colored = ChatColor.translateAlternateColorCodes('&', nick);
+                dataConfig.set("nicknames." + p.getUniqueId(), nick);
+                saveDataFile();
+                p.setDisplayName(colored);
+                p.sendMessage(ChatColor.GREEN + "Nickname set to: " + colored);
+            }
+            return true;
+        }
+
+        // ========== RULES ==========
+        if (cmd.getName().equalsIgnoreCase("rules")) {
+            List<String> rules = dataConfig.getStringList("server_rules");
+            if (rules.isEmpty()) {
+                p.sendMessage(ChatColor.YELLOW + "No server rules have been set yet.");
+            } else {
+                p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "Server Rules" + ChatColor.GOLD + " =====");
+                for (int i = 0; i < rules.size(); i++) {
+                    p.sendMessage(ChatColor.YELLOW + "" + (i + 1) + ". " + ChatColor.WHITE + ChatColor.translateAlternateColorCodes('&', rules.get(i)));
+                }
+            }
+            return true;
+        }
+
+        // ========== DUEL ==========
+        if (cmd.getName().equalsIgnoreCase("duel")) {
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.RED + "Usage: /duel <player> [wager]  or  /duel accept  or  /duel deny");
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("accept")) {
+                UUID requesterId = null;
+                for (Map.Entry<UUID, UUID> entry : duelRequests.entrySet()) {
+                    if (entry.getValue().equals(p.getUniqueId())) { requesterId = entry.getKey(); break; }
+                }
+                if (requesterId == null) { p.sendMessage(ChatColor.RED + "No pending duel request."); return true; }
+                Player requester = Bukkit.getPlayer(requesterId);
+                if (requester == null) { p.sendMessage(ChatColor.RED + "Requester is offline."); duelRequests.remove(requesterId); return true; }
+                int wager = duelWagers.getOrDefault(requesterId, 0);
+                if (wager > 0) {
+                    if (p.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Not enough XP for wager (" + wager + " levels)."); return true; }
+                    if (requester.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Requester no longer has enough XP."); duelRequests.remove(requesterId); return true; }
+                }
+                // Start duel
+                duelRequests.remove(requesterId);
+                activeDuels.put(requesterId, p.getUniqueId());
+                activeDuels.put(p.getUniqueId(), requesterId);
+                duelReturnLocations.put(requesterId, requester.getLocation());
+                duelReturnLocations.put(p.getUniqueId(), p.getLocation());
+                requester.sendMessage(ChatColor.GREEN + "⚔ Duel started with " + p.getName() + "!" + (wager > 0 ? " Wager: " + wager + " XP" : ""));
+                p.sendMessage(ChatColor.GREEN + "⚔ Duel started with " + requester.getName() + "!" + (wager > 0 ? " Wager: " + wager + " XP" : ""));
+                logAction(p.getName(), "duel_started", requester.getName() + (wager > 0 ? " wager:" + wager : ""));
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("deny")) {
+                UUID requesterId = null;
+                for (Map.Entry<UUID, UUID> entry : duelRequests.entrySet()) {
+                    if (entry.getValue().equals(p.getUniqueId())) { requesterId = entry.getKey(); break; }
+                }
+                if (requesterId != null) {
+                    Player requester = Bukkit.getPlayer(requesterId);
+                    if (requester != null) requester.sendMessage(ChatColor.RED + p.getName() + " denied your duel request.");
+                    duelRequests.remove(requesterId);
+                    duelWagers.remove(requesterId);
+                    p.sendMessage(ChatColor.YELLOW + "Duel request denied.");
+                } else {
+                    p.sendMessage(ChatColor.RED + "No pending duel request.");
+                }
+                return true;
+            }
+            // Send duel request
+            Player target = Bukkit.getPlayer(args[0]);
+            if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+            if (target.equals(p)) { p.sendMessage(ChatColor.RED + "Can't duel yourself."); return true; }
+            int wager = 0;
+            if (args.length > 1) {
+                try { wager = Integer.parseInt(args[1]); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Invalid wager amount."); return true; }
+                if (wager < 0) wager = 0;
+                if (wager > 0 && p.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Not enough XP for wager."); return true; }
+            }
+            duelRequests.put(p.getUniqueId(), target.getUniqueId());
+            if (wager > 0) duelWagers.put(p.getUniqueId(), wager);
+            p.sendMessage(ChatColor.GREEN + "⚔ Duel request sent to " + target.getName() + (wager > 0 ? " with " + wager + " XP wager" : ""));
+            target.sendMessage(ChatColor.GOLD + "⚔ " + ChatColor.YELLOW + p.getName() + ChatColor.GOLD + " challenged you to a duel!" + (wager > 0 ? " Wager: " + ChatColor.AQUA + wager + " XP" : ""));
+            target.sendMessage(ChatColor.GREEN + "/duel accept" + ChatColor.WHITE + " or " + ChatColor.RED + "/duel deny");
+            return true;
+        }
+
+        // ========== PLAYER WARPS ==========
+        if (cmd.getName().equalsIgnoreCase("pwarp")) {
+            if (args.length == 0) {
+                openPwarpListGUI(p);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("set") && args.length >= 2) {
+                String warpName = args[1];
+                int cost = dataConfig.getInt("pwarp_cost", 5);
+                if (p.getLevel() < cost) { p.sendMessage(ChatColor.RED + "Need " + cost + " XP levels to create a warp."); return true; }
+                // Limit per player
+                int max = dataConfig.getInt("pwarp_max", 3);
+                int count = 0;
+                if (dataConfig.contains("pwarps")) {
+                    for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+                        if (dataConfig.getString("pwarps." + id + ".owner", "").equals(p.getUniqueId().toString())) count++;
+                    }
+                }
+                if (count >= max) { p.sendMessage(ChatColor.RED + "Max " + max + " player warps."); return true; }
+                p.setLevel(p.getLevel() - cost);
+                String id = warpName.toLowerCase().replace(" ", "_");
+                dataConfig.set("pwarps." + id + ".name", warpName);
+                dataConfig.set("pwarps." + id + ".owner", p.getUniqueId().toString());
+                dataConfig.set("pwarps." + id + ".ownerName", p.getName());
+                dataConfig.set("pwarps." + id + ".x", p.getLocation().getX());
+                dataConfig.set("pwarps." + id + ".y", p.getLocation().getY());
+                dataConfig.set("pwarps." + id + ".z", p.getLocation().getZ());
+                dataConfig.set("pwarps." + id + ".world", p.getWorld().getName());
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Player warp '" + warpName + "' created!");
+                logAction(p.getName(), "pwarp_created", warpName);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("delete") && args.length >= 2) {
+                String id = args[1].toLowerCase().replace(" ", "_");
+                String owner = dataConfig.getString("pwarps." + id + ".owner", "");
+                if (!owner.equals(p.getUniqueId().toString()) && !p.hasPermission("dmt.admin")) {
+                    p.sendMessage(ChatColor.RED + "That's not your warp."); return true;
+                }
+                dataConfig.set("pwarps." + id, null);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Player warp deleted.");
+                return true;
+            }
+            // Teleport to warp
+            if (args.length >= 1) {
+                String id = args[0].toLowerCase().replace(" ", "_");
+                if (dataConfig.contains("pwarps." + id)) {
+                    World w = Bukkit.getWorld(dataConfig.getString("pwarps." + id + ".world", "world"));
+                    if (w != null) {
+                        Location loc = new Location(w,
+                            dataConfig.getDouble("pwarps." + id + ".x"),
+                            dataConfig.getDouble("pwarps." + id + ".y"),
+                            dataConfig.getDouble("pwarps." + id + ".z"));
+                        p.teleport(loc);
+                        dataConfig.set("pwarps." + id + ".visits", dataConfig.getInt("pwarps." + id + ".visits", 0) + 1);
+                        saveDataFile();
+                        p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + id + ".name", id));
+                    }
+                } else {
+                    p.sendMessage(ChatColor.RED + "Warp not found. Use /pwarp to browse.");
+                }
+                return true;
+            }
+            return true;
+        }
+
+        // ========== ACHIEVEMENTS ==========
+        if (cmd.getName().equalsIgnoreCase("achievements")) {
+            openAchievementsGUI(p);
+            return true;
+        }
+
+        // ========== STATS (K/D) ==========
+        if (cmd.getName().equalsIgnoreCase("stats")) {
+            Player target = args.length > 0 ? Bukkit.getPlayer(args[0]) : p;
+            if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+            UUID tid = target.getUniqueId();
+            int kills = dataConfig.getInt("pvpstats." + tid + ".kills", 0);
+            int deaths = dataConfig.getInt("pvpstats." + tid + ".deaths", 0);
+            double kd = deaths > 0 ? Math.round((double) kills / deaths * 100.0) / 100.0 : kills;
+            int streak = dataConfig.getInt("pvpstats." + tid + ".streak", 0);
+            int bestStreak = dataConfig.getInt("pvpstats." + tid + ".best_streak", 0);
+            p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + target.getName() + "'s Stats" + ChatColor.GOLD + " =====");
+            p.sendMessage(ChatColor.GREEN + "Kills: " + ChatColor.WHITE + kills);
+            p.sendMessage(ChatColor.RED + "Deaths: " + ChatColor.WHITE + deaths);
+            p.sendMessage(ChatColor.YELLOW + "K/D Ratio: " + ChatColor.WHITE + kd);
+            p.sendMessage(ChatColor.AQUA + "Current Streak: " + ChatColor.WHITE + streak);
+            p.sendMessage(ChatColor.LIGHT_PURPLE + "Best Streak: " + ChatColor.WHITE + bestStreak);
+            return true;
+        }
+
         return true;
     }
 
     private void sendHelpMessage(Player p) {
-        p.sendMessage(ChatColor.GOLD + "=== " + ChatColor.AQUA + "Drowsy Management Tool" + ChatColor.GOLD + " ===");
-        p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Opens the management GUI");
-        p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set punishment location");
-        p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
-        p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail location");
-        p.sendMessage(ChatColor.AQUA + "/dmt help" + ChatColor.WHITE + " - Show this help message");
-        p.sendMessage(ChatColor.AQUA + "/ticket new <message>" + ChatColor.WHITE + " - Submit a ticket");
+        p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "DrowsyCraft" + ChatColor.GOLD + " =====");
+        p.sendMessage("");
+        p.sendMessage(ChatColor.YELLOW + "" + ChatColor.BOLD + "Player Commands:");
+        p.sendMessage(ChatColor.GREEN + "/kit" + ChatColor.WHITE + " - Browse and claim kits");
+        p.sendMessage(ChatColor.GREEN + "/crate" + ChatColor.WHITE + " - Open the crate menu");
+        p.sendMessage(ChatColor.GREEN + "/bounty" + ChatColor.WHITE + " - View the bounty board");
+        p.sendMessage(ChatColor.GREEN + "/bounty set <player> <amount>" + ChatColor.WHITE + " - Place a bounty");
+        p.sendMessage(ChatColor.GREEN + "/shop" + ChatColor.WHITE + " - Browse player shops");
+        p.sendMessage(ChatColor.GREEN + "/shop sell <item> <amount> <price>" + ChatColor.WHITE + " - Sell an item");
+        p.sendMessage(ChatColor.GREEN + "/quest" + ChatColor.WHITE + " - View quests & claim rewards");
+        p.sendMessage(ChatColor.GREEN + "/vote" + ChatColor.WHITE + " - View active polls");
+        p.sendMessage(ChatColor.GREEN + "/vote <pollId> <option#>" + ChatColor.WHITE + " - Vote on a poll");
+        p.sendMessage(ChatColor.GREEN + "/apply <message>" + ChatColor.WHITE + " - Submit a staff application");
+        p.sendMessage(ChatColor.GREEN + "/ticket new <message>" + ChatColor.WHITE + " - Submit a ticket");
+        p.sendMessage(ChatColor.GREEN + "/tpa accept|deny <player>" + ChatColor.WHITE + " - Teleport requests");
+        p.sendMessage(ChatColor.GREEN + "/nick <name>" + ChatColor.WHITE + " - Set your nickname (& color codes)");
+        p.sendMessage(ChatColor.GREEN + "/rules" + ChatColor.WHITE + " - View server rules");
+        p.sendMessage(ChatColor.GREEN + "/duel <player> [wager]" + ChatColor.WHITE + " - Challenge to a duel");
+        p.sendMessage(ChatColor.GREEN + "/pwarp" + ChatColor.WHITE + " - Browse player warps");
+        p.sendMessage(ChatColor.GREEN + "/pwarp set <name>" + ChatColor.WHITE + " - Create a player warp");
+        p.sendMessage(ChatColor.GREEN + "/achievements" + ChatColor.WHITE + " - View your achievements");
+        p.sendMessage(ChatColor.GREEN + "/stats [player]" + ChatColor.WHITE + " - View PvP stats");
+
+        if (p.hasPermission("dmt.admin")) {
+            p.sendMessage("");
+            p.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "Admin Commands:");
+            p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Opens the management GUI");
+            p.sendMessage(ChatColor.AQUA + "/dmt punish <player> <duration>" + ChatColor.WHITE + " - Punish a player");
+            p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set punishment location");
+            p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
+            p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail");
+        }
     }
 
     // --- CHAT LISTENER (Broadcasts, Notes, Reasons) ---
@@ -1536,7 +1773,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)
             && !title.equals(GUI_KIT_LIST) && !title.startsWith(GUI_KIT_PREVIEW) && !title.startsWith(GUI_KIT_CONFIRM)
             && !title.equals(GUI_CRATE_LIST) && !title.equals(GUI_BOUNTY_LIST)
-            && !title.equals(GUI_SHOP_LIST) && !title.equals(GUI_QUEST_LIST)) return;
+            && !title.equals(GUI_SHOP_LIST) && !title.equals(GUI_QUEST_LIST)
+            && !title.equals(GUI_AUCTION_HOUSE) && !title.equals(GUI_PWARP_LIST) && !title.equals(GUI_ACHIEVEMENTS)) return;
 
         e.setCancelled(true);
         if (e.getCurrentItem() == null) return;
@@ -1702,6 +1940,69 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     }
                 }
             }
+            return;
+        }
+
+        // Auction House GUI click
+        if (title.equals(GUI_AUCTION_HOUSE)) {
+            if (type == Material.BARRIER) { p.closeInventory(); return; }
+            ItemMeta meta = e.getCurrentItem().getItemMeta();
+            if (meta != null && meta.hasLore()) {
+                String auctionId = null;
+                for (String line : meta.getLore()) {
+                    String stripped = ChatColor.stripColor(line);
+                    if (stripped.startsWith("ID:")) { auctionId = stripped.substring(3); break; }
+                }
+                if (auctionId != null) {
+                    int currentBid = dataConfig.getInt("auctions." + auctionId + ".currentBid", 0);
+                    int nextBid = currentBid + dataConfig.getInt("auctions." + auctionId + ".bidIncrement", 5);
+                    if (p.getLevel() < nextBid) { p.sendMessage(ChatColor.RED + "Not enough XP to bid (" + nextBid + " levels needed)."); return; }
+                    String seller = dataConfig.getString("auctions." + auctionId + ".seller", "");
+                    if (seller.equals(p.getUniqueId().toString())) { p.sendMessage(ChatColor.RED + "Can't bid on your own auction."); return; }
+                    dataConfig.set("auctions." + auctionId + ".currentBid", nextBid);
+                    dataConfig.set("auctions." + auctionId + ".highBidder", p.getUniqueId().toString());
+                    dataConfig.set("auctions." + auctionId + ".highBidderName", p.getName());
+                    saveDataFile();
+                    p.sendMessage(ChatColor.GREEN + "Bid placed: " + nextBid + " XP levels!");
+                    logAction(p.getName(), "auction_bid", auctionId + " for " + nextBid);
+                    p.closeInventory();
+                    openAuctionHouseGUI(p);
+                }
+            }
+            return;
+        }
+
+        // Player Warp List GUI click
+        if (title.equals(GUI_PWARP_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); return; }
+            ItemMeta meta = e.getCurrentItem().getItemMeta();
+            if (meta != null && meta.hasLore()) {
+                String warpId = null;
+                for (String line : meta.getLore()) {
+                    String stripped = ChatColor.stripColor(line);
+                    if (stripped.startsWith("ID:")) { warpId = stripped.substring(3); break; }
+                }
+                if (warpId != null && dataConfig.contains("pwarps." + warpId)) {
+                    p.closeInventory();
+                    World w = Bukkit.getWorld(dataConfig.getString("pwarps." + warpId + ".world", "world"));
+                    if (w != null) {
+                        Location loc = new Location(w,
+                            dataConfig.getDouble("pwarps." + warpId + ".x"),
+                            dataConfig.getDouble("pwarps." + warpId + ".y"),
+                            dataConfig.getDouble("pwarps." + warpId + ".z"));
+                        p.teleport(loc);
+                        dataConfig.set("pwarps." + warpId + ".visits", dataConfig.getInt("pwarps." + warpId + ".visits", 0) + 1);
+                        saveDataFile();
+                        p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + warpId + ".name", warpId));
+                    }
+                }
+            }
+            return;
+        }
+
+        // Achievements GUI click
+        if (title.equals(GUI_ACHIEVEMENTS)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
             return;
         }
 
@@ -2318,6 +2619,70 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
 
         fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
+
+        // --- DAILY LOGIN REWARDS ---
+        if (dataConfig.getBoolean("daily_login_enabled", false)) {
+            long lastLogin = dataConfig.getLong("daily_login." + uuid + ".last", 0);
+            long now = System.currentTimeMillis();
+            long dayMs = 86400000L;
+            boolean isNewDay = (now - lastLogin) >= dayMs;
+            if (isNewDay) {
+                int streak = dataConfig.getInt("daily_login." + uuid + ".streak", 0);
+                if ((now - lastLogin) < dayMs * 2) {
+                    streak++;
+                } else {
+                    streak = 1; // reset if missed a day
+                }
+                dataConfig.set("daily_login." + uuid + ".streak", streak);
+                dataConfig.set("daily_login." + uuid + ".last", now);
+                dataConfig.set("daily_login." + uuid + ".total", dataConfig.getInt("daily_login." + uuid + ".total", 0) + 1);
+                saveDataFile();
+                int xpReward = dataConfig.getInt("daily_login_base_xp", 10) + (streak * dataConfig.getInt("daily_login_streak_bonus", 2));
+                e.getPlayer().giveExp(xpReward);
+                e.getPlayer().sendMessage(ChatColor.GOLD + "⭐ Daily Login Reward! " + ChatColor.GREEN + "+" + xpReward + " XP " + ChatColor.YELLOW + "(Streak: " + streak + " days)");
+                logAction("System", "daily_login", e.getPlayer().getName() + " streak:" + streak + " xp:" + xpReward);
+            }
+        }
+
+        // --- FIRST JOIN WELCOME ---
+        if (!dataConfig.contains("first_join." + uuid)) {
+            dataConfig.set("first_join." + uuid, System.currentTimeMillis());
+            saveDataFile();
+            String welcomeMsg = dataConfig.getString("welcome_message", "&6Welcome to the server, &e{player}&6!");
+            welcomeMsg = welcomeMsg.replace("{player}", e.getPlayer().getName());
+            String finalMsg = ChatColor.translateAlternateColorCodes('&', welcomeMsg);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (e.getPlayer().isOnline()) {
+                    e.getPlayer().sendMessage(finalMsg);
+                    // Give starter items
+                    List<String> starterItems = dataConfig.getStringList("welcome_starter_items");
+                    for (String item : starterItems) {
+                        try {
+                            String[] parts = item.split(":");
+                            Material mat = Material.valueOf(parts[0].toUpperCase());
+                            int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                            e.getPlayer().getInventory().addItem(new ItemStack(mat, amount));
+                        } catch (Exception ignored2) {}
+                    }
+                }
+            }, 20L);
+            // Broadcast to server
+            if (dataConfig.getBoolean("welcome_broadcast", true)) {
+                Bukkit.broadcastMessage(ChatColor.GOLD + "✦ " + ChatColor.YELLOW + e.getPlayer().getName() + ChatColor.GOLD + " joined for the first time! Welcome!");
+            }
+            fireDiscordEvent("joins", "New Player!", "**" + e.getPlayer().getName() + "** joined for the first time! 🎉", 0xf1c40f, e.getPlayer().getName());
+        }
+
+        // --- APPLY NICKNAME ---
+        String nick = dataConfig.getString("nicknames." + uuid);
+        if (nick != null && !nick.isEmpty()) {
+            e.getPlayer().setDisplayName(ChatColor.translateAlternateColorCodes('&', nick));
+        }
+
+        // --- INACTIVE ALERT TRACKING ---
+        dataConfig.set("last_seen." + uuid, System.currentTimeMillis());
+        dataConfig.set("last_seen_name." + uuid, e.getPlayer().getName());
+        saveDataFile();
     }
 
     @EventHandler
@@ -2386,6 +2751,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 }
             }
         }
+
+        // Chat tag + nickname formatting
+        String chatTag = dataConfig.getString("chat_tags." + e.getPlayer().getUniqueId(), "");
+        String displayName = e.getPlayer().getDisplayName();
+        String prefix = "";
+        if (!chatTag.isEmpty()) {
+            prefix = ChatColor.translateAlternateColorCodes('&', chatTag) + " ";
+        }
+        e.setFormat(prefix + displayName + ChatColor.WHITE + ": " + e.getMessage().replace("%", "%%"));
 
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
     }
@@ -3038,6 +3412,52 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         Player killer = victim.getKiller();
         if (killer == null || killer.equals(victim)) return;
 
+        // --- PVP STATS TRACKING ---
+        UUID killerUUID = killer.getUniqueId();
+        UUID victimUUID = victim.getUniqueId();
+        dataConfig.set("pvpstats." + killerUUID + ".kills", dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0) + 1);
+        int killerStreak = dataConfig.getInt("pvpstats." + killerUUID + ".streak", 0) + 1;
+        dataConfig.set("pvpstats." + killerUUID + ".streak", killerStreak);
+        int bestStreak = dataConfig.getInt("pvpstats." + killerUUID + ".best_streak", 0);
+        if (killerStreak > bestStreak) dataConfig.set("pvpstats." + killerUUID + ".best_streak", killerStreak);
+        dataConfig.set("pvpstats." + victimUUID + ".deaths", dataConfig.getInt("pvpstats." + victimUUID + ".deaths", 0) + 1);
+        dataConfig.set("pvpstats." + victimUUID + ".streak", 0);
+
+        // Achievement check: kill milestone
+        int totalKills = dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0);
+        checkAchievement(killer, "kills_10", totalKills >= 10);
+        checkAchievement(killer, "kills_100", totalKills >= 100);
+        checkAchievement(killer, "streak_5", killerStreak >= 5);
+
+        // --- DUEL SYSTEM ---
+        if (activeDuels.containsKey(killerUUID) && activeDuels.get(killerUUID).equals(victimUUID)) {
+            int wager = duelWagers.getOrDefault(killerUUID, duelWagers.getOrDefault(victimUUID, 0));
+            activeDuels.remove(killerUUID);
+            activeDuels.remove(victimUUID);
+            // Return to pre-duel locations
+            Location killerReturn = duelReturnLocations.remove(killerUUID);
+            Location victimReturn = duelReturnLocations.remove(victimUUID);
+            if (wager > 0) {
+                killer.setLevel(killer.getLevel() + wager);
+                victim.setLevel(Math.max(0, victim.getLevel() - wager));
+                killer.sendMessage(ChatColor.GREEN + "⚔ You won the duel! +" + wager + " XP levels!");
+                victim.sendMessage(ChatColor.RED + "⚔ You lost the duel! -" + wager + " XP levels.");
+            } else {
+                killer.sendMessage(ChatColor.GREEN + "⚔ You won the duel against " + victim.getName() + "!");
+                victim.sendMessage(ChatColor.RED + "⚔ You lost the duel against " + killer.getName() + ".");
+            }
+            duelWagers.remove(killerUUID);
+            duelWagers.remove(victimUUID);
+            // Teleport back after delay
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (killer.isOnline() && killerReturn != null) killer.teleport(killerReturn);
+            }, 60L);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (victim.isOnline() && victimReturn != null) victim.teleport(victimReturn);
+            }, 60L);
+            logAction(killer.getName(), "duel_won", "vs " + victim.getName() + (wager > 0 ? " wager:" + wager : ""));
+        }
+
         // Check for bounties on the victim
         if (dataConfig.contains("bounties")) {
             List<String> toRemove = new ArrayList<>();
@@ -3051,12 +3471,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             }
             if (totalReward > 0) {
                 for (String id : toRemove) dataConfig.set("bounties." + id, null);
-                saveDataFile();
                 killer.setLevel(killer.getLevel() + totalReward);
                 Bukkit.broadcastMessage(ChatColor.RED + "☠ BOUNTY CLAIMED! " + ChatColor.YELLOW + killer.getName() + ChatColor.RED + " collected " + ChatColor.GOLD + totalReward + " XP levels" + ChatColor.RED + " for killing " + ChatColor.YELLOW + victim.getName() + ChatColor.RED + "!");
                 logAction(killer.getName(), "claimed_bounty", victim.getName() + " for " + totalReward + " XP");
             }
         }
+        saveDataFile();
     }
 
     // ========== PLAYER SHOPS ==========
@@ -3355,6 +3775,154 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
         int maxPlayers = dataConfig.getInt("motd.maxPlayers", 0);
         if (maxPlayers > 0) e.setMaxPlayers(maxPlayers);
+    }
+
+    // ========== AUCTION HOUSE GUI ==========
+    private void openAuctionHouseGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_AUCTION_HOUSE);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("auctions")) {
+            for (String aId : dataConfig.getConfigurationSection("auctions").getKeys(false)) {
+                String aPath = "auctions." + aId;
+                long endTime = dataConfig.getLong(aPath + ".endTime", 0);
+                if (System.currentTimeMillis() > endTime) continue; // expired
+                String itemName = dataConfig.getString(aPath + ".item", "DIRT");
+                int amount = dataConfig.getInt(aPath + ".amount", 1);
+                String seller = dataConfig.getString(aPath + ".sellerName", "Unknown");
+                int currentBid = dataConfig.getInt(aPath + ".currentBid", 0);
+                String highBidder = dataConfig.getString(aPath + ".highBidderName", "None");
+                long remaining = (endTime - System.currentTimeMillis()) / 60000;
+                Material mat;
+                try { mat = Material.valueOf(itemName.toUpperCase()); } catch (Exception e) { mat = Material.DIRT; }
+                ItemStack display = new ItemStack(mat, amount);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GOLD + "" + amount + "x " + mat.name().replace("_", " "));
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Seller: " + seller);
+                lore.add(ChatColor.YELLOW + "Current Bid: " + currentBid + " XP");
+                lore.add(ChatColor.AQUA + "Highest: " + highBidder);
+                lore.add(ChatColor.GREEN + "Time Left: " + remaining + " min");
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Click to bid!");
+                lore.add(ChatColor.DARK_GRAY + "ID:" + aId);
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== PLAYER WARP LIST GUI ==========
+    private void openPwarpListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_PWARP_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("pwarps")) {
+            for (String wId : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+                String wPath = "pwarps." + wId;
+                String name = dataConfig.getString(wPath + ".name", wId);
+                String owner = dataConfig.getString(wPath + ".ownerName", "Unknown");
+                int visits = dataConfig.getInt(wPath + ".visits", 0);
+                ItemStack display = new ItemStack(Material.ENDER_PEARL);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GREEN + name);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Owner: " + owner);
+                lore.add(ChatColor.YELLOW + "Visits: " + visits);
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to warp!");
+                lore.add(ChatColor.DARK_GRAY + "ID:" + wId);
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== ACHIEVEMENTS GUI ==========
+    private void openAchievementsGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_ACHIEVEMENTS);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("achievement_defs")) {
+            for (String key : dataConfig.getConfigurationSection("achievement_defs").getKeys(false)) {
+                String aPath = "achievement_defs." + key;
+                String name = dataConfig.getString(aPath + ".name", key);
+                String desc = dataConfig.getString(aPath + ".description", "");
+                String title = dataConfig.getString(aPath + ".title", "");
+                boolean unlocked = dataConfig.getBoolean("achievements." + p.getUniqueId() + "." + key, false);
+                ItemStack display = new ItemStack(unlocked ? Material.DIAMOND : Material.COAL);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName((unlocked ? ChatColor.GREEN + "✔ " : ChatColor.RED + "✘ ") + ChatColor.GOLD + name);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + desc);
+                if (!title.isEmpty()) lore.add(ChatColor.LIGHT_PURPLE + "Title: " + title);
+                lore.add(unlocked ? ChatColor.GREEN + "UNLOCKED" : ChatColor.RED + "LOCKED");
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== ACHIEVEMENT CHECK HELPER ==========
+    private void checkAchievement(Player p, String achievementId, boolean condition) {
+        if (!condition) return;
+        if (dataConfig.getBoolean("achievements." + p.getUniqueId() + "." + achievementId, false)) return;
+        if (!dataConfig.contains("achievement_defs." + achievementId)) return;
+        dataConfig.set("achievements." + p.getUniqueId() + "." + achievementId, true);
+        saveDataFile();
+        String name = dataConfig.getString("achievement_defs." + achievementId + ".name", achievementId);
+        String title = dataConfig.getString("achievement_defs." + achievementId + ".title", "");
+        int xp = dataConfig.getInt("achievement_defs." + achievementId + ".xp_reward", 0);
+        p.sendMessage(ChatColor.GOLD + "🏆 Achievement Unlocked: " + ChatColor.GREEN + name + (xp > 0 ? ChatColor.YELLOW + " (+" + xp + " XP)" : ""));
+        if (xp > 0) p.giveExp(xp);
+        if (!title.isEmpty()) {
+            dataConfig.set("chat_tags." + p.getUniqueId(), title);
+            saveDataFile();
+            p.sendMessage(ChatColor.LIGHT_PURPLE + "New title unlocked: " + ChatColor.translateAlternateColorCodes('&', title));
+        }
+        Bukkit.broadcastMessage(ChatColor.GOLD + "🏆 " + ChatColor.YELLOW + p.getName() + ChatColor.GOLD + " unlocked: " + ChatColor.GREEN + name);
+        logAction(p.getName(), "achievement_unlocked", name);
+    }
+
+    // ========== SCHEDULED ANNOUNCEMENTS ==========
+    private void startScheduledAnnouncements() {
+        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
+        if (intervalTicks <= 0) intervalTicks = 6000;
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
+            List<String> messages = dataConfig.getStringList("announcements.messages");
+            if (messages.isEmpty()) return;
+            int index = dataConfig.getInt("announcements.current_index", 0);
+            if (index >= messages.size()) index = 0;
+            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
+            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            Bukkit.broadcastMessage(prefix + msg);
+            dataConfig.set("announcements.current_index", index + 1);
+        }, intervalTicks, intervalTicks);
     }
 
 }

@@ -210,6 +210,26 @@
                 </div>
             </div>
 
+            <!-- New Features -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">✨ New Features</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('daily-login', this)">Daily Login</button>
+                    <button class="nav-btn" onclick="switchTab('auction-house', this)">Auction House</button>
+                    <button class="nav-btn" onclick="switchTab('nicknames', this)">Nicknames</button>
+                    <button class="nav-btn" onclick="switchTab('chat-tags', this)">Chat Tags</button>
+                    <button class="nav-btn" onclick="switchTab('server-rules', this)">Server Rules</button>
+                    <button class="nav-btn" onclick="switchTab('player-warps', this)">Player Warps</button>
+                    <button class="nav-btn" onclick="switchTab('custom-recipes', this)">Custom Recipes</button>
+                    <button class="nav-btn" onclick="switchTab('pvp-stats', this)">PvP Stats</button>
+                    <button class="nav-btn" onclick="switchTab('achievements-tab', this)">Achievements</button>
+                    <button class="nav-btn" onclick="switchTab('duels', this)">Duels</button>
+                    <button class="nav-btn" onclick="switchTab('welcome-settings', this)">Welcome Settings</button>
+                    <button class="nav-btn" onclick="switchTab('inactive-alerts', this)">Inactive Alerts</button>
+                    <button class="nav-btn" onclick="switchTab('sched-announcements', this)">Announcements</button>
+                </div>
+            </div>
+
             <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="logout()">🚪 Logout</button>
         </div>
     </div>
@@ -1655,6 +1675,276 @@
                 <tbody id="event-history-table"></tbody>
             </table>
         </div>
+
+        <!-- DAILY LOGIN REWARDS -->
+        <div id="daily-login" class="tab">
+            <h2>📅 Daily Login Rewards</h2>
+            <div class="card">
+                <h3>Settings</h3>
+                <div style="margin-bottom:10px;">
+                    <label><input type="checkbox" id="daily-login-enabled"> Enable Daily Login Rewards</label>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Base XP Reward:</label><input type="number" id="daily-login-base-xp" value="10" min="1" style="width:80px;">
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Streak Bonus (per day):</label><input type="number" id="daily-login-streak-bonus" value="2" min="0" style="width:80px;">
+                </div>
+                <button class="action-btn" onclick="saveDailyLogin()">💾 Save Settings</button>
+                <div id="daily-login-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Player Streaks</h3>
+                <table><thead><tr><th>Player</th><th>Streak</th><th>Total Logins</th><th>Last Login</th></tr></thead>
+                <tbody id="daily-login-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- AUCTION HOUSE -->
+        <div id="auction-house" class="tab">
+            <h2>🏪 Auction House</h2>
+            <div class="card">
+                <h3>Create Server Auction</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Item:</label><input type="text" id="auction-item" placeholder="DIAMOND_SWORD"></div>
+                    <div><label>Amount:</label><input type="number" id="auction-amount" value="1" min="1"></div>
+                    <div><label>Starting Bid:</label><input type="number" id="auction-start-bid" value="5" min="0"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Bid Increment:</label><input type="number" id="auction-bid-inc" value="5" min="1"></div>
+                    <div><label>Duration (min):</label><input type="number" id="auction-duration" value="60" min="1"></div>
+                </div>
+                <button class="action-btn" onclick="createAuction()">📦 Create Auction</button>
+                <div id="auction-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Active Auctions</h3>
+                <table><thead><tr><th>Item</th><th>Seller</th><th>Current Bid</th><th>High Bidder</th><th>Time Left</th><th>Actions</th></tr></thead>
+                <tbody id="auction-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- NICKNAMES -->
+        <div id="nicknames" class="tab">
+            <h2>📛 Nicknames</h2>
+            <div class="card">
+                <h3>Set Player Nickname</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Player:</label><input type="text" id="nick-player" placeholder="PlayerName"></div>
+                    <div><label>Nickname (& color codes):</label><input type="text" id="nick-value" placeholder="&amp;b&amp;lCoolNick"></div>
+                </div>
+                <button class="action-btn" onclick="setNickname()">Set Nickname</button>
+                <button class="action-btn" onclick="clearNickname()" style="background:#e74c3c;">Clear Nickname</button>
+                <div id="nick-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Current Nicknames</h3>
+                <table><thead><tr><th>Player</th><th>Nickname</th></tr></thead>
+                <tbody id="nick-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- CHAT TAGS -->
+        <div id="chat-tags" class="tab">
+            <h2>🏷️ Chat Tags</h2>
+            <div class="card">
+                <h3>Manage Available Tags</h3>
+                <div style="margin-bottom:10px;">
+                    <label>New Tag (& color codes):</label><input type="text" id="tag-new" placeholder="&amp;6[&amp;eVIP&amp;6]" style="width:200px;">
+                    <button class="action-btn" onclick="addAvailableTag()">Add Tag</button>
+                </div>
+                <div id="available-tags-list" style="margin-bottom:15px;"></div>
+                <h3>Assign Tag to Player</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Player:</label><input type="text" id="tag-player" placeholder="PlayerName"></div>
+                    <div><label>Tag:</label><input type="text" id="tag-value" placeholder="&amp;6[&amp;eVIP&amp;6]"></div>
+                </div>
+                <button class="action-btn" onclick="setPlayerTag()">Set Tag</button>
+                <button class="action-btn" onclick="clearPlayerTag()" style="background:#e74c3c;">Clear Tag</button>
+                <div id="tag-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Player Tags</h3>
+                <table><thead><tr><th>Player</th><th>Tag</th></tr></thead>
+                <tbody id="tag-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- SERVER RULES -->
+        <div id="server-rules" class="tab">
+            <h2>📜 Server Rules</h2>
+            <div class="card">
+                <h3>Edit Rules</h3>
+                <p style="color:#969696;">One rule per line. Players see these with /rules.</p>
+                <textarea id="rules-textarea" style="width:100%;height:300px;font-family:monospace;" placeholder="Be respectful&#10;No griefing&#10;No hacking"></textarea>
+                <button class="action-btn" style="margin-top:10px;" onclick="saveRules()">💾 Save Rules</button>
+                <div id="rules-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+        </div>
+
+        <!-- PLAYER WARPS -->
+        <div id="player-warps" class="tab">
+            <h2>🌀 Player Warps</h2>
+            <div class="card">
+                <h3>Settings</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>XP Cost to Create:</label><input type="number" id="pwarp-cost" value="5" min="0"></div>
+                    <div><label>Max Warps Per Player:</label><input type="number" id="pwarp-max" value="3" min="1"></div>
+                </div>
+                <button class="action-btn" onclick="savePwarpSettings()">💾 Save Settings</button>
+                <div id="pwarp-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>All Player Warps</h3>
+                <table><thead><tr><th>Name</th><th>Owner</th><th>Location</th><th>Visits</th><th>Actions</th></tr></thead>
+                <tbody id="pwarp-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- CUSTOM RECIPES -->
+        <div id="custom-recipes" class="tab">
+            <h2>🧪 Custom Recipes</h2>
+            <div class="card">
+                <h3>Create Shapeless Recipe</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Recipe Name:</label><input type="text" id="recipe-name" placeholder="Super Sword"></div>
+                    <div><label>Result Item:</label><input type="text" id="recipe-result" placeholder="DIAMOND_SWORD"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Result Amount:</label><input type="number" id="recipe-amount" value="1" min="1"></div>
+                    <div><label>Ingredients (comma-sep):</label><input type="text" id="recipe-ingredients" placeholder="DIAMOND,STICK,GOLD_INGOT"></div>
+                </div>
+                <button class="action-btn" onclick="createRecipe()">🧪 Create Recipe</button>
+                <div id="recipe-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Custom Recipes</h3>
+                <table><thead><tr><th>Name</th><th>Result</th><th>Ingredients</th><th>Actions</th></tr></thead>
+                <tbody id="recipe-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- PVP STATS -->
+        <div id="pvp-stats" class="tab">
+            <h2>⚔️ PvP Stats & Leaderboard</h2>
+            <div class="card">
+                <h3>Kill/Death Leaderboard</h3>
+                <table><thead><tr><th>#</th><th>Player</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Current Streak</th><th>Best Streak</th></tr></thead>
+                <tbody id="pvp-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- ACHIEVEMENTS -->
+        <div id="achievements-tab" class="tab">
+            <h2>🏆 Achievements & Titles</h2>
+            <div class="card">
+                <h3>Create Achievement</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>ID:</label><input type="text" id="ach-id" placeholder="kills_100"></div>
+                    <div><label>Name:</label><input type="text" id="ach-name" placeholder="Master Slayer"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Description:</label><input type="text" id="ach-desc" placeholder="Get 100 PvP kills"></div>
+                    <div><label>Title Reward (& codes):</label><input type="text" id="ach-title" placeholder="&amp;4[&amp;cSlayer&amp;4]"></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>XP Reward:</label><input type="number" id="ach-xp" value="50" min="0" style="width:80px;">
+                </div>
+                <button class="action-btn" onclick="createAchievement()">🏆 Create Achievement</button>
+                <div id="ach-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Defined Achievements</h3>
+                <table><thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Title</th><th>XP</th><th>Actions</th></tr></thead>
+                <tbody id="ach-def-table"></tbody></table>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Player Progress</h3>
+                <table><thead><tr><th>Player</th><th>Unlocked Achievements</th></tr></thead>
+                <tbody id="ach-progress-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- DUELS -->
+        <div id="duels" class="tab">
+            <h2>⚔️ Duels</h2>
+            <div class="card">
+                <h3>Active Duels</h3>
+                <table><thead><tr><th>Player 1</th><th>Player 2</th><th>Wager</th></tr></thead>
+                <tbody id="duel-table"></tbody></table>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>PvP Leaderboard</h3>
+                <table><thead><tr><th>Player</th><th>Kills</th><th>Deaths</th></tr></thead>
+                <tbody id="duel-stats-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- WELCOME SETTINGS -->
+        <div id="welcome-settings" class="tab">
+            <h2>🎉 First Join Welcome</h2>
+            <div class="card">
+                <h3>Welcome Settings</h3>
+                <div style="margin-bottom:10px;">
+                    <label>Welcome Message (& color codes, {player} = name):</label>
+                    <input type="text" id="welcome-msg" style="width:100%;" placeholder="&amp;6Welcome to the server, &amp;e{player}&amp;6!">
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label><input type="checkbox" id="welcome-broadcast" checked> Broadcast welcome to server</label>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Starter Items (MATERIAL:amount, one per line):</label>
+                    <textarea id="welcome-items" style="width:100%;height:80px;" placeholder="WOODEN_SWORD:1&#10;BREAD:16&#10;LEATHER_BOOTS:1"></textarea>
+                </div>
+                <button class="action-btn" onclick="saveWelcome()">💾 Save Welcome Settings</button>
+                <div id="welcome-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>First Join History</h3>
+                <table><thead><tr><th>Player</th><th>First Joined</th></tr></thead>
+                <tbody id="welcome-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- INACTIVE ALERTS -->
+        <div id="inactive-alerts" class="tab">
+            <h2>⏰ Inactive Player Alerts</h2>
+            <div class="card">
+                <h3>Settings</h3>
+                <div style="margin-bottom:10px;">
+                    <label>Inactive Threshold (days):</label>
+                    <input type="number" id="inactive-days" value="14" min="1" style="width:80px;">
+                    <button class="action-btn" onclick="saveInactiveSettings()">💾 Save</button>
+                </div>
+                <div id="inactive-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+            <div class="card" style="margin-top:15px;">
+                <h3>Inactive Players</h3>
+                <table><thead><tr><th>Player</th><th>Last Seen</th><th>Days Inactive</th></tr></thead>
+                <tbody id="inactive-table"></tbody></table>
+            </div>
+        </div>
+
+        <!-- SCHEDULED ANNOUNCEMENTS -->
+        <div id="sched-announcements" class="tab">
+            <h2>📢 Scheduled Announcements</h2>
+            <div class="card">
+                <h3>Settings</h3>
+                <div style="margin-bottom:10px;">
+                    <label><input type="checkbox" id="announce-enabled"> Enable Scheduled Announcements</label>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                    <div><label>Interval (minutes):</label><input type="number" id="announce-interval" value="5" min="1"></div>
+                    <div><label>Prefix:</label><input type="text" id="announce-prefix" value="&amp;6[&amp;eAnnouncement&amp;6]&amp;r "></div>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Messages (one per line, & color codes):</label>
+                    <textarea id="announce-messages" style="width:100%;height:200px;" placeholder="&amp;aRemember to /vote for daily rewards!&#10;&amp;bJoin our Discord: discord.gg/example"></textarea>
+                </div>
+                <button class="action-btn" onclick="saveAnnouncements()">💾 Save Announcements</button>
+                <div id="announce-status" style="margin-top:8px;color:#969696;"></div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1751,6 +2041,19 @@
         if (name === 'automod') loadAutomod();
         if (name === 'playtime-rewards') loadPlaytimeRewards();
         if (name === 'motd') loadMotd();
+        if (name === 'daily-login') loadDailyLogin();
+        if (name === 'auction-house') loadAuctions();
+        if (name === 'nicknames') loadNicknames();
+        if (name === 'chat-tags') loadChatTags();
+        if (name === 'server-rules') loadServerRules();
+        if (name === 'player-warps') loadPlayerWarps();
+        if (name === 'custom-recipes') loadCustomRecipes();
+        if (name === 'pvp-stats') loadPvpStats();
+        if (name === 'achievements-tab') loadAchievements();
+        if (name === 'duels') loadDuels();
+        if (name === 'welcome-settings') loadWelcomeSettings();
+        if (name === 'inactive-alerts') loadInactiveAlerts();
+        if (name === 'sched-announcements') loadSchedAnnouncements();
     }
 
     function logout() {
@@ -4430,6 +4733,295 @@
         if (l1) l1.addEventListener('input', updateMotdPreview);
         if (l2) l2.addEventListener('input', updateMotdPreview);
     });
+
+    // ========== DAILY LOGIN REWARDS ==========
+    async function loadDailyLogin() {
+        const data = await apiCall('/api/daily-login');
+        document.getElementById('daily-login-enabled').checked = data.enabled;
+        document.getElementById('daily-login-base-xp').value = data.baseXp || 10;
+        document.getElementById('daily-login-streak-bonus').value = data.streakBonus || 2;
+        const tbody = document.getElementById('daily-login-table');
+        tbody.innerHTML = '';
+        (data.players || []).forEach(p => {
+            tbody.innerHTML += `<tr><td>${p.name}</td><td>${p.streak}</td><td>${p.total}</td><td>${new Date(p.last).toLocaleString()}</td></tr>`;
+        });
+    }
+    async function saveDailyLogin() {
+        await apiCall('/api/daily-login', 'POST', {
+            enabled: document.getElementById('daily-login-enabled').checked,
+            baseXp: parseInt(document.getElementById('daily-login-base-xp').value),
+            streakBonus: parseInt(document.getElementById('daily-login-streak-bonus').value)
+        });
+        document.getElementById('daily-login-status').textContent = 'Settings saved!';
+    }
+
+    // ========== AUCTION HOUSE ==========
+    async function loadAuctions() {
+        const data = await apiCall('/api/auctions');
+        const tbody = document.getElementById('auction-table');
+        tbody.innerHTML = '';
+        (data || []).forEach(a => {
+            const remaining = Math.max(0, Math.round((a.endTime - Date.now()) / 60000));
+            tbody.innerHTML += `<tr><td>${a.amount}x ${a.item}</td><td>${a.sellerName}</td><td>${a.currentBid} XP</td><td>${a.highBidderName}</td><td>${remaining} min</td><td><button class="btn-danger" onclick="deleteAuction('${a.id}')">Delete</button></td></tr>`;
+        });
+    }
+    async function createAuction() {
+        await apiCall('/api/auctions', 'POST', {
+            item: document.getElementById('auction-item').value,
+            amount: parseInt(document.getElementById('auction-amount').value),
+            startBid: parseInt(document.getElementById('auction-start-bid').value),
+            bidIncrement: parseInt(document.getElementById('auction-bid-inc').value),
+            duration: parseInt(document.getElementById('auction-duration').value)
+        });
+        document.getElementById('auction-status').textContent = 'Auction created!';
+        loadAuctions();
+    }
+    async function deleteAuction(id) {
+        await apiCall('/api/auctions/' + id, 'DELETE');
+        loadAuctions();
+    }
+
+    // ========== NICKNAMES ==========
+    async function loadNicknames() {
+        const data = await apiCall('/api/nicknames');
+        const tbody = document.getElementById('nick-table');
+        tbody.innerHTML = '';
+        (data || []).forEach(n => {
+            tbody.innerHTML += `<tr><td>${n.name}</td><td>${n.nick}</td></tr>`;
+        });
+    }
+    async function setNickname() {
+        await apiCall('/api/nicknames', 'POST', {
+            player: document.getElementById('nick-player').value,
+            nick: document.getElementById('nick-value').value
+        });
+        document.getElementById('nick-status').textContent = 'Nickname set!';
+        loadNicknames();
+    }
+    async function clearNickname() {
+        await apiCall('/api/nicknames', 'POST', {
+            player: document.getElementById('nick-player').value,
+            nick: ''
+        });
+        document.getElementById('nick-status').textContent = 'Nickname cleared!';
+        loadNicknames();
+    }
+
+    // ========== CHAT TAGS ==========
+    async function loadChatTags() {
+        const data = await apiCall('/api/chat-tags');
+        const tbody = document.getElementById('tag-table');
+        tbody.innerHTML = '';
+        (data.tags || []).forEach(t => {
+            tbody.innerHTML += `<tr><td>${t.name}</td><td>${t.tag}</td></tr>`;
+        });
+        const aList = document.getElementById('available-tags-list');
+        aList.innerHTML = '<strong>Available Tags:</strong> ';
+        (data.available || []).forEach(tag => {
+            aList.innerHTML += `<span style="background:#2d2d2d;padding:3px 8px;border-radius:4px;margin:2px;display:inline-block;">${tag} <button onclick="removeAvailableTag('${tag.replace(/'/g, "\\'")}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;">×</button></span>`;
+        });
+    }
+    async function addAvailableTag() {
+        await apiCall('/api/chat-tags', 'POST', { action: 'add_available', tag: document.getElementById('tag-new').value });
+        document.getElementById('tag-new').value = '';
+        loadChatTags();
+    }
+    async function removeAvailableTag(tag) {
+        await apiCall('/api/chat-tags', 'POST', { action: 'remove_available', tag });
+        loadChatTags();
+    }
+    async function setPlayerTag() {
+        await apiCall('/api/chat-tags', 'POST', {
+            action: 'set',
+            player: document.getElementById('tag-player').value,
+            tag: document.getElementById('tag-value').value
+        });
+        document.getElementById('tag-status').textContent = 'Tag set!';
+        loadChatTags();
+    }
+    async function clearPlayerTag() {
+        await apiCall('/api/chat-tags', 'POST', {
+            action: 'set',
+            player: document.getElementById('tag-player').value,
+            tag: ''
+        });
+        document.getElementById('tag-status').textContent = 'Tag cleared!';
+        loadChatTags();
+    }
+
+    // ========== SERVER RULES ==========
+    async function loadServerRules() {
+        const data = await apiCall('/api/rules');
+        document.getElementById('rules-textarea').value = (data.rules || []).join('\n');
+    }
+    async function saveRules() {
+        const rules = document.getElementById('rules-textarea').value.split('\n').filter(r => r.trim());
+        await apiCall('/api/rules', 'POST', { rules });
+        document.getElementById('rules-status').textContent = 'Rules saved!';
+    }
+
+    // ========== PLAYER WARPS ==========
+    async function loadPlayerWarps() {
+        const data = await apiCall('/api/player-warps');
+        document.getElementById('pwarp-cost').value = data.cost || 5;
+        document.getElementById('pwarp-max').value = data.max || 3;
+        const tbody = document.getElementById('pwarp-table');
+        tbody.innerHTML = '';
+        (data.warps || []).forEach(w => {
+            tbody.innerHTML += `<tr><td>${w.name}</td><td>${w.ownerName}</td><td>${w.world} (${Math.round(w.x)}, ${Math.round(w.y)}, ${Math.round(w.z)})</td><td>${w.visits}</td><td><button class="btn-danger" onclick="deletePwarp('${w.id}')">Delete</button></td></tr>`;
+        });
+    }
+    async function savePwarpSettings() {
+        await apiCall('/api/player-warps/settings', 'POST', {
+            cost: parseInt(document.getElementById('pwarp-cost').value),
+            max: parseInt(document.getElementById('pwarp-max').value)
+        });
+        document.getElementById('pwarp-status').textContent = 'Settings saved!';
+    }
+    async function deletePwarp(id) {
+        await apiCall('/api/player-warps/' + id, 'DELETE');
+        loadPlayerWarps();
+    }
+
+    // ========== CUSTOM RECIPES ==========
+    async function loadCustomRecipes() {
+        const data = await apiCall('/api/custom-recipes');
+        const tbody = document.getElementById('recipe-table');
+        tbody.innerHTML = '';
+        (data || []).forEach(r => {
+            tbody.innerHTML += `<tr><td>${r.name}</td><td>${r.resultAmount}x ${r.result}</td><td>${(r.ingredients || []).join(', ')}</td><td><button class="btn-danger" onclick="deleteRecipe('${r.id}')">Delete</button></td></tr>`;
+        });
+    }
+    async function createRecipe() {
+        const ingredients = document.getElementById('recipe-ingredients').value.split(',').map(s => s.trim()).filter(s => s);
+        await apiCall('/api/custom-recipes', 'POST', {
+            name: document.getElementById('recipe-name').value,
+            result: document.getElementById('recipe-result').value,
+            resultAmount: parseInt(document.getElementById('recipe-amount').value),
+            ingredients
+        });
+        document.getElementById('recipe-status').textContent = 'Recipe created!';
+        loadCustomRecipes();
+    }
+    async function deleteRecipe(id) {
+        await apiCall('/api/custom-recipes/' + id, 'DELETE');
+        loadCustomRecipes();
+    }
+
+    // ========== PVP STATS ==========
+    async function loadPvpStats() {
+        const data = await apiCall('/api/pvp-stats');
+        const tbody = document.getElementById('pvp-table');
+        tbody.innerHTML = '';
+        (data || []).forEach((s, i) => {
+            const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(2) : s.kills;
+            tbody.innerHTML += `<tr><td>${i + 1}</td><td>${s.name}</td><td>${s.kills}</td><td>${s.deaths}</td><td>${kd}</td><td>${s.streak}</td><td>${s.bestStreak}</td></tr>`;
+        });
+    }
+
+    // ========== ACHIEVEMENTS ==========
+    async function loadAchievements() {
+        const data = await apiCall('/api/achievements');
+        const defTbody = document.getElementById('ach-def-table');
+        defTbody.innerHTML = '';
+        (data.definitions || []).forEach(a => {
+            defTbody.innerHTML += `<tr><td>${a.id}</td><td>${a.name}</td><td>${a.description}</td><td>${a.title}</td><td>${a.xpReward}</td><td><button class="btn-danger" onclick="deleteAchievement('${a.id}')">Delete</button></td></tr>`;
+        });
+        const progTbody = document.getElementById('ach-progress-table');
+        progTbody.innerHTML = '';
+        (data.unlocked || []).forEach(p => {
+            progTbody.innerHTML += `<tr><td>${p.name}</td><td>${(p.achievements || []).join(', ') || 'None'}</td></tr>`;
+        });
+    }
+    async function createAchievement() {
+        await apiCall('/api/achievements', 'POST', {
+            id: document.getElementById('ach-id').value,
+            name: document.getElementById('ach-name').value,
+            description: document.getElementById('ach-desc').value,
+            title: document.getElementById('ach-title').value,
+            xpReward: parseInt(document.getElementById('ach-xp').value)
+        });
+        document.getElementById('ach-status').textContent = 'Achievement created!';
+        loadAchievements();
+    }
+    async function deleteAchievement(id) {
+        await apiCall('/api/achievements/' + id, 'DELETE');
+        loadAchievements();
+    }
+
+    // ========== DUELS ==========
+    async function loadDuels() {
+        const data = await apiCall('/api/duels');
+        const tbody = document.getElementById('duel-table');
+        tbody.innerHTML = '';
+        (data.active || []).forEach(d => {
+            tbody.innerHTML += `<tr><td>${d.player1}</td><td>${d.player2}</td><td>${d.wager > 0 ? d.wager + ' XP' : 'None'}</td></tr>`;
+        });
+        const statsTbody = document.getElementById('duel-stats-table');
+        statsTbody.innerHTML = '';
+        (data.stats || []).forEach(s => {
+            statsTbody.innerHTML += `<tr><td>${s.name}</td><td>${s.kills}</td><td>${s.deaths}</td></tr>`;
+        });
+    }
+
+    // ========== WELCOME SETTINGS ==========
+    async function loadWelcomeSettings() {
+        const data = await apiCall('/api/welcome');
+        document.getElementById('welcome-msg').value = data.message || '';
+        document.getElementById('welcome-broadcast').checked = data.broadcast !== false;
+        document.getElementById('welcome-items').value = (data.starterItems || []).join('\n');
+        const tbody = document.getElementById('welcome-table');
+        tbody.innerHTML = '';
+        (data.firstJoins || []).forEach(fj => {
+            tbody.innerHTML += `<tr><td>${fj.name}</td><td>${new Date(fj.time).toLocaleString()}</td></tr>`;
+        });
+    }
+    async function saveWelcome() {
+        const items = document.getElementById('welcome-items').value.split('\n').filter(s => s.trim());
+        await apiCall('/api/welcome', 'POST', {
+            message: document.getElementById('welcome-msg').value,
+            broadcast: document.getElementById('welcome-broadcast').checked,
+            starterItems: items
+        });
+        document.getElementById('welcome-status').textContent = 'Welcome settings saved!';
+    }
+
+    // ========== INACTIVE ALERTS ==========
+    async function loadInactiveAlerts() {
+        const data = await apiCall('/api/inactive-players');
+        document.getElementById('inactive-days').value = data.thresholdDays || 14;
+        const tbody = document.getElementById('inactive-table');
+        tbody.innerHTML = '';
+        (data.players || []).forEach(p => {
+            tbody.innerHTML += `<tr><td>${p.name}</td><td>${new Date(p.lastSeen).toLocaleString()}</td><td style="color:${p.daysSince > 30 ? '#e74c3c' : '#f39c12'}">${p.daysSince} days</td></tr>`;
+        });
+    }
+    async function saveInactiveSettings() {
+        await apiCall('/api/inactive-players/settings', 'POST', {
+            thresholdDays: parseInt(document.getElementById('inactive-days').value)
+        });
+        document.getElementById('inactive-status').textContent = 'Settings saved!';
+        loadInactiveAlerts();
+    }
+
+    // ========== SCHEDULED ANNOUNCEMENTS ==========
+    async function loadSchedAnnouncements() {
+        const data = await apiCall('/api/announcements');
+        document.getElementById('announce-enabled').checked = data.enabled;
+        document.getElementById('announce-interval').value = data.intervalMinutes || 5;
+        document.getElementById('announce-prefix').value = data.prefix || '&6[&eAnnouncement&6]&r ';
+        document.getElementById('announce-messages').value = (data.messages || []).join('\n');
+    }
+    async function saveAnnouncements() {
+        const messages = document.getElementById('announce-messages').value.split('\n').filter(s => s.trim());
+        await apiCall('/api/announcements', 'POST', {
+            enabled: document.getElementById('announce-enabled').checked,
+            intervalMinutes: parseInt(document.getElementById('announce-interval').value),
+            prefix: document.getElementById('announce-prefix').value,
+            messages
+        });
+        document.getElementById('announce-status').textContent = 'Announcements saved!';
+    }
 </script>
 </body>
 </html>

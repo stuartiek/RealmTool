@@ -8,6 +8,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.GameRule;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
+import org.bukkit.Material;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
@@ -49,6 +50,14 @@ public class WebServer {
             app.start(8091);
         });
         serverThread.start();
+    }
+
+    private boolean auth(io.javalin.http.Context ctx) {
+        String a = ctx.header("Authorization");
+        String k1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+        String k2 = "Bearer " + plugin.getApiKey();
+        if (a == null || (!a.equals(k1) && !a.equals(k2))) { ctx.status(401); return false; }
+        return true;
     }
 
     private void setupRoutes() {
@@ -1700,6 +1709,515 @@ public class WebServer {
                     }
                 }
             });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== DAILY LOGIN REWARDS ==========
+        app.get("/api/daily-login", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            result.put("enabled", data.getBoolean("daily_login_enabled", false));
+            result.put("baseXp", data.getInt("daily_login_base_xp", 10));
+            result.put("streakBonus", data.getInt("daily_login_streak_bonus", 2));
+            List<Map<String, Object>> players = new ArrayList<>();
+            if (data.contains("daily_login")) {
+                for (String key : data.getConfigurationSection("daily_login").getKeys(false)) {
+                    if (key.equals("enabled")) continue;
+                    Map<String, Object> pData = new HashMap<>();
+                    pData.put("uuid", key);
+                    pData.put("streak", data.getInt("daily_login." + key + ".streak", 0));
+                    pData.put("total", data.getInt("daily_login." + key + ".total", 0));
+                    pData.put("last", data.getLong("daily_login." + key + ".last", 0));
+                    // Try to find player name
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(key));
+                    pData.put("name", op.getName() != null ? op.getName() : key);
+                    players.add(pData);
+                }
+            }
+            result.put("players", players);
+            ctx.json(result);
+        });
+
+        app.post("/api/daily-login", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            if (body.containsKey("enabled")) data.set("daily_login_enabled", body.get("enabled"));
+            if (body.containsKey("baseXp")) data.set("daily_login_base_xp", ((Number)body.get("baseXp")).intValue());
+            if (body.containsKey("streakBonus")) data.set("daily_login_streak_bonus", ((Number)body.get("streakBonus")).intValue());
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== AUCTION HOUSE ==========
+        app.get("/api/auctions", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<String, Object>> auctions = new ArrayList<>();
+            if (data.contains("auctions")) {
+                for (String id : data.getConfigurationSection("auctions").getKeys(false)) {
+                    String path = "auctions." + id;
+                    Map<String, Object> a = new HashMap<>();
+                    a.put("id", id);
+                    a.put("item", data.getString(path + ".item", "DIRT"));
+                    a.put("amount", data.getInt(path + ".amount", 1));
+                    a.put("sellerName", data.getString(path + ".sellerName", "Unknown"));
+                    a.put("currentBid", data.getInt(path + ".currentBid", 0));
+                    a.put("highBidderName", data.getString(path + ".highBidderName", "None"));
+                    a.put("endTime", data.getLong(path + ".endTime", 0));
+                    a.put("bidIncrement", data.getInt(path + ".bidIncrement", 5));
+                    auctions.add(a);
+                }
+            }
+            ctx.json(auctions);
+        });
+
+        app.post("/api/auctions", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            String id = "auction_" + System.currentTimeMillis();
+            String path = "auctions." + id;
+            data.set(path + ".item", body.getOrDefault("item", "DIRT"));
+            data.set(path + ".amount", ((Number)body.getOrDefault("amount", 1)).intValue());
+            data.set(path + ".sellerName", body.getOrDefault("sellerName", "Server"));
+            data.set(path + ".seller", "server");
+            data.set(path + ".currentBid", ((Number)body.getOrDefault("startBid", 0)).intValue());
+            data.set(path + ".bidIncrement", ((Number)body.getOrDefault("bidIncrement", 5)).intValue());
+            data.set(path + ".highBidderName", "None");
+            int durationMinutes = ((Number)body.getOrDefault("duration", 60)).intValue();
+            data.set(path + ".endTime", System.currentTimeMillis() + (long)durationMinutes * 60000);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true, "id", id));
+        });
+
+        app.delete("/api/auctions/{id}", ctx -> {
+            if (!auth(ctx)) return;
+            plugin.getDataConfig().set("auctions." + ctx.pathParam("id"), null);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== NICKNAMES ==========
+        app.get("/api/nicknames", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<String, Object>> nicks = new ArrayList<>();
+            if (data.contains("nicknames")) {
+                for (String uuid : data.getConfigurationSection("nicknames").getKeys(false)) {
+                    Map<String, Object> n = new HashMap<>();
+                    n.put("uuid", uuid);
+                    n.put("nick", data.getString("nicknames." + uuid, ""));
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    n.put("name", op.getName() != null ? op.getName() : uuid);
+                    nicks.add(n);
+                }
+            }
+            ctx.json(nicks);
+        });
+
+        app.post("/api/nicknames", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String playerName = (String) body.get("player");
+            String nick = (String) body.get("nick");
+            Player target = Bukkit.getPlayer(playerName);
+            if (target != null) {
+                if (nick == null || nick.isEmpty()) {
+                    plugin.getDataConfig().set("nicknames." + target.getUniqueId(), null);
+                    target.setDisplayName(target.getName());
+                } else {
+                    plugin.getDataConfig().set("nicknames." + target.getUniqueId(), nick);
+                    target.setDisplayName(ChatColor.translateAlternateColorCodes('&', nick));
+                }
+                plugin.saveDataFile();
+                ctx.json(Map.of("success", true));
+            } else {
+                ctx.status(404).json(Map.of("error", "Player not online"));
+            }
+        });
+
+        // ========== CHAT TAGS ==========
+        app.get("/api/chat-tags", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            List<Map<String, Object>> tags = new ArrayList<>();
+            if (data.contains("chat_tags")) {
+                for (String uuid : data.getConfigurationSection("chat_tags").getKeys(false)) {
+                    Map<String, Object> t = new HashMap<>();
+                    t.put("uuid", uuid);
+                    t.put("tag", data.getString("chat_tags." + uuid, ""));
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    t.put("name", op.getName() != null ? op.getName() : uuid);
+                    tags.add(t);
+                }
+            }
+            result.put("tags", tags);
+            List<String> available = data.getStringList("available_tags");
+            result.put("available", available);
+            ctx.json(result);
+        });
+
+        app.post("/api/chat-tags", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String action = (String) body.getOrDefault("action", "set");
+            if (action.equals("add_available")) {
+                String tag = (String) body.get("tag");
+                List<String> available = plugin.getDataConfig().getStringList("available_tags");
+                available.add(tag);
+                plugin.getDataConfig().set("available_tags", available);
+                plugin.saveDataFile();
+            } else if (action.equals("remove_available")) {
+                String tag = (String) body.get("tag");
+                List<String> available = plugin.getDataConfig().getStringList("available_tags");
+                available.remove(tag);
+                plugin.getDataConfig().set("available_tags", available);
+                plugin.saveDataFile();
+            } else {
+                String playerName = (String) body.get("player");
+                String tag = (String) body.getOrDefault("tag", "");
+                Player target = Bukkit.getPlayer(playerName);
+                if (target != null) {
+                    if (tag.isEmpty()) {
+                        plugin.getDataConfig().set("chat_tags." + target.getUniqueId(), null);
+                    } else {
+                        plugin.getDataConfig().set("chat_tags." + target.getUniqueId(), tag);
+                    }
+                    plugin.saveDataFile();
+                }
+            }
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== SERVER RULES ==========
+        app.get("/api/rules", ctx -> {
+            if (!auth(ctx)) return;
+            List<String> rules = plugin.getDataConfig().getStringList("server_rules");
+            ctx.json(Map.of("rules", rules));
+        });
+
+        app.post("/api/rules", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            List<String> rules = (List<String>) body.get("rules");
+            plugin.getDataConfig().set("server_rules", rules);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== PLAYER WARPS ==========
+        app.get("/api/player-warps", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            result.put("cost", data.getInt("pwarp_cost", 5));
+            result.put("max", data.getInt("pwarp_max", 3));
+            List<Map<String, Object>> warps = new ArrayList<>();
+            if (data.contains("pwarps")) {
+                for (String id : data.getConfigurationSection("pwarps").getKeys(false)) {
+                    String path = "pwarps." + id;
+                    Map<String, Object> w = new HashMap<>();
+                    w.put("id", id);
+                    w.put("name", data.getString(path + ".name", id));
+                    w.put("ownerName", data.getString(path + ".ownerName", "Unknown"));
+                    w.put("visits", data.getInt(path + ".visits", 0));
+                    w.put("world", data.getString(path + ".world", "world"));
+                    w.put("x", data.getDouble(path + ".x"));
+                    w.put("y", data.getDouble(path + ".y"));
+                    w.put("z", data.getDouble(path + ".z"));
+                    warps.add(w);
+                }
+            }
+            result.put("warps", warps);
+            ctx.json(result);
+        });
+
+        app.post("/api/player-warps/settings", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            if (body.containsKey("cost")) plugin.getDataConfig().set("pwarp_cost", ((Number)body.get("cost")).intValue());
+            if (body.containsKey("max")) plugin.getDataConfig().set("pwarp_max", ((Number)body.get("max")).intValue());
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/player-warps/{id}", ctx -> {
+            if (!auth(ctx)) return;
+            plugin.getDataConfig().set("pwarps." + ctx.pathParam("id"), null);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== CUSTOM RECIPES ==========
+        app.get("/api/custom-recipes", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<String, Object>> recipes = new ArrayList<>();
+            if (data.contains("custom_recipes")) {
+                for (String id : data.getConfigurationSection("custom_recipes").getKeys(false)) {
+                    String path = "custom_recipes." + id;
+                    Map<String, Object> r = new HashMap<>();
+                    r.put("id", id);
+                    r.put("result", data.getString(path + ".result", "DIAMOND"));
+                    r.put("resultAmount", data.getInt(path + ".resultAmount", 1));
+                    r.put("ingredients", data.getStringList(path + ".ingredients"));
+                    r.put("name", data.getString(path + ".name", id));
+                    recipes.add(r);
+                }
+            }
+            ctx.json(recipes);
+        });
+
+        app.post("/api/custom-recipes", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            String id = "recipe_" + System.currentTimeMillis();
+            String path = "custom_recipes." + id;
+            data.set(path + ".name", body.getOrDefault("name", id));
+            data.set(path + ".result", body.getOrDefault("result", "DIAMOND"));
+            data.set(path + ".resultAmount", ((Number)body.getOrDefault("resultAmount", 1)).intValue());
+            data.set(path + ".ingredients", body.get("ingredients"));
+            plugin.saveDataFile();
+            // Register the recipe in-game
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                try {
+                    Material resultMat = Material.valueOf(((String) body.getOrDefault("result", "DIAMOND")).toUpperCase());
+                    org.bukkit.inventory.ItemStack resultItem = new org.bukkit.inventory.ItemStack(resultMat, ((Number)body.getOrDefault("resultAmount", 1)).intValue());
+                    org.bukkit.inventory.ShapelessRecipe recipe = new org.bukkit.inventory.ShapelessRecipe(
+                        new org.bukkit.NamespacedKey(plugin, id), resultItem);
+                    List<String> ingredients = (List<String>) body.get("ingredients");
+                    if (ingredients != null) {
+                        for (String ing : ingredients) {
+                            try { recipe.addIngredient(Material.valueOf(ing.toUpperCase())); } catch (Exception ignored) {}
+                        }
+                    }
+                    Bukkit.addRecipe(recipe);
+                } catch (Exception ignored) {}
+            });
+            ctx.json(Map.of("success", true, "id", id));
+        });
+
+        app.delete("/api/custom-recipes/{id}", ctx -> {
+            if (!auth(ctx)) return;
+            plugin.getDataConfig().set("custom_recipes." + ctx.pathParam("id"), null);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== PVP STATS ==========
+        app.get("/api/pvp-stats", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<String, Object>> stats = new ArrayList<>();
+            if (data.contains("pvpstats")) {
+                for (String uuid : data.getConfigurationSection("pvpstats").getKeys(false)) {
+                    String path = "pvpstats." + uuid;
+                    Map<String, Object> s = new HashMap<>();
+                    s.put("uuid", uuid);
+                    s.put("kills", data.getInt(path + ".kills", 0));
+                    s.put("deaths", data.getInt(path + ".deaths", 0));
+                    s.put("streak", data.getInt(path + ".streak", 0));
+                    s.put("bestStreak", data.getInt(path + ".best_streak", 0));
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    s.put("name", op.getName() != null ? op.getName() : uuid);
+                    stats.add(s);
+                }
+            }
+            // Sort by kills desc
+            stats.sort((a, b) -> ((Integer) b.get("kills")).compareTo((Integer) a.get("kills")));
+            ctx.json(stats);
+        });
+
+        // ========== ACHIEVEMENTS ==========
+        app.get("/api/achievements", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            List<Map<String, Object>> defs = new ArrayList<>();
+            if (data.contains("achievement_defs")) {
+                for (String key : data.getConfigurationSection("achievement_defs").getKeys(false)) {
+                    String path = "achievement_defs." + key;
+                    Map<String, Object> a = new HashMap<>();
+                    a.put("id", key);
+                    a.put("name", data.getString(path + ".name", key));
+                    a.put("description", data.getString(path + ".description", ""));
+                    a.put("title", data.getString(path + ".title", ""));
+                    a.put("xpReward", data.getInt(path + ".xp_reward", 0));
+                    defs.add(a);
+                }
+            }
+            result.put("definitions", defs);
+            // Unlocked per player
+            List<Map<String, Object>> unlocked = new ArrayList<>();
+            if (data.contains("achievements")) {
+                for (String uuid : data.getConfigurationSection("achievements").getKeys(false)) {
+                    Map<String, Object> pu = new HashMap<>();
+                    pu.put("uuid", uuid);
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    pu.put("name", op.getName() != null ? op.getName() : uuid);
+                    List<String> achList = new ArrayList<>();
+                    if (data.contains("achievements." + uuid)) {
+                        for (String achKey : data.getConfigurationSection("achievements." + uuid).getKeys(false)) {
+                            if (data.getBoolean("achievements." + uuid + "." + achKey, false)) achList.add(achKey);
+                        }
+                    }
+                    pu.put("achievements", achList);
+                    unlocked.add(pu);
+                }
+            }
+            result.put("unlocked", unlocked);
+            ctx.json(result);
+        });
+
+        app.post("/api/achievements", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            String id = (String) body.getOrDefault("id", "ach_" + System.currentTimeMillis());
+            String path = "achievement_defs." + id;
+            data.set(path + ".name", body.getOrDefault("name", id));
+            data.set(path + ".description", body.getOrDefault("description", ""));
+            data.set(path + ".title", body.getOrDefault("title", ""));
+            data.set(path + ".xp_reward", ((Number)body.getOrDefault("xpReward", 0)).intValue());
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true, "id", id));
+        });
+
+        app.delete("/api/achievements/{id}", ctx -> {
+            if (!auth(ctx)) return;
+            plugin.getDataConfig().set("achievement_defs." + ctx.pathParam("id"), null);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== DUELS ==========
+        app.get("/api/duels", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            // Active duels from plugin memory
+            List<Map<String, Object>> active = new ArrayList<>();
+            for (Map.Entry<java.util.UUID, java.util.UUID> entry : plugin.activeDuels.entrySet()) {
+                org.bukkit.OfflinePlayer p1 = Bukkit.getOfflinePlayer(entry.getKey());
+                org.bukkit.OfflinePlayer p2 = Bukkit.getOfflinePlayer(entry.getValue());
+                Map<String, Object> d = new HashMap<>();
+                d.put("player1", p1.getName() != null ? p1.getName() : entry.getKey().toString());
+                d.put("player2", p2.getName() != null ? p2.getName() : entry.getValue().toString());
+                d.put("wager", plugin.duelWagers.getOrDefault(entry.getKey(), 0));
+                active.add(d);
+            }
+            result.put("active", active);
+            // Duel stats from pvpstats
+            List<Map<String, Object>> stats = new ArrayList<>();
+            if (data.contains("pvpstats")) {
+                for (String uuid : data.getConfigurationSection("pvpstats").getKeys(false)) {
+                    Map<String, Object> s = new HashMap<>();
+                    s.put("uuid", uuid);
+                    s.put("kills", data.getInt("pvpstats." + uuid + ".kills", 0));
+                    s.put("deaths", data.getInt("pvpstats." + uuid + ".deaths", 0));
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    s.put("name", op.getName() != null ? op.getName() : uuid);
+                    stats.add(s);
+                }
+            }
+            result.put("stats", stats);
+            ctx.json(result);
+        });
+
+        // ========== FIRST JOIN / WELCOME ==========
+        app.get("/api/welcome", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            result.put("message", data.getString("welcome_message", "&6Welcome to the server, &e{player}&6!"));
+            result.put("broadcast", data.getBoolean("welcome_broadcast", true));
+            result.put("starterItems", data.getStringList("welcome_starter_items"));
+            // First join history
+            List<Map<String, Object>> firstJoins = new ArrayList<>();
+            if (data.contains("first_join")) {
+                for (String uuid : data.getConfigurationSection("first_join").getKeys(false)) {
+                    Map<String, Object> fj = new HashMap<>();
+                    fj.put("uuid", uuid);
+                    fj.put("time", data.getLong("first_join." + uuid, 0));
+                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
+                    fj.put("name", op.getName() != null ? op.getName() : uuid);
+                    firstJoins.add(fj);
+                }
+            }
+            result.put("firstJoins", firstJoins);
+            ctx.json(result);
+        });
+
+        app.post("/api/welcome", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            if (body.containsKey("message")) data.set("welcome_message", body.get("message"));
+            if (body.containsKey("broadcast")) data.set("welcome_broadcast", body.get("broadcast"));
+            if (body.containsKey("starterItems")) data.set("welcome_starter_items", body.get("starterItems"));
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== INACTIVE PLAYER ALERTS ==========
+        app.get("/api/inactive-players", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            int thresholdDays = data.getInt("inactive_threshold_days", 14);
+            long thresholdMs = (long) thresholdDays * 86400000L;
+            long now = System.currentTimeMillis();
+            List<Map<String, Object>> inactive = new ArrayList<>();
+            if (data.contains("last_seen")) {
+                for (String uuid : data.getConfigurationSection("last_seen").getKeys(false)) {
+                    long lastSeen = data.getLong("last_seen." + uuid, 0);
+                    long daysSince = (now - lastSeen) / 86400000L;
+                    if ((now - lastSeen) > thresholdMs) {
+                        Map<String, Object> p = new HashMap<>();
+                        p.put("uuid", uuid);
+                        p.put("name", data.getString("last_seen_name." + uuid, uuid));
+                        p.put("lastSeen", lastSeen);
+                        p.put("daysSince", daysSince);
+                        inactive.add(p);
+                    }
+                }
+            }
+            inactive.sort((a, b) -> Long.compare((Long) b.get("daysSince"), (Long) a.get("daysSince")));
+            ctx.json(Map.of("players", inactive, "thresholdDays", thresholdDays));
+        });
+
+        app.post("/api/inactive-players/settings", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            if (body.containsKey("thresholdDays")) plugin.getDataConfig().set("inactive_threshold_days", ((Number)body.get("thresholdDays")).intValue());
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== SCHEDULED ANNOUNCEMENTS ==========
+        app.get("/api/announcements", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            Map<String, Object> result = new HashMap<>();
+            result.put("enabled", data.getBoolean("announcements.enabled", false));
+            result.put("intervalMinutes", data.getInt("announcements.interval_minutes", 5));
+            result.put("prefix", data.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            result.put("messages", data.getStringList("announcements.messages"));
+            ctx.json(result);
+        });
+
+        app.post("/api/announcements", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            var data = plugin.getDataConfig();
+            if (body.containsKey("enabled")) data.set("announcements.enabled", body.get("enabled"));
+            if (body.containsKey("intervalMinutes")) data.set("announcements.interval_minutes", ((Number)body.get("intervalMinutes")).intValue());
+            if (body.containsKey("prefix")) data.set("announcements.prefix", body.get("prefix"));
+            if (body.containsKey("messages")) data.set("announcements.messages", body.get("messages"));
+            plugin.saveDataFile();
             ctx.json(Map.of("success", true));
         });
     }
