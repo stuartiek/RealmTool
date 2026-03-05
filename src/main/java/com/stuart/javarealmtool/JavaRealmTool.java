@@ -10,6 +10,7 @@ import org.bukkit.event.block.*;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
+import org.bukkit.event.server.ServerListPingEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.*;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -69,7 +70,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_KIT_LIST = ChatColor.GOLD + "Kits";
     private final String GUI_KIT_PREVIEW = ChatColor.GOLD + "Kit: ";
     private final String GUI_KIT_CONFIRM = ChatColor.GREEN + "Purchase Kit: ";
+    private final String GUI_CRATE_LIST = ChatColor.LIGHT_PURPLE + "Crates";
+    private final String GUI_CRATE_PREVIEW = ChatColor.LIGHT_PURPLE + "Crate: ";
+    private final String GUI_BOUNTY_LIST = ChatColor.RED + "Bounties";
+    private final String GUI_SHOP_LIST = ChatColor.GREEN + "Player Shops";
+    private final String GUI_QUEST_LIST = ChatColor.GOLD + "Quests";
     private final Map<UUID, Long> kitCooldowns = new HashMap<>();
+    private final Map<UUID, String> pendingShopAction = new HashMap<>();
+    private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
+    private final List<String> chatFilterWords = new ArrayList<>();
+    private final Map<UUID, Integer> spamCounter = new HashMap<>();
+    private final Map<UUID, Long> lastChatTime = new HashMap<>();
 
     private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
     private static class PunishmentContext {
@@ -90,6 +101,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
         if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
+        if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
+        if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
+        if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
+        if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
+        if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
+        if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -99,6 +116,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         
         // Start punishment expiry checker (every 1 second = 20 ticks)
         startPunishmentChecker();
+
+        // Load auto-mod filter words
+        loadChatFilter();
+
+        // Start playtime rewards checker (every 5 min = 6000 ticks)
+        startPlaytimeRewardsChecker();
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
@@ -315,6 +338,100 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         if (cmd.getName().equalsIgnoreCase("kit")) {
             openKitListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("crate")) {
+            openCrateListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("bounty")) {
+            if (args.length == 0) {
+                openBountyListGUI(p);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("set") && args.length >= 3) {
+                Player target = Bukkit.getPlayer(args[1]);
+                if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+                if (target.getUniqueId().equals(p.getUniqueId())) { p.sendMessage(ChatColor.RED + "Cannot bounty yourself."); return true; }
+                int amount;
+                try { amount = Integer.parseInt(args[2]); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Invalid amount."); return true; }
+                if (amount < 1) { p.sendMessage(ChatColor.RED + "Amount must be at least 1."); return true; }
+                if (p.getLevel() < amount) { p.sendMessage(ChatColor.RED + "Not enough XP levels."); return true; }
+                p.setLevel(p.getLevel() - amount);
+                String bountyId = String.valueOf(System.currentTimeMillis());
+                dataConfig.set("bounties." + bountyId + ".target", target.getUniqueId().toString());
+                dataConfig.set("bounties." + bountyId + ".targetName", target.getName());
+                dataConfig.set("bounties." + bountyId + ".setter", p.getUniqueId().toString());
+                dataConfig.set("bounties." + bountyId + ".setterName", p.getName());
+                dataConfig.set("bounties." + bountyId + ".amount", amount);
+                dataConfig.set("bounties." + bountyId + ".time", System.currentTimeMillis());
+                saveDataFile();
+                Bukkit.broadcastMessage(ChatColor.RED + "☠ BOUNTY: " + ChatColor.YELLOW + p.getName() + ChatColor.RED + " placed a " + ChatColor.GOLD + amount + " XP level" + ChatColor.RED + " bounty on " + ChatColor.YELLOW + target.getName() + ChatColor.RED + "!");
+                logAction(p.getName(), "set_bounty", target.getName() + " for " + amount + " XP");
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Usage: /bounty set <player> <amount> or /bounty");
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("shop")) {
+            openShopListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("quest")) {
+            openQuestListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("apply")) {
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.GOLD + "--- Staff Application ---");
+                p.sendMessage(ChatColor.YELLOW + "Usage: /apply <your message explaining why you want to be staff>");
+                return true;
+            }
+            String message = String.join(" ", args);
+            String appId = String.valueOf(dataConfig.getInt("applications.next_id", 1));
+            dataConfig.set("applications." + appId + ".player", p.getName());
+            dataConfig.set("applications." + appId + ".uuid", p.getUniqueId().toString());
+            dataConfig.set("applications." + appId + ".message", message);
+            dataConfig.set("applications." + appId + ".status", "pending");
+            dataConfig.set("applications." + appId + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+            dataConfig.set("applications.next_id", Integer.parseInt(appId) + 1);
+            saveDataFile();
+            p.sendMessage(ChatColor.GREEN + "✅ Your staff application #" + appId + " has been submitted! An admin will review it.");
+            logAction(p.getName(), "submitted_application", "#" + appId);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("vote")) {
+            if (args.length == 0) {
+                // Show active polls
+                showActivePolls(p);
+                return true;
+            }
+            if (args.length >= 2) {
+                String pollId = args[0];
+                String choice = args[1];
+                if (!dataConfig.contains("polls." + pollId)) { p.sendMessage(ChatColor.RED + "Poll not found."); return true; }
+                if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) { p.sendMessage(ChatColor.RED + "This poll has ended."); return true; }
+                List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+                if (voters.contains(p.getUniqueId().toString())) { p.sendMessage(ChatColor.RED + "You already voted on this poll."); return true; }
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                int choiceIdx;
+                try { choiceIdx = Integer.parseInt(choice); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Use the option number."); return true; }
+                if (choiceIdx < 1 || choiceIdx > options.size()) { p.sendMessage(ChatColor.RED + "Invalid option."); return true; }
+                voters.add(p.getUniqueId().toString());
+                dataConfig.set("polls." + pollId + ".voters", voters);
+                int current = dataConfig.getInt("polls." + pollId + ".votes." + choiceIdx, 0);
+                dataConfig.set("polls." + pollId + ".votes." + choiceIdx, current + 1);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "✅ Vote recorded for: " + ChatColor.YELLOW + options.get(choiceIdx - 1));
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Usage: /vote <pollId> <option#> or /vote");
             return true;
         }
 
@@ -1417,7 +1534,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)
             && !title.equals(GUI_WORLD_UTILITIES) && !title.equals(GUI_WORLD_LIST)
             && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)
-            && !title.equals(GUI_KIT_LIST) && !title.startsWith(GUI_KIT_PREVIEW) && !title.startsWith(GUI_KIT_CONFIRM)) return;
+            && !title.equals(GUI_KIT_LIST) && !title.startsWith(GUI_KIT_PREVIEW) && !title.startsWith(GUI_KIT_CONFIRM)
+            && !title.equals(GUI_CRATE_LIST) && !title.equals(GUI_BOUNTY_LIST)
+            && !title.equals(GUI_SHOP_LIST) && !title.equals(GUI_QUEST_LIST)) return;
 
         e.setCancelled(true);
         if (e.getCurrentItem() == null) return;
@@ -1502,6 +1621,86 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             } else if (type == Material.EMERALD_BLOCK) {
                 p.closeInventory();
                 claimKit(p, kitName);
+            }
+            return;
+        }
+
+        // Crate List
+        if (title.equals(GUI_CRATE_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                p.closeInventory();
+                openCrateReward(p, itemName);
+            }
+            return;
+        }
+
+        // Bounty List
+        if (title.equals(GUI_BOUNTY_LIST)) {
+            if (type == Material.BARRIER) p.closeInventory();
+            return;
+        }
+
+        // Shop List
+        if (title.equals(GUI_SHOP_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                // Find matching shop listing and purchase
+                if (dataConfig.contains("shops")) {
+                    for (String shopId : dataConfig.getConfigurationSection("shops").getKeys(false)) {
+                        String sItem = dataConfig.getString("shops." + shopId + ".item", "");
+                        int sAmt = dataConfig.getInt("shops." + shopId + ".amount", 1);
+                        String expected = sAmt + "x " + sItem.replace("_", " ");
+                        if (itemName.equalsIgnoreCase(expected)) {
+                            int price = dataConfig.getInt("shops." + shopId + ".price", 0);
+                            if (p.getLevel() < price) {
+                                p.sendMessage(ChatColor.RED + "Not enough XP! Need " + price + " levels.");
+                                return;
+                            }
+                            p.setLevel(p.getLevel() - price);
+                            Material mat = Material.valueOf(sItem.toUpperCase());
+                            ItemStack bought = new ItemStack(mat, sAmt);
+                            HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(bought);
+                            for (ItemStack drop : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+                            p.sendMessage(ChatColor.GREEN + "Purchased " + sAmt + "x " + mat.name().replace("_", " ") + "!");
+                            String owner = dataConfig.getString("shops." + shopId + ".ownerName", "");
+                            p.closeInventory();
+                            // Notify seller if online
+                            Player seller = Bukkit.getPlayer(owner);
+                            if (seller != null) seller.sendMessage(ChatColor.GREEN + p.getName() + " bought " + sAmt + "x " + mat.name().replace("_", " ") + " from your shop!");
+                            // Remove listing
+                            dataConfig.set("shops." + shopId, null);
+                            saveDataFile();
+                            logAction(p.getName(), "shop_purchase", shopId);
+                            return;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // Quest List
+        if (title.equals(GUI_QUEST_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type == Material.LIME_DYE) {
+                // Already completed
+                p.sendMessage(ChatColor.GREEN + "Already claimed.");
+            } else if (type == Material.YELLOW_DYE) {
+                // Check if ready to claim - look for "Click to claim" in lore
+                ItemMeta meta = e.getCurrentItem().getItemMeta();
+                if (meta != null && meta.hasLore()) {
+                    boolean canClaim = false;
+                    for (String line : meta.getLore()) {
+                        if (ChatColor.stripColor(line).contains("Click to claim")) { canClaim = true; break; }
+                    }
+                    if (canClaim) {
+                        p.closeInventory();
+                        claimQuestReward(p, itemName);
+                    } else {
+                        p.sendMessage(ChatColor.YELLOW + "Quest not yet complete!");
+                    }
+                }
             }
             return;
         }
@@ -1967,6 +2166,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 return;
             }
             saveLog(e.getBlock().getLocation(), ChatColor.RED + "Broken by " + e.getPlayer().getName());
+            // Quest tracking
+            trackQuestProgress(e.getPlayer(), "break_blocks", 1);
+            trackQuestProgress(e.getPlayer(), "mine_" + e.getBlock().getType().name().toLowerCase(), 1);
         }
     }
     @EventHandler
@@ -2132,6 +2334,59 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             e.getPlayer().sendMessage(ChatColor.RED + "You are muted and cannot chat.");
             return;
         }
+
+        // Auto-moderation
+        if (dataConfig.getBoolean("automod.enabled", false) && !e.getPlayer().hasPermission("dmt.admin")) {
+            String msg = e.getMessage().toLowerCase();
+            // Word filter
+            if (dataConfig.getBoolean("automod.filter_enabled", true)) {
+                for (String word : chatFilterWords) {
+                    if (msg.contains(word.toLowerCase())) {
+                        e.setCancelled(true);
+                        e.getPlayer().sendMessage(ChatColor.RED + "Your message was blocked by the chat filter.");
+                        int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
+                        dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
+                        int maxViolations = dataConfig.getInt("automod.max_violations", 5);
+                        if (violations >= maxViolations) {
+                            Bukkit.getScheduler().runTask(this, () -> {
+                                mutePlayer(e.getPlayer().getUniqueId(), e.getPlayer().getName(), "Auto-muted: chat filter (" + violations + " violations)");
+                                e.getPlayer().sendMessage(ChatColor.RED + "You have been auto-muted for repeated filter violations.");
+                            });
+                        }
+                        Bukkit.getScheduler().runTask(this, this::saveDataFile);
+                        return;
+                    }
+                }
+            }
+            // Spam detection
+            if (dataConfig.getBoolean("automod.antispam_enabled", true)) {
+                long now = System.currentTimeMillis();
+                long lastTime = lastChatTime.getOrDefault(e.getPlayer().getUniqueId(), 0L);
+                int cooldownMs = dataConfig.getInt("automod.spam_cooldown_ms", 1000);
+                if (now - lastTime < cooldownMs) {
+                    int count = spamCounter.getOrDefault(e.getPlayer().getUniqueId(), 0) + 1;
+                    spamCounter.put(e.getPlayer().getUniqueId(), count);
+                    if (count >= dataConfig.getInt("automod.spam_threshold", 4)) {
+                        e.setCancelled(true);
+                        e.getPlayer().sendMessage(ChatColor.RED + "Slow down! You are sending messages too fast.");
+                        spamCounter.put(e.getPlayer().getUniqueId(), 0);
+                        return;
+                    }
+                } else {
+                    spamCounter.put(e.getPlayer().getUniqueId(), 0);
+                }
+                lastChatTime.put(e.getPlayer().getUniqueId(), now);
+            }
+            // Caps filter
+            if (dataConfig.getBoolean("automod.caps_filter", true) && e.getMessage().length() > 6) {
+                long caps = e.getMessage().chars().filter(Character::isUpperCase).count();
+                if (caps > e.getMessage().length() * 0.7) {
+                    e.setMessage(e.getMessage().toLowerCase());
+                    e.getPlayer().sendMessage(ChatColor.YELLOW + "Please don't use excessive caps.");
+                }
+            }
+        }
+
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
     }
 
@@ -2663,6 +2918,443 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             }
         }
         path.delete();
+    }
+
+    // ========== CRATES SYSTEM ==========
+    private void openCrateListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_CRATE_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("crates")) {
+            for (String crateName : dataConfig.getConfigurationSection("crates").getKeys(false)) {
+                String path = "crates." + crateName;
+                String icon = dataConfig.getString(path + ".icon", "CHEST");
+                Material mat = Material.CHEST;
+                try { mat = Material.valueOf(icon.toUpperCase()); } catch (Exception ignored) {}
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName(ChatColor.LIGHT_PURPLE + crateName);
+                int keyCost = dataConfig.getInt(path + ".key_cost", 0);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + (dataConfig.getString(path + ".description", "")));
+                lore.add("");
+                lore.add(keyCost > 0 ? ChatColor.GREEN + "Key Cost: " + keyCost + " XP Levels" : ChatColor.GREEN + "Free to open");
+                List<String> rewards = dataConfig.getStringList(path + ".rewards");
+                lore.add(ChatColor.YELLOW + "" + rewards.size() + " possible rewards");
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to open!");
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    private void openCrateReward(Player p, String crateName) {
+        String path = "crates." + crateName;
+        if (!dataConfig.contains(path)) { p.sendMessage(ChatColor.RED + "Crate not found."); return; }
+
+        int keyCost = dataConfig.getInt(path + ".key_cost", 0);
+        if (keyCost > 0 && p.getLevel() < keyCost) {
+            p.sendMessage(ChatColor.RED + "Not enough XP! Need " + keyCost + " levels.");
+            return;
+        }
+        if (keyCost > 0) p.setLevel(p.getLevel() - keyCost);
+
+        List<String> rewards = dataConfig.getStringList(path + ".rewards");
+        if (rewards.isEmpty()) { p.sendMessage(ChatColor.RED + "This crate is empty!"); return; }
+
+        // Weighted random: format is MATERIAL:amount:weight (weight is optional, default 100)
+        int totalWeight = 0;
+        List<int[]> weightRanges = new ArrayList<>();
+        for (String r : rewards) {
+            String[] parts = r.split(":");
+            int weight = parts.length > 2 ? Integer.parseInt(parts[2]) : 100;
+            weightRanges.add(new int[]{totalWeight, totalWeight + weight});
+            totalWeight += weight;
+        }
+        int roll = new Random().nextInt(totalWeight);
+        int winIndex = 0;
+        for (int i = 0; i < weightRanges.size(); i++) {
+            if (roll >= weightRanges.get(i)[0] && roll < weightRanges.get(i)[1]) { winIndex = i; break; }
+        }
+        String winReward = rewards.get(winIndex);
+        String[] parts = winReward.split(":");
+        Material mat = Material.valueOf(parts[0].toUpperCase());
+        int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+        ItemStack reward = new ItemStack(mat, amount);
+        HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(reward);
+        for (ItemStack drop : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+
+        p.sendMessage(ChatColor.LIGHT_PURPLE + "✨ You opened " + ChatColor.GOLD + crateName + ChatColor.LIGHT_PURPLE + " and received " + ChatColor.WHITE + amount + "x " + mat.name().replace("_", " ") + ChatColor.LIGHT_PURPLE + "!");
+        Bukkit.broadcastMessage(ChatColor.LIGHT_PURPLE + "✨ " + ChatColor.YELLOW + p.getName() + ChatColor.LIGHT_PURPLE + " opened a " + ChatColor.GOLD + crateName + ChatColor.LIGHT_PURPLE + " crate and got " + ChatColor.WHITE + amount + "x " + mat.name().replace("_", " ") + ChatColor.LIGHT_PURPLE + "!");
+        logAction(p.getName(), "opened_crate", crateName + " -> " + amount + "x " + mat.name());
+    }
+
+    // ========== BOUNTY SYSTEM ==========
+    private void openBountyListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_BOUNTY_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("bounties")) {
+            for (String bountyId : dataConfig.getConfigurationSection("bounties").getKeys(false)) {
+                String bPath = "bounties." + bountyId;
+                String targetName = dataConfig.getString(bPath + ".targetName", "Unknown");
+                String setterName = dataConfig.getString(bPath + ".setterName", "Unknown");
+                int amount = dataConfig.getInt(bPath + ".amount", 0);
+                ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+                SkullMeta sMeta = (SkullMeta) head.getItemMeta();
+                sMeta.setOwningPlayer(Bukkit.getOfflinePlayer(targetName));
+                sMeta.setDisplayName(ChatColor.RED + "☠ " + targetName);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GOLD + "Reward: " + amount + " XP Levels");
+                lore.add(ChatColor.GRAY + "Set by: " + setterName);
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Kill this player to collect!");
+                sMeta.setLore(lore);
+                head.setItemMeta(sMeta);
+                gui.setItem(getNextGridSlot(), head);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
+        Player victim = e.getEntity();
+        Player killer = victim.getKiller();
+        if (killer == null || killer.equals(victim)) return;
+
+        // Check for bounties on the victim
+        if (dataConfig.contains("bounties")) {
+            List<String> toRemove = new ArrayList<>();
+            int totalReward = 0;
+            for (String bountyId : dataConfig.getConfigurationSection("bounties").getKeys(false)) {
+                String target = dataConfig.getString("bounties." + bountyId + ".target", "");
+                if (target.equals(victim.getUniqueId().toString())) {
+                    totalReward += dataConfig.getInt("bounties." + bountyId + ".amount", 0);
+                    toRemove.add(bountyId);
+                }
+            }
+            if (totalReward > 0) {
+                for (String id : toRemove) dataConfig.set("bounties." + id, null);
+                saveDataFile();
+                killer.setLevel(killer.getLevel() + totalReward);
+                Bukkit.broadcastMessage(ChatColor.RED + "☠ BOUNTY CLAIMED! " + ChatColor.YELLOW + killer.getName() + ChatColor.RED + " collected " + ChatColor.GOLD + totalReward + " XP levels" + ChatColor.RED + " for killing " + ChatColor.YELLOW + victim.getName() + ChatColor.RED + "!");
+                logAction(killer.getName(), "claimed_bounty", victim.getName() + " for " + totalReward + " XP");
+            }
+        }
+    }
+
+    // ========== PLAYER SHOPS ==========
+    private void openShopListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_SHOP_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("shops")) {
+            for (String shopId : dataConfig.getConfigurationSection("shops").getKeys(false)) {
+                String sPath = "shops." + shopId;
+                String owner = dataConfig.getString(sPath + ".ownerName", "Unknown");
+                String item = dataConfig.getString(sPath + ".item", "DIRT");
+                int amount = dataConfig.getInt(sPath + ".amount", 1);
+                int price = dataConfig.getInt(sPath + ".price", 0);
+
+                Material mat = Material.DIRT;
+                try { mat = Material.valueOf(item.toUpperCase()); } catch (Exception ignored) {}
+                ItemStack display = new ItemStack(mat, amount);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GREEN + "" + amount + "x " + mat.name().replace("_", " "));
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Seller: " + owner);
+                lore.add(ChatColor.GOLD + "Price: " + price + " XP Levels");
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Click to buy!");
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== QUEST SYSTEM ==========
+    private void openQuestListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_QUEST_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("quests")) {
+            for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+                String qPath = "quests." + questId;
+                if (!dataConfig.getBoolean(qPath + ".active", true)) continue;
+                String name = dataConfig.getString(qPath + ".name", questId);
+                String desc = dataConfig.getString(qPath + ".description", "");
+                String type = dataConfig.getString(qPath + ".type", "break_blocks");
+                int goal = dataConfig.getInt(qPath + ".goal", 1);
+                int reward = dataConfig.getInt(qPath + ".reward", 0);
+                String rewardKit = dataConfig.getString(qPath + ".reward_kit", "");
+
+                // Get player progress
+                int progress = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+                boolean completed = dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false);
+
+                Material mat = completed ? Material.LIME_DYE : (progress > 0 ? Material.YELLOW_DYE : Material.GRAY_DYE);
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName((completed ? ChatColor.GREEN + "✅ " : ChatColor.GOLD) + name);
+                List<String> lore = new ArrayList<>();
+                if (!desc.isEmpty()) lore.add(ChatColor.GRAY + desc);
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Type: " + type.replace("_", " "));
+                lore.add(ChatColor.AQUA + "Progress: " + Math.min(progress, goal) + "/" + goal);
+                if (reward > 0) lore.add(ChatColor.GREEN + "Reward: " + reward + " XP Levels");
+                if (!rewardKit.isEmpty()) lore.add(ChatColor.GREEN + "Reward Kit: " + rewardKit);
+                if (completed) lore.add(ChatColor.GREEN + "" + ChatColor.BOLD + "COMPLETED!");
+                else if (progress >= goal) {
+                    lore.add("");
+                    lore.add(ChatColor.GREEN + "Click to claim reward!");
+                }
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onEntityKillForQuest(org.bukkit.event.entity.EntityDeathEvent e) {
+        if (e.getEntity().getKiller() != null) {
+            Player killer = e.getEntity().getKiller();
+            trackQuestProgress(killer, "kill_mobs", 1);
+            trackQuestProgress(killer, "kill_" + e.getEntity().getType().name().toLowerCase(), 1);
+        }
+    }
+
+    private void trackQuestProgress(Player p, String type, int amount) {
+        if (!dataConfig.contains("quests")) return;
+        for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+            if (!dataConfig.getBoolean("quests." + questId + ".active", true)) continue;
+            String questType = dataConfig.getString("quests." + questId + ".type", "");
+            if (!questType.equalsIgnoreCase(type)) continue;
+            if (dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false)) continue;
+            int goal = dataConfig.getInt("quests." + questId + ".goal", 1);
+            int current = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+            current += amount;
+            dataConfig.set("quest_progress." + p.getUniqueId() + "." + questId, current);
+            if (current >= goal) {
+                p.sendMessage(ChatColor.GOLD + "🎯 Quest " + ChatColor.YELLOW + dataConfig.getString("quests." + questId + ".name", questId) + ChatColor.GOLD + " complete! Use /quest to claim your reward.");
+            }
+            saveDataFile();
+        }
+    }
+
+    private void claimQuestReward(Player p, String questName) {
+        if (!dataConfig.contains("quests")) return;
+        for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+            String name = dataConfig.getString("quests." + questId + ".name", questId);
+            if (!name.equals(questName)) continue;
+            if (dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false)) {
+                p.sendMessage(ChatColor.RED + "Already claimed.");
+                return;
+            }
+            int goal = dataConfig.getInt("quests." + questId + ".goal", 1);
+            int progress = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+            if (progress < goal) { p.sendMessage(ChatColor.RED + "Not completed yet."); return; }
+
+            dataConfig.set("quest_completed." + p.getUniqueId() + "." + questId, true);
+            int reward = dataConfig.getInt("quests." + questId + ".reward", 0);
+            if (reward > 0) p.setLevel(p.getLevel() + reward);
+            String rewardKit = dataConfig.getString("quests." + questId + ".reward_kit", "");
+            if (!rewardKit.isEmpty()) claimKit(p, rewardKit);
+            saveDataFile();
+            p.sendMessage(ChatColor.GREEN + "✅ Quest reward claimed!");
+            logAction(p.getName(), "claimed_quest", questName);
+            return;
+        }
+    }
+
+    // ========== ACTIVE POLLS DISPLAY ==========
+    private void showActivePolls(Player p) {
+        boolean found = false;
+        if (dataConfig.contains("polls")) {
+            for (String pollId : dataConfig.getConfigurationSection("polls").getKeys(false)) {
+                if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) continue;
+                found = true;
+                String question = dataConfig.getString("polls." + pollId + ".question", "");
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                p.sendMessage(ChatColor.GOLD + "--- Poll #" + pollId + " ---");
+                p.sendMessage(ChatColor.YELLOW + question);
+                for (int i = 0; i < options.size(); i++) {
+                    int votes = dataConfig.getInt("polls." + pollId + ".votes." + (i + 1), 0);
+                    p.sendMessage(ChatColor.AQUA + "  " + (i + 1) + ". " + options.get(i) + ChatColor.GRAY + " (" + votes + " votes)");
+                }
+                p.sendMessage(ChatColor.GREEN + "Vote: /vote " + pollId + " <option#>");
+            }
+        }
+        if (!found) p.sendMessage(ChatColor.YELLOW + "No active polls right now.");
+    }
+
+    // ========== AUTO-MOD HELPERS ==========
+    public void loadChatFilter() {
+        chatFilterWords.clear();
+        List<String> words = dataConfig.getStringList("automod.filter_words");
+        chatFilterWords.addAll(words);
+    }
+
+    // ========== PLAYTIME REWARDS ==========
+    private void startPlaytimeRewardsChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (!dataConfig.contains("playtime_rewards")) return;
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                long minutes = dataConfig.getLong("playtime." + p.getUniqueId(), 0);
+                if (dataConfig.contains("playtime_rewards")) {
+                    for (String rewardId : dataConfig.getConfigurationSection("playtime_rewards").getKeys(false)) {
+                        int reqMinutes = dataConfig.getInt("playtime_rewards." + rewardId + ".minutes", 0);
+                        if (minutes >= reqMinutes) {
+                            String claimedKey = "playtime_claimed." + p.getUniqueId() + "." + rewardId;
+                            if (!dataConfig.getBoolean(claimedKey, false)) {
+                                dataConfig.set(claimedKey, true);
+                                int xpReward = dataConfig.getInt("playtime_rewards." + rewardId + ".xp", 0);
+                                String kit = dataConfig.getString("playtime_rewards." + rewardId + ".kit", "");
+                                if (xpReward > 0) p.setLevel(p.getLevel() + xpReward);
+                                if (!kit.isEmpty()) claimKit(p, kit);
+                                String name = dataConfig.getString("playtime_rewards." + rewardId + ".name", "Playtime Reward");
+                                p.sendMessage(ChatColor.GOLD + "🏆 Playtime Reward Unlocked: " + ChatColor.YELLOW + name + ChatColor.GOLD + "!");
+                                logAction("System", "playtime_reward", p.getName() + " -> " + name);
+                                saveDataFile();
+                            }
+                        }
+                    }
+                }
+            }
+        }, 6000L, 6000L); // Every 5 minutes
+    }
+
+    // ========== CUSTOM ENCHANTMENTS ==========
+    @EventHandler
+    public void onBlockBreakEnchant(BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        ItemStack held = p.getInventory().getItemInMainHand();
+        if (held == null || !held.hasItemMeta() || !held.getItemMeta().hasLore()) return;
+
+        List<String> lore = held.getItemMeta().getLore();
+        for (String line : lore) {
+            String stripped = ChatColor.stripColor(line).trim();
+            // Timber enchant - break logs in column
+            if (stripped.equalsIgnoreCase("Timber") && e.getBlock().getType().name().contains("LOG")) {
+                Location loc = e.getBlock().getLocation();
+                for (int y = 1; y <= 20; y++) {
+                    Location above = loc.clone().add(0, y, 0);
+                    if (above.getBlock().getType().name().contains("LOG")) {
+                        above.getBlock().breakNaturally(held);
+                    } else break;
+                }
+            }
+            // Vein Miner enchant - break connected ores
+            if (stripped.equalsIgnoreCase("Vein Miner") && e.getBlock().getType().name().contains("ORE")) {
+                Material oreType = e.getBlock().getType();
+                Set<Location> toBreak = new HashSet<>();
+                findConnectedOres(e.getBlock().getLocation(), oreType, toBreak, 16);
+                for (Location bl : toBreak) {
+                    if (!bl.equals(e.getBlock().getLocation())) bl.getBlock().breakNaturally(held);
+                }
+            }
+            // Smelting Touch - auto-smelt
+            if (stripped.equalsIgnoreCase("Smelting Touch")) {
+                Material blockType = e.getBlock().getType();
+                Material smelted = getSmeltedResult(blockType);
+                if (smelted != null) {
+                    e.setDropItems(false);
+                    e.getBlock().getWorld().dropItemNaturally(e.getBlock().getLocation(), new ItemStack(smelted, 1));
+                }
+            }
+            // Telepathy - drops go to inventory
+            if (stripped.equalsIgnoreCase("Telepathy")) {
+                e.setDropItems(false);
+                for (ItemStack drop : e.getBlock().getDrops(held)) {
+                    HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(drop);
+                    for (ItemStack o : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), o);
+                }
+            }
+        }
+    }
+
+    private void findConnectedOres(Location loc, Material oreType, Set<Location> found, int max) {
+        if (found.size() >= max) return;
+        if (found.contains(loc)) return;
+        if (loc.getBlock().getType() != oreType) return;
+        found.add(loc);
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dz = -1; dz <= 1; dz++)
+                    if (dx != 0 || dy != 0 || dz != 0)
+                        findConnectedOres(loc.clone().add(dx, dy, dz), oreType, found, max);
+    }
+
+    private Material getSmeltedResult(Material block) {
+        switch (block) {
+            case IRON_ORE: case DEEPSLATE_IRON_ORE: return Material.IRON_INGOT;
+            case GOLD_ORE: case DEEPSLATE_GOLD_ORE: return Material.GOLD_INGOT;
+            case COPPER_ORE: case DEEPSLATE_COPPER_ORE: return Material.COPPER_INGOT;
+            case ANCIENT_DEBRIS: return Material.NETHERITE_SCRAP;
+            case SAND: return Material.GLASS;
+            case COBBLESTONE: return Material.STONE;
+            default: return null;
+        }
+    }
+
+    // Apply custom enchantment to item
+    public boolean applyCustomEnchant(ItemStack item, String enchantName) {
+        if (item == null || item.getType() == Material.AIR) return false;
+        ItemMeta meta = item.getItemMeta();
+        List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+        // Check if already has it
+        for (String line : lore) {
+            if (ChatColor.stripColor(line).trim().equalsIgnoreCase(enchantName)) return false;
+        }
+        lore.add(ChatColor.LIGHT_PURPLE + enchantName);
+        meta.setLore(lore);
+        item.setItemMeta(meta);
+        return true;
+    }
+
+    // ========== MOTD HANDLER ==========
+    @EventHandler
+    public void onServerPing(ServerListPingEvent e) {
+        String line1 = dataConfig.getString("motd.line1", "");
+        String line2 = dataConfig.getString("motd.line2", "");
+        if (!line1.isEmpty() || !line2.isEmpty()) {
+            String motd = ChatColor.translateAlternateColorCodes('&', line1);
+            if (!line2.isEmpty()) motd += "\n" + ChatColor.translateAlternateColorCodes('&', line2);
+            e.setMotd(motd);
+        }
+        int maxPlayers = dataConfig.getInt("motd.maxPlayers", 0);
+        if (maxPlayers > 0) e.setMaxPlayers(maxPlayers);
     }
 
 }

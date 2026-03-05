@@ -1247,6 +1247,461 @@ public class WebServer {
             });
             ctx.result("OK");
         });
+
+        // ========== CRATES API ==========
+        app.get("/api/crates", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> result = new HashMap<>();
+            if (plugin.getDataConfig().contains("crates")) {
+                for (String crateId : plugin.getDataConfig().getConfigurationSection("crates").getKeys(false)) {
+                    Map<String, Object> crate = new HashMap<>();
+                    String p = "crates." + crateId;
+                    crate.put("icon", plugin.getDataConfig().getString(p + ".icon", "CHEST"));
+                    crate.put("description", plugin.getDataConfig().getString(p + ".description", ""));
+                    crate.put("key_cost", plugin.getDataConfig().getInt(p + ".key_cost", 0));
+                    crate.put("rewards", plugin.getDataConfig().getStringList(p + ".rewards"));
+                    result.put(crateId, crate);
+                }
+            }
+            ctx.json(result);
+        });
+
+        app.post("/api/crates", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            if (name == null || name.isEmpty()) { ctx.status(400).json(Map.of("error", "Missing name")); return; }
+            String p = "crates." + name;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set(p + ".icon", body.getOrDefault("icon", "CHEST"));
+                plugin.getDataConfig().set(p + ".description", body.getOrDefault("description", ""));
+                plugin.getDataConfig().set(p + ".key_cost", body.getOrDefault("key_cost", 0));
+                plugin.getDataConfig().set(p + ".rewards", body.getOrDefault("rewards", new ArrayList<>()));
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/crates/{name}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String name = ctx.pathParam("name");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("crates." + name, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== BOUNTIES API ==========
+        app.get("/api/bounties", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            List<Map<String, Object>> list = new ArrayList<>();
+            if (plugin.getDataConfig().contains("bounties")) {
+                for (String id : plugin.getDataConfig().getConfigurationSection("bounties").getKeys(false)) {
+                    Map<String, Object> b = new HashMap<>();
+                    String bp = "bounties." + id;
+                    b.put("id", id);
+                    b.put("targetName", plugin.getDataConfig().getString(bp + ".targetName", ""));
+                    b.put("setterName", plugin.getDataConfig().getString(bp + ".setterName", ""));
+                    b.put("amount", plugin.getDataConfig().getInt(bp + ".amount", 0));
+                    list.add(b);
+                }
+            }
+            ctx.json(list);
+        });
+
+        app.delete("/api/bounties/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("bounties." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== SHOPS API ==========
+        app.get("/api/shops", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            List<Map<String, Object>> list = new ArrayList<>();
+            if (plugin.getDataConfig().contains("shops")) {
+                for (String id : plugin.getDataConfig().getConfigurationSection("shops").getKeys(false)) {
+                    Map<String, Object> s = new HashMap<>();
+                    String sp = "shops." + id;
+                    s.put("id", id);
+                    s.put("ownerName", plugin.getDataConfig().getString(sp + ".ownerName", ""));
+                    s.put("item", plugin.getDataConfig().getString(sp + ".item", ""));
+                    s.put("amount", plugin.getDataConfig().getInt(sp + ".amount", 1));
+                    s.put("price", plugin.getDataConfig().getInt(sp + ".price", 0));
+                    list.add(s);
+                }
+            }
+            ctx.json(list);
+        });
+
+        app.delete("/api/shops/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("shops." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== QUESTS API ==========
+        app.get("/api/quests", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> result = new HashMap<>();
+            if (plugin.getDataConfig().contains("quests")) {
+                for (String qid : plugin.getDataConfig().getConfigurationSection("quests").getKeys(false)) {
+                    Map<String, Object> q = new HashMap<>();
+                    String qp = "quests." + qid;
+                    q.put("name", plugin.getDataConfig().getString(qp + ".name", qid));
+                    q.put("description", plugin.getDataConfig().getString(qp + ".description", ""));
+                    q.put("type", plugin.getDataConfig().getString(qp + ".type", "break_blocks"));
+                    q.put("goal", plugin.getDataConfig().getInt(qp + ".goal", 1));
+                    q.put("reward", plugin.getDataConfig().getInt(qp + ".reward", 0));
+                    q.put("reward_kit", plugin.getDataConfig().getString(qp + ".reward_kit", ""));
+                    q.put("active", plugin.getDataConfig().getBoolean(qp + ".active", true));
+                    result.put(qid, q);
+                }
+            }
+            ctx.json(result);
+        });
+
+        app.post("/api/quests", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String id = (String) body.get("id");
+            if (id == null || id.isEmpty()) id = String.valueOf(System.currentTimeMillis());
+            String qp = "quests." + id;
+            final String fId = id;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set(qp + ".name", body.getOrDefault("name", fId));
+                plugin.getDataConfig().set(qp + ".description", body.getOrDefault("description", ""));
+                plugin.getDataConfig().set(qp + ".type", body.getOrDefault("type", "break_blocks"));
+                plugin.getDataConfig().set(qp + ".goal", body.getOrDefault("goal", 1));
+                plugin.getDataConfig().set(qp + ".reward", body.getOrDefault("reward", 0));
+                plugin.getDataConfig().set(qp + ".reward_kit", body.getOrDefault("reward_kit", ""));
+                plugin.getDataConfig().set(qp + ".active", body.getOrDefault("active", true));
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/quests/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("quests." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== STAFF APPLICATIONS API ==========
+        app.get("/api/applications", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            List<Map<String, Object>> list = new ArrayList<>();
+            if (plugin.getDataConfig().contains("applications")) {
+                for (String id : plugin.getDataConfig().getConfigurationSection("applications").getKeys(false)) {
+                    Map<String, Object> a = new HashMap<>();
+                    String ap = "applications." + id;
+                    a.put("id", id);
+                    a.put("player", plugin.getDataConfig().getString(ap + ".player", ""));
+                    a.put("message", plugin.getDataConfig().getString(ap + ".message", ""));
+                    a.put("date", plugin.getDataConfig().getString(ap + ".date", ""));
+                    a.put("status", plugin.getDataConfig().getString(ap + ".status", "pending"));
+                    list.add(a);
+                }
+            }
+            ctx.json(list);
+        });
+
+        app.post("/api/applications/{id}/status", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String status = (String) body.get("status");
+            if (status == null) { ctx.status(400).json(Map.of("error", "Missing status")); return; }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("applications." + id + ".status", status);
+                plugin.saveDataFile();
+                String playerName = plugin.getDataConfig().getString("applications." + id + ".player", "");
+                Player target = Bukkit.getPlayer(playerName);
+                if (target != null) {
+                    target.sendMessage(ChatColor.GOLD + "Your staff application has been " + (status.equals("approved") ? ChatColor.GREEN + "APPROVED" : ChatColor.RED + "DENIED") + ChatColor.GOLD + "!");
+                }
+                plugin.logAction("WebAdmin", "application_" + status, playerName);
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/applications/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("applications." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== POLLS API ==========
+        app.get("/api/polls", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> result = new HashMap<>();
+            if (plugin.getDataConfig().contains("polls")) {
+                for (String pid : plugin.getDataConfig().getConfigurationSection("polls").getKeys(false)) {
+                    Map<String, Object> poll = new HashMap<>();
+                    String pp = "polls." + pid;
+                    poll.put("question", plugin.getDataConfig().getString(pp + ".question", ""));
+                    poll.put("options", plugin.getDataConfig().getStringList(pp + ".options"));
+                    poll.put("active", plugin.getDataConfig().getBoolean(pp + ".active", false));
+                    Map<String, Integer> votes = new HashMap<>();
+                    if (plugin.getDataConfig().contains(pp + ".votes")) {
+                        for (String vk : plugin.getDataConfig().getConfigurationSection(pp + ".votes").getKeys(false)) {
+                            votes.put(vk, plugin.getDataConfig().getInt(pp + ".votes." + vk, 0));
+                        }
+                    }
+                    poll.put("votes", votes);
+                    result.put(pid, poll);
+                }
+            }
+            ctx.json(result);
+        });
+
+        app.post("/api/polls", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String id = (String) body.get("id");
+            if (id == null || id.isEmpty()) id = String.valueOf(System.currentTimeMillis());
+            String pp = "polls." + id;
+            final String fId = id;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set(pp + ".question", body.getOrDefault("question", ""));
+                plugin.getDataConfig().set(pp + ".options", body.getOrDefault("options", new ArrayList<>()));
+                plugin.getDataConfig().set(pp + ".active", body.getOrDefault("active", true));
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/polls/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("polls." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== AUTO-MODERATION API ==========
+        app.get("/api/automod", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> res = new HashMap<>();
+            res.put("filter_words", plugin.getDataConfig().getStringList("automod.filter_words"));
+            res.put("spam_cooldown", plugin.getDataConfig().getInt("automod.spam_cooldown", 2));
+            res.put("caps_threshold", plugin.getDataConfig().getInt("automod.caps_threshold", 70));
+            res.put("violation_mute_threshold", plugin.getDataConfig().getInt("automod.violation_mute_threshold", 3));
+            ctx.json(res);
+        });
+
+        app.post("/api/automod", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (body.containsKey("filter_words")) plugin.getDataConfig().set("automod.filter_words", body.get("filter_words"));
+                if (body.containsKey("spam_cooldown")) plugin.getDataConfig().set("automod.spam_cooldown", body.get("spam_cooldown"));
+                if (body.containsKey("caps_threshold")) plugin.getDataConfig().set("automod.caps_threshold", body.get("caps_threshold"));
+                if (body.containsKey("violation_mute_threshold")) plugin.getDataConfig().set("automod.violation_mute_threshold", body.get("violation_mute_threshold"));
+                plugin.saveDataFile();
+                plugin.loadChatFilter();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== PLAYTIME REWARDS API ==========
+        app.get("/api/playtime-rewards", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> result = new HashMap<>();
+            if (plugin.getDataConfig().contains("playtime_rewards")) {
+                for (String id : plugin.getDataConfig().getConfigurationSection("playtime_rewards").getKeys(false)) {
+                    Map<String, Object> r = new HashMap<>();
+                    String rp = "playtime_rewards." + id;
+                    r.put("name", plugin.getDataConfig().getString(rp + ".name", ""));
+                    r.put("minutes", plugin.getDataConfig().getInt(rp + ".minutes", 0));
+                    r.put("xp", plugin.getDataConfig().getInt(rp + ".xp", 0));
+                    r.put("kit", plugin.getDataConfig().getString(rp + ".kit", ""));
+                    result.put(id, r);
+                }
+            }
+            ctx.json(result);
+        });
+
+        app.post("/api/playtime-rewards", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String id = (String) body.get("id");
+            if (id == null || id.isEmpty()) id = String.valueOf(System.currentTimeMillis());
+            String rp = "playtime_rewards." + id;
+            final String fId = id;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set(rp + ".name", body.getOrDefault("name", fId));
+                plugin.getDataConfig().set(rp + ".minutes", body.getOrDefault("minutes", 60));
+                plugin.getDataConfig().set(rp + ".xp", body.getOrDefault("xp", 0));
+                plugin.getDataConfig().set(rp + ".kit", body.getOrDefault("kit", ""));
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/playtime-rewards/{id}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            String id = ctx.pathParam("id");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("playtime_rewards." + id, null);
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== MOTD EDITOR API ==========
+        app.get("/api/motd", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Map<String, Object> res = new HashMap<>();
+            res.put("line1", plugin.getDataConfig().getString("motd.line1", "A Minecraft Server"));
+            res.put("line2", plugin.getDataConfig().getString("motd.line2", ""));
+            res.put("maxPlayers", plugin.getDataConfig().getInt("motd.maxPlayers", 20));
+            ctx.json(res);
+        });
+
+        app.post("/api/motd", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (body.containsKey("line1")) plugin.getDataConfig().set("motd.line1", body.get("line1"));
+                if (body.containsKey("line2")) plugin.getDataConfig().set("motd.line2", body.get("line2"));
+                if (body.containsKey("maxPlayers")) plugin.getDataConfig().set("motd.maxPlayers", body.get("maxPlayers"));
+                plugin.saveDataFile();
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== CUSTOM ENCHANTMENTS API ==========
+        app.get("/api/enchantments", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            // Return list of available custom enchantments
+            List<Map<String, String>> enchants = new ArrayList<>();
+            enchants.add(Map.of("name", "Timber", "description", "Breaks entire log columns when chopping trees"));
+            enchants.add(Map.of("name", "Vein Miner", "description", "Breaks connected ores when mining"));
+            enchants.add(Map.of("name", "Smelting Touch", "description", "Auto-smelts mined ores"));
+            enchants.add(Map.of("name", "Telepathy", "description", "Sends block drops directly to inventory"));
+            ctx.json(enchants);
+        });
+
+        app.post("/api/enchantments/apply", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+            String playerName = (String) body.get("player");
+            String enchantName = (String) body.get("enchant");
+            if (playerName == null || enchantName == null) { ctx.status(400).json(Map.of("error", "Missing player or enchant")); return; }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Player target = Bukkit.getPlayer(playerName);
+                if (target != null) {
+                    org.bukkit.inventory.ItemStack held = target.getInventory().getItemInMainHand();
+                    if (plugin.applyCustomEnchant(held, enchantName)) {
+                        target.sendMessage(ChatColor.LIGHT_PURPLE + "✨ Custom enchantment applied: " + enchantName);
+                    }
+                }
+            });
+            ctx.json(Map.of("success", true));
+        });
     }
 
     public void stop() { if (app != null) app.stop(); }

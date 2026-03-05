@@ -16,6 +16,24 @@ commands:
   kit:
     description: Browse and claim kits
     usage: /kit
+  bounty:
+    description: Set or view bounties
+    usage: /bounty [set <player> <amount>]
+  shop:
+    description: Player shop system
+    usage: /shop [sell <item> <amount> <price>]
+  quest:
+    description: View and claim quests
+    usage: /quest
+  apply:
+    description: Submit a staff application
+    usage: /apply <message>
+  vote:
+    description: Vote on server polls
+    usage: /vote <pollId> <option#>
+  crate:
+    description: Open crate menu
+    usage: /crate
 permissions:
   dmt.admin:
     description: Allows use of admin tools

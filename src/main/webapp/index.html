@@ -186,6 +186,30 @@
             <!-- Ranks -->
             <button class="nav-btn" onclick="switchTab('ranks', this)">⭐ Ranks</button>
 
+            <!-- High Impact Features -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🎮 Game Features</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('crates', this)">Crates</button>
+                    <button class="nav-btn" onclick="switchTab('bounties', this)">Bounties</button>
+                    <button class="nav-btn" onclick="switchTab('shops', this)">Player Shops</button>
+                    <button class="nav-btn" onclick="switchTab('quests', this)">Quests</button>
+                    <button class="nav-btn" onclick="switchTab('enchantments', this)">Custom Enchants</button>
+                </div>
+            </div>
+
+            <!-- Admin Features -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🛡️ Admin Tools</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('applications', this)">Staff Apps</button>
+                    <button class="nav-btn" onclick="switchTab('polls', this)">Polls</button>
+                    <button class="nav-btn" onclick="switchTab('automod', this)">Auto-Mod</button>
+                    <button class="nav-btn" onclick="switchTab('playtime-rewards', this)">Playtime Rewards</button>
+                    <button class="nav-btn" onclick="switchTab('motd', this)">MOTD Editor</button>
+                </div>
+            </div>
+
             <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="logout()">🚪 Logout</button>
         </div>
     </div>
@@ -909,6 +933,209 @@
             <div id="kits-status" style="margin-top: 20px; padding: 10px; background: #2d2d30; border-radius: 4px; color: #969696;"></div>
         </div>
 
+        <!-- CRATES SYSTEM -->
+        <div id="crates" class="tab">
+            <h2>🎰 Crate Management</h2>
+            <div class="card">
+                <h3>➕ Create / Edit Crate</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div><label>Crate Name:</label><input type="text" id="crate-name" placeholder="e.g., Common, Rare, Legendary"></div>
+                    <div><label>Icon (Material):</label><input type="text" id="crate-icon" placeholder="e.g., CHEST, ENDER_CHEST"></div>
+                    <div><label>Description:</label><input type="text" id="crate-desc" placeholder="A rare crate..."></div>
+                    <div><label>Key Cost (XP Levels):</label><input type="number" id="crate-keycost" value="0" min="0"></div>
+                </div>
+                <div>
+                    <label>Rewards (one per line, format: MATERIAL:amount:weight):</label>
+                    <textarea id="crate-rewards" rows="5" placeholder="DIAMOND:1:50&#10;IRON_INGOT:16:100&#10;NETHERITE_INGOT:1:10" style="width:100%;background:#1e1e1e;color:#d4d4d4;border:1px solid #3e3e42;padding:8px;font-family:monospace;"></textarea>
+                </div>
+                <button class="action-btn" onclick="saveCrate()">💾 Save Crate</button>
+            </div>
+            <div class="card">
+                <h3>📦 Existing Crates</h3>
+                <table><thead><tr><th>Name</th><th>Icon</th><th>Cost</th><th>Rewards</th><th>Actions</th></tr></thead>
+                <tbody id="crates-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- BOUNTIES SYSTEM -->
+        <div id="bounties" class="tab">
+            <h2>☠️ Bounty Board</h2>
+            <div class="card">
+                <h3>Active Bounties</h3>
+                <p style="color:#969696;">Bounties are set by players in-game with <code>/bounty set &lt;player&gt; &lt;amount&gt;</code></p>
+                <table><thead><tr><th>Target</th><th>Set By</th><th>Reward (XP)</th><th>Actions</th></tr></thead>
+                <tbody id="bounties-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- PLAYER SHOPS -->
+        <div id="shops" class="tab">
+            <h2>🏪 Player Shops</h2>
+            <div class="card">
+                <h3>Active Listings</h3>
+                <p style="color:#969696;">Players create shops in-game with <code>/shop sell &lt;item&gt; &lt;amount&gt; &lt;price&gt;</code></p>
+                <table><thead><tr><th>Item</th><th>Amount</th><th>Price (XP)</th><th>Seller</th><th>Actions</th></tr></thead>
+                <tbody id="shops-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- QUESTS SYSTEM -->
+        <div id="quests" class="tab">
+            <h2>🎯 Quest Management</h2>
+            <div class="card">
+                <h3>➕ Create / Edit Quest</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div><label>Quest Name:</label><input type="text" id="quest-name" placeholder="e.g., Miner's Challenge"></div>
+                    <div><label>Type:</label>
+                        <select id="quest-type" style="width:100%;padding:6px;background:#1e1e1e;color:#d4d4d4;border:1px solid #3e3e42;">
+                            <option value="break_blocks">Break Blocks</option>
+                            <option value="kill_mobs">Kill Mobs</option>
+                            <option value="mine_diamond_ore">Mine Diamond Ore</option>
+                            <option value="mine_iron_ore">Mine Iron Ore</option>
+                            <option value="kill_zombie">Kill Zombies</option>
+                            <option value="kill_skeleton">Kill Skeletons</option>
+                            <option value="kill_creeper">Kill Creepers</option>
+                        </select>
+                    </div>
+                    <div><label>Goal Amount:</label><input type="number" id="quest-goal" value="100" min="1"></div>
+                    <div><label>XP Reward:</label><input type="number" id="quest-reward" value="10" min="0"></div>
+                    <div><label>Description:</label><input type="text" id="quest-desc" placeholder="Break 100 blocks!"></div>
+                    <div><label>Reward Kit (optional):</label><input type="text" id="quest-rewardkit" placeholder="Leave empty for XP only"></div>
+                </div>
+                <label><input type="checkbox" id="quest-active" checked> Active</label>
+                <button class="action-btn" onclick="saveQuest()" style="margin-left:10px;">💾 Save Quest</button>
+            </div>
+            <div class="card">
+                <h3>📋 All Quests</h3>
+                <table><thead><tr><th>Name</th><th>Type</th><th>Goal</th><th>Reward</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="quests-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- CUSTOM ENCHANTMENTS -->
+        <div id="enchantments" class="tab">
+            <h2>✨ Custom Enchantments</h2>
+            <div class="card">
+                <h3>Apply Enchantment to Player's Held Item</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div><label>Player Name:</label><input type="text" id="enchant-player" placeholder="Player name"></div>
+                    <div><label>Enchantment:</label>
+                        <select id="enchant-name" style="width:100%;padding:6px;background:#1e1e1e;color:#d4d4d4;border:1px solid #3e3e42;">
+                            <option value="Timber">Timber - Chops entire tree</option>
+                            <option value="Vein Miner">Vein Miner - Mines connected ores</option>
+                            <option value="Smelting Touch">Smelting Touch - Auto-smelt ores</option>
+                            <option value="Telepathy">Telepathy - Drops go to inventory</option>
+                        </select>
+                    </div>
+                </div>
+                <button class="action-btn" onclick="applyEnchant()">✨ Apply Enchantment</button>
+                <div id="enchant-status" style="margin-top:10px;color:#969696;"></div>
+            </div>
+            <div class="card">
+                <h3>📖 Available Enchantments</h3>
+                <table><thead><tr><th>Name</th><th>Description</th></tr></thead>
+                <tbody id="enchantments-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- STAFF APPLICATIONS -->
+        <div id="applications" class="tab">
+            <h2>📝 Staff Applications</h2>
+            <div class="card">
+                <h3>Pending Applications</h3>
+                <p style="color:#969696;">Players submit with <code>/apply &lt;message&gt;</code> in-game</p>
+                <table><thead><tr><th>Player</th><th>Message</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody id="applications-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- POLLS -->
+        <div id="polls" class="tab">
+            <h2>🗳️ Server Polls</h2>
+            <div class="card">
+                <h3>➕ Create Poll</h3>
+                <div style="margin-bottom:10px;">
+                    <label>Question:</label><input type="text" id="poll-question" placeholder="What gamemode should we add next?" style="width:100%;">
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Options (one per line):</label>
+                    <textarea id="poll-options" rows="4" placeholder="Skyblock&#10;Prison&#10;Factions" style="width:100%;background:#1e1e1e;color:#d4d4d4;border:1px solid #3e3e42;padding:8px;"></textarea>
+                </div>
+                <label><input type="checkbox" id="poll-active" checked> Active</label>
+                <button class="action-btn" onclick="savePoll()" style="margin-left:10px;">💾 Create Poll</button>
+            </div>
+            <div class="card">
+                <h3>📊 All Polls</h3>
+                <div id="polls-container"></div>
+            </div>
+        </div>
+
+        <!-- AUTO-MODERATION -->
+        <div id="automod" class="tab">
+            <h2>🤖 Auto-Moderation</h2>
+            <div class="card">
+                <h3>⚙️ Settings</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div><label>Spam Cooldown (seconds):</label><input type="number" id="automod-spam-cooldown" value="2" min="0"></div>
+                    <div><label>Caps Threshold (%):</label><input type="number" id="automod-caps-threshold" value="70" min="0" max="100"></div>
+                    <div><label>Violations to Auto-Mute:</label><input type="number" id="automod-violation-threshold" value="3" min="1"></div>
+                </div>
+                <button class="action-btn" onclick="saveAutomod()">💾 Save Settings</button>
+            </div>
+            <div class="card">
+                <h3>🚫 Word Filter</h3>
+                <div style="margin-bottom:10px;">
+                    <label>Filtered Words (one per line):</label>
+                    <textarea id="automod-filter-words" rows="6" placeholder="badword1&#10;badword2&#10;phrase to filter" style="width:100%;background:#1e1e1e;color:#d4d4d4;border:1px solid #3e3e42;padding:8px;font-family:monospace;"></textarea>
+                </div>
+                <button class="action-btn" onclick="saveAutomod()">💾 Save Filter</button>
+            </div>
+        </div>
+
+        <!-- PLAYTIME REWARDS -->
+        <div id="playtime-rewards" class="tab">
+            <h2>🏆 Playtime Rewards</h2>
+            <div class="card">
+                <h3>➕ Create Reward Milestone</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div><label>Name:</label><input type="text" id="ptr-name" placeholder="e.g., 1 Hour Played"></div>
+                    <div><label>Minutes Required:</label><input type="number" id="ptr-minutes" value="60" min="1"></div>
+                    <div><label>XP Reward:</label><input type="number" id="ptr-xp" value="5" min="0"></div>
+                    <div><label>Reward Kit (optional):</label><input type="text" id="ptr-kit" placeholder="Kit name"></div>
+                </div>
+                <button class="action-btn" onclick="savePlaytimeReward()">💾 Save Reward</button>
+            </div>
+            <div class="card">
+                <h3>📋 All Playtime Rewards</h3>
+                <table><thead><tr><th>Name</th><th>Minutes</th><th>XP</th><th>Kit</th><th>Actions</th></tr></thead>
+                <tbody id="playtime-rewards-list"></tbody></table>
+            </div>
+        </div>
+
+        <!-- MOTD EDITOR -->
+        <div id="motd" class="tab">
+            <h2>📝 MOTD Editor</h2>
+            <div class="card">
+                <h3>Server List Appearance</h3>
+                <p style="color:#969696;">Use &amp; color codes: &amp;a=green, &amp;b=aqua, &amp;c=red, &amp;d=pink, &amp;e=yellow, &amp;f=white, &amp;l=bold, &amp;o=italic, &amp;n=underline</p>
+                <div style="margin-bottom:10px;">
+                    <label>Line 1:</label><input type="text" id="motd-line1" placeholder="&amp;6Welcome to &amp;bDrowsyCraft" style="width:100%;">
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Line 2:</label><input type="text" id="motd-line2" placeholder="&amp;7A chill Minecraft survival server" style="width:100%;">
+                </div>
+                <div style="margin-bottom:10px;">
+                    <label>Max Players Shown:</label><input type="number" id="motd-maxplayers" value="20" min="1">
+                </div>
+                <button class="action-btn" onclick="saveMotd()">💾 Save MOTD</button>
+                <div id="motd-status" style="margin-top:10px;color:#969696;"></div>
+                <div style="margin-top:15px;padding:15px;background:#1a1a1a;border-radius:6px;">
+                    <h4 style="color:#4ec9b0;margin-bottom:8px;">Preview:</h4>
+                    <div id="motd-preview" style="font-family:monospace;font-size:14px;line-height:1.5;"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- PLAYER ANALYTICS -->
         <div id="player-analytics" class="tab">
             <h2>📊 Player Analytics</h2>
@@ -1514,6 +1741,16 @@
         if (name === 'landc-claims') loadLandClaims();
         if (name === 'roleplay') loadRoleplayCommands();
         if (name === 'voterewards') loadVoteRewards();
+        if (name === 'crates') loadCrates();
+        if (name === 'bounties') loadBounties();
+        if (name === 'shops') loadShops();
+        if (name === 'quests') loadQuests();
+        if (name === 'enchantments') loadEnchantments();
+        if (name === 'applications') loadApplications();
+        if (name === 'polls') loadPolls();
+        if (name === 'automod') loadAutomod();
+        if (name === 'playtime-rewards') loadPlaytimeRewards();
+        if (name === 'motd') loadMotd();
     }
 
     function logout() {
@@ -3848,6 +4085,351 @@
     (async () => {
         await loadActiveEvents();
         await loadEventHistory();
-    })();</script>
+    })();
+
+    // ========== CRATES ==========
+    async function loadCrates() {
+        const data = await apiCall('/crates');
+        const tbody = document.getElementById('crates-list');
+        tbody.innerHTML = '';
+        if (data) {
+            for (const [name, c] of Object.entries(data)) {
+                const rewards = (c.rewards || []);
+                tbody.innerHTML += `<tr>
+                    <td>${name}</td>
+                    <td>${c.icon || 'CHEST'}</td>
+                    <td>${c.key_cost || 0} XP</td>
+                    <td>${rewards.length} rewards</td>
+                    <td><button class="action-btn" onclick="editCrate('${name}')">✏️</button> <button class="action-btn" style="background:#d32f2f;" onclick="deleteCrate('${name}')">🗑️</button></td>
+                </tr>`;
+            }
+        }
+        if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="5" style="color:#969696;">No crates created yet</td></tr>';
+    }
+    function editCrate(name) {
+        apiCall('/crates').then(data => {
+            if (data && data[name]) {
+                document.getElementById('crate-name').value = name;
+                document.getElementById('crate-icon').value = data[name].icon || 'CHEST';
+                document.getElementById('crate-desc').value = data[name].description || '';
+                document.getElementById('crate-keycost').value = data[name].key_cost || 0;
+                document.getElementById('crate-rewards').value = (data[name].rewards || []).join('\n');
+            }
+        });
+    }
+    async function saveCrate() {
+        const name = document.getElementById('crate-name').value.trim();
+        if (!name) return alert('Enter a crate name');
+        const rewards = document.getElementById('crate-rewards').value.split('\n').map(r => r.trim()).filter(r => r);
+        await apiCall('/crates', 'POST', {
+            name, icon: document.getElementById('crate-icon').value.trim() || 'CHEST',
+            description: document.getElementById('crate-desc').value.trim(),
+            key_cost: parseInt(document.getElementById('crate-keycost').value) || 0,
+            rewards
+        });
+        loadCrates();
+    }
+    async function deleteCrate(name) {
+        if (!confirm('Delete crate "' + name + '"?')) return;
+        await apiCall('/crates/' + encodeURIComponent(name), 'DELETE');
+        loadCrates();
+    }
+
+    // ========== BOUNTIES ==========
+    async function loadBounties() {
+        const data = await apiCall('/bounties');
+        const tbody = document.getElementById('bounties-list');
+        tbody.innerHTML = '';
+        if (data && data.length) {
+            data.forEach(b => {
+                tbody.innerHTML += `<tr><td>${b.targetName}</td><td>${b.setterName}</td><td>${b.amount}</td>
+                    <td><button class="action-btn" style="background:#d32f2f;" onclick="deleteBounty('${b.id}')">🗑️ Remove</button></td></tr>`;
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#969696;">No active bounties</td></tr>';
+        }
+    }
+    async function deleteBounty(id) {
+        if (!confirm('Remove this bounty?')) return;
+        await apiCall('/bounties/' + id, 'DELETE');
+        loadBounties();
+    }
+
+    // ========== SHOPS ==========
+    async function loadShops() {
+        const data = await apiCall('/shops');
+        const tbody = document.getElementById('shops-list');
+        tbody.innerHTML = '';
+        if (data && data.length) {
+            data.forEach(s => {
+                tbody.innerHTML += `<tr><td>${(s.item||'').replace(/_/g,' ')}</td><td>${s.amount}</td><td>${s.price} XP</td><td>${s.ownerName}</td>
+                    <td><button class="action-btn" style="background:#d32f2f;" onclick="deleteShop('${s.id}')">🗑️ Remove</button></td></tr>`;
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#969696;">No active shop listings</td></tr>';
+        }
+    }
+    async function deleteShop(id) {
+        if (!confirm('Remove this listing?')) return;
+        await apiCall('/shops/' + id, 'DELETE');
+        loadShops();
+    }
+
+    // ========== QUESTS ==========
+    async function loadQuests() {
+        const data = await apiCall('/quests');
+        const tbody = document.getElementById('quests-list');
+        tbody.innerHTML = '';
+        if (data) {
+            for (const [id, q] of Object.entries(data)) {
+                tbody.innerHTML += `<tr>
+                    <td>${q.name}</td><td>${(q.type||'').replace(/_/g,' ')}</td><td>${q.goal}</td>
+                    <td>${q.reward} XP${q.reward_kit ? ' + Kit: '+q.reward_kit : ''}</td>
+                    <td style="color:${q.active?'#4ec9b0':'#d32f2f'}">${q.active?'Active':'Inactive'}</td>
+                    <td><button class="action-btn" onclick="editQuest('${id}')">✏️</button> <button class="action-btn" style="background:#d32f2f;" onclick="deleteQuest('${id}')">🗑️</button></td>
+                </tr>`;
+            }
+        }
+        if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="6" style="color:#969696;">No quests created yet</td></tr>';
+    }
+    function editQuest(id) {
+        apiCall('/quests').then(data => {
+            if (data && data[id]) {
+                const q = data[id];
+                document.getElementById('quest-name').value = q.name || '';
+                document.getElementById('quest-type').value = q.type || 'break_blocks';
+                document.getElementById('quest-goal').value = q.goal || 100;
+                document.getElementById('quest-reward').value = q.reward || 0;
+                document.getElementById('quest-desc').value = q.description || '';
+                document.getElementById('quest-rewardkit').value = q.reward_kit || '';
+                document.getElementById('quest-active').checked = q.active !== false;
+            }
+        });
+    }
+    async function saveQuest() {
+        const name = document.getElementById('quest-name').value.trim();
+        if (!name) return alert('Enter a quest name');
+        await apiCall('/quests', 'POST', {
+            name, type: document.getElementById('quest-type').value,
+            goal: parseInt(document.getElementById('quest-goal').value) || 100,
+            reward: parseInt(document.getElementById('quest-reward').value) || 0,
+            description: document.getElementById('quest-desc').value.trim(),
+            reward_kit: document.getElementById('quest-rewardkit').value.trim(),
+            active: document.getElementById('quest-active').checked
+        });
+        loadQuests();
+    }
+    async function deleteQuest(id) {
+        if (!confirm('Delete this quest?')) return;
+        await apiCall('/quests/' + id, 'DELETE');
+        loadQuests();
+    }
+
+    // ========== ENCHANTMENTS ==========
+    async function loadEnchantments() {
+        const data = await apiCall('/enchantments');
+        const tbody = document.getElementById('enchantments-list');
+        tbody.innerHTML = '';
+        if (data && data.length) {
+            data.forEach(e => {
+                tbody.innerHTML += `<tr><td style="color:#d7ba7d;">${e.name}</td><td>${e.description}</td></tr>`;
+            });
+        }
+    }
+    async function applyEnchant() {
+        const player = document.getElementById('enchant-player').value.trim();
+        const enchant = document.getElementById('enchant-name').value;
+        if (!player) return alert('Enter a player name');
+        await apiCall('/enchantments/apply', 'POST', { player, enchant });
+        document.getElementById('enchant-status').innerHTML = '<span style="color:#4ec9b0;">✨ Applied ' + enchant + ' to ' + player + '\'s held item</span>';
+    }
+
+    // ========== APPLICATIONS ==========
+    async function loadApplications() {
+        const data = await apiCall('/applications');
+        const tbody = document.getElementById('applications-list');
+        tbody.innerHTML = '';
+        if (data && data.length) {
+            data.forEach(a => {
+                const statusColor = a.status === 'approved' ? '#4ec9b0' : a.status === 'denied' ? '#d32f2f' : '#d7ba7d';
+                tbody.innerHTML += `<tr>
+                    <td>${a.player}</td><td style="max-width:300px;word-break:break-word;">${a.message}</td><td>${a.date}</td>
+                    <td style="color:${statusColor};">${a.status}</td>
+                    <td>
+                        ${a.status === 'pending' ? `<button class="action-btn" style="background:#388e3c;" onclick="reviewApp('${a.id}','approved')">✅ Approve</button> 
+                        <button class="action-btn" style="background:#d32f2f;" onclick="reviewApp('${a.id}','denied')">❌ Deny</button>` : ''}
+                        <button class="action-btn" style="background:#555;" onclick="deleteApp('${a.id}')">🗑️</button>
+                    </td></tr>`;
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="5" style="color:#969696;">No applications</td></tr>';
+        }
+    }
+    async function reviewApp(id, status) {
+        await apiCall('/applications/' + id + '/status', 'POST', { status });
+        loadApplications();
+    }
+    async function deleteApp(id) {
+        if (!confirm('Delete this application?')) return;
+        await apiCall('/applications/' + id, 'DELETE');
+        loadApplications();
+    }
+
+    // ========== POLLS ==========
+    async function loadPolls() {
+        const data = await apiCall('/polls');
+        const container = document.getElementById('polls-container');
+        container.innerHTML = '';
+        if (data) {
+            for (const [id, poll] of Object.entries(data)) {
+                const options = poll.options || [];
+                const votes = poll.votes || {};
+                let totalVotes = 0;
+                for (const v of Object.values(votes)) totalVotes += v;
+                let optionsHtml = '';
+                options.forEach((opt, i) => {
+                    const count = votes[String(i+1)] || 0;
+                    const pct = totalVotes > 0 ? Math.round(count / totalVotes * 100) : 0;
+                    optionsHtml += `<div style="margin:4px 0;"><span style="color:#d4d4d4;">${i+1}. ${opt}</span> 
+                        <div style="background:#333;border-radius:3px;margin-top:2px;overflow:hidden;">
+                            <div style="background:#0e639c;height:20px;width:${pct}%;min-width:${count>0?'20px':'0'};border-radius:3px;text-align:right;padding-right:5px;color:#fff;font-size:11px;line-height:20px;">${count} (${pct}%)</div>
+                        </div></span></div>`;
+                });
+                container.innerHTML += `<div class="card" style="margin-bottom:10px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <h4 style="color:${poll.active?'#4ec9b0':'#969696'};">${poll.active?'🟢':'⚫'} ${poll.question}</h4>
+                        <div><span style="color:#969696;font-size:11px;">ID: ${id} | ${totalVotes} votes</span>
+                        <button class="action-btn" style="background:#d32f2f;margin-left:8px;" onclick="deletePoll('${id}')">🗑️</button></div>
+                    </div>
+                    ${optionsHtml}
+                </div>`;
+            }
+        }
+        if (!container.innerHTML) container.innerHTML = '<p style="color:#969696;">No polls created yet</p>';
+    }
+    async function savePoll() {
+        const question = document.getElementById('poll-question').value.trim();
+        if (!question) return alert('Enter a question');
+        const options = document.getElementById('poll-options').value.split('\n').map(o => o.trim()).filter(o => o);
+        if (options.length < 2) return alert('Need at least 2 options');
+        await apiCall('/polls', 'POST', { question, options, active: document.getElementById('poll-active').checked });
+        document.getElementById('poll-question').value = '';
+        document.getElementById('poll-options').value = '';
+        loadPolls();
+    }
+    async function deletePoll(id) {
+        if (!confirm('Delete this poll?')) return;
+        await apiCall('/polls/' + id, 'DELETE');
+        loadPolls();
+    }
+
+    // ========== AUTO-MODERATION ==========
+    async function loadAutomod() {
+        const data = await apiCall('/automod');
+        if (data) {
+            document.getElementById('automod-spam-cooldown').value = data.spam_cooldown || 2;
+            document.getElementById('automod-caps-threshold').value = data.caps_threshold || 70;
+            document.getElementById('automod-violation-threshold').value = data.violation_mute_threshold || 3;
+            document.getElementById('automod-filter-words').value = (data.filter_words || []).join('\n');
+        }
+    }
+    async function saveAutomod() {
+        const filterWords = document.getElementById('automod-filter-words').value.split('\n').map(w => w.trim()).filter(w => w);
+        await apiCall('/automod', 'POST', {
+            filter_words: filterWords,
+            spam_cooldown: parseInt(document.getElementById('automod-spam-cooldown').value) || 2,
+            caps_threshold: parseInt(document.getElementById('automod-caps-threshold').value) || 70,
+            violation_mute_threshold: parseInt(document.getElementById('automod-violation-threshold').value) || 3
+        });
+        alert('Auto-moderation settings saved!');
+    }
+
+    // ========== PLAYTIME REWARDS ==========
+    async function loadPlaytimeRewards() {
+        const data = await apiCall('/playtime-rewards');
+        const tbody = document.getElementById('playtime-rewards-list');
+        tbody.innerHTML = '';
+        if (data) {
+            for (const [id, r] of Object.entries(data)) {
+                tbody.innerHTML += `<tr>
+                    <td>${r.name}</td><td>${r.minutes}</td><td>${r.xp}</td><td>${r.kit || '-'}</td>
+                    <td><button class="action-btn" style="background:#d32f2f;" onclick="deletePlaytimeReward('${id}')">🗑️</button></td>
+                </tr>`;
+            }
+        }
+        if (!tbody.innerHTML) tbody.innerHTML = '<tr><td colspan="5" style="color:#969696;">No playtime rewards set</td></tr>';
+    }
+    async function savePlaytimeReward() {
+        const name = document.getElementById('ptr-name').value.trim();
+        if (!name) return alert('Enter a reward name');
+        await apiCall('/playtime-rewards', 'POST', {
+            name, minutes: parseInt(document.getElementById('ptr-minutes').value) || 60,
+            xp: parseInt(document.getElementById('ptr-xp').value) || 0,
+            kit: document.getElementById('ptr-kit').value.trim()
+        });
+        document.getElementById('ptr-name').value = '';
+        loadPlaytimeRewards();
+    }
+    async function deletePlaytimeReward(id) {
+        if (!confirm('Delete this reward?')) return;
+        await apiCall('/playtime-rewards/' + id, 'DELETE');
+        loadPlaytimeRewards();
+    }
+
+    // ========== MOTD EDITOR ==========
+    async function loadMotd() {
+        const data = await apiCall('/motd');
+        if (data) {
+            document.getElementById('motd-line1').value = data.line1 || '';
+            document.getElementById('motd-line2').value = data.line2 || '';
+            document.getElementById('motd-maxplayers').value = data.maxPlayers || 20;
+            updateMotdPreview();
+        }
+    }
+    async function saveMotd() {
+        await apiCall('/motd', 'POST', {
+            line1: document.getElementById('motd-line1').value,
+            line2: document.getElementById('motd-line2').value,
+            maxPlayers: parseInt(document.getElementById('motd-maxplayers').value) || 20
+        });
+        document.getElementById('motd-status').innerHTML = '<span style="color:#4ec9b0;">✅ MOTD saved!</span>';
+        updateMotdPreview();
+    }
+    function updateMotdPreview() {
+        const line1 = document.getElementById('motd-line1').value;
+        const line2 = document.getElementById('motd-line2').value;
+        const preview = document.getElementById('motd-preview');
+        preview.innerHTML = mcColorToHtml(line1) + '<br>' + mcColorToHtml(line2);
+    }
+    function mcColorToHtml(text) {
+        const colors = {'0':'#000','1':'#0000AA','2':'#00AA00','3':'#00AAAA','4':'#AA0000','5':'#AA00AA','6':'#FFAA00','7':'#AAAAAA','8':'#555555','9':'#5555FF','a':'#55FF55','b':'#55FFFF','c':'#FF5555','d':'#FF55FF','e':'#FFFF55','f':'#FFFFFF'};
+        let result = '';
+        let color = '#AAAAAA';
+        let bold = false, italic = false, underline = false;
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] === '&' && i+1 < text.length) {
+                const code = text[i+1].toLowerCase();
+                if (colors[code]) { color = colors[code]; i++; continue; }
+                if (code === 'l') { bold = true; i++; continue; }
+                if (code === 'o') { italic = true; i++; continue; }
+                if (code === 'n') { underline = true; i++; continue; }
+                if (code === 'r') { color = '#AAAAAA'; bold = false; italic = false; underline = false; i++; continue; }
+            }
+            let style = `color:${color};`;
+            if (bold) style += 'font-weight:bold;';
+            if (italic) style += 'font-style:italic;';
+            if (underline) style += 'text-decoration:underline;';
+            result += `<span style="${style}">${text[i]}</span>`;
+        }
+        return result || '<span style="color:#555;">Empty</span>';
+    }
+    // Live MOTD preview
+    document.addEventListener('DOMContentLoaded', () => {
+        const l1 = document.getElementById('motd-line1');
+        const l2 = document.getElementById('motd-line2');
+        if (l1) l1.addEventListener('input', updateMotdPreview);
+        if (l2) l2.addEventListener('input', updateMotdPreview);
+    });
+</script>
 </body>
 </html>
