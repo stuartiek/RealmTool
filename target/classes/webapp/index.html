@@ -180,6 +180,9 @@
                 </div>
             </div>
 
+            <!-- Kits -->
+            <button class="nav-btn" onclick="switchTab('kits', this)">🎁 Kits</button>
+
             <!-- Ranks -->
             <button class="nav-btn" onclick="switchTab('ranks', this)">⭐ Ranks</button>
 
@@ -844,6 +847,68 @@
             <div id="ranks-status" style="margin-top: 20px; padding: 10px; background: #2d2d30; border-radius: 4px; color: #969696;"></div>
         </div>
 
+        <!-- KITS SYSTEM -->
+        <div id="kits" class="tab">
+            <h2>🎁 Kit Management</h2>
+            
+            <!-- Create/Edit Kit -->
+            <div class="card">
+                <h3>➕ Create / Edit Kit</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div>
+                        <label>Kit Name:</label>
+                        <input type="text" id="kit-name" placeholder="e.g., Starter, Warrior, VIP">
+                    </div>
+                    <div>
+                        <label>Icon (Material):</label>
+                        <input type="text" id="kit-icon" placeholder="e.g., DIAMOND_SWORD, CHEST" value="CHEST">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div>
+                        <label>Cost (XP Levels):</label>
+                        <input type="number" id="kit-cost" min="0" value="0">
+                    </div>
+                    <div>
+                        <label>Cooldown (seconds):</label>
+                        <input type="number" id="kit-cooldown" min="0" value="0" placeholder="0 = no cooldown">
+                    </div>
+                    <div>
+                        <label>Permission (optional):</label>
+                        <input type="text" id="kit-permission" placeholder="e.g., kit.vip">
+                    </div>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label>Description:</label>
+                    <input type="text" id="kit-description" placeholder="Kit description shown to players" style="width: 100%;">
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label>Items (one per line, format: <code>MATERIAL:amount</code>):</label>
+                    <textarea id="kit-items" placeholder="DIAMOND_SWORD:1&#10;DIAMOND_CHESTPLATE:1&#10;GOLDEN_APPLE:8&#10;COOKED_BEEF:32" style="width: 100%; height: 120px; font-family: monospace;"></textarea>
+                </div>
+                <button onclick="saveKit()" class="full-width btn-success">💾 Save Kit</button>
+            </div>
+
+            <!-- Kits List -->
+            <h3 style="color: #4ec9b0; margin-top: 30px;">📋 All Kits</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Kit Name</th>
+                        <th>Icon</th>
+                        <th>Cost</th>
+                        <th>Cooldown</th>
+                        <th>Permission</th>
+                        <th>Items</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="kits-list"></tbody>
+            </table>
+
+            <div id="kits-status" style="margin-top: 20px; padding: 10px; background: #2d2d30; border-radius: 4px; color: #969696;"></div>
+        </div>
+
         <!-- PLAYER ANALYTICS -->
         <div id="player-analytics" class="tab">
             <h2>📊 Player Analytics</h2>
@@ -1433,6 +1498,7 @@
         if (name === 'auditlog') loadAuditLog();
         if (name === 'afk') loadAFKPlayers();
         if (name === 'discord') loadDiscordSettings();
+        if (name === 'kits') loadKits();
         if (name === 'ranks') loadRanks();
         if (name === 'player-analytics') loadPlayerAnalytics();
         if (name === 'leaderboards') loadLeaderboards();
@@ -2725,6 +2791,81 @@
         } else {
             document.getElementById('discord-status').innerHTML = '<span style="color: #d32f2f;">❌ Webhook test failed: ' + (result.error || 'Unknown error') + '</span>';
         }
+    }
+
+    // --- KITS ---
+    async function loadKits() {
+        const data = await apiCall('/kits');
+        if (!data || !data.kits) return;
+        let html = '';
+        for (const kit of data.kits) {
+            const cooldownStr = kit.cooldown > 0 ? (kit.cooldown >= 3600 ? Math.floor(kit.cooldown/3600) + 'h' : kit.cooldown >= 60 ? Math.floor(kit.cooldown/60) + 'm' : kit.cooldown + 's') : 'None';
+            html += `<tr>
+                <td><strong>${kit.name}</strong>${kit.description ? '<br><small style="color:#969696">' + kit.description + '</small>' : ''}</td>
+                <td><code>${kit.icon}</code></td>
+                <td>${kit.cost > 0 ? kit.cost + ' XP' : '<span style="color:#4ec9b0">Free</span>'}</td>
+                <td>${cooldownStr}</td>
+                <td>${kit.permission || '<span style="color:#969696">None</span>'}</td>
+                <td>${kit.items.length} items</td>
+                <td>
+                    <button onclick="editKit('${kit.name}')" class="btn-small" style="padding:5px 10px;font-size:11px;">Edit</button>
+                    <button onclick="deleteKit('${kit.name}')" class="btn-danger" style="padding:5px 10px;font-size:11px;background:#d32f2f;">Delete</button>
+                </td>
+            </tr>`;
+        }
+        document.getElementById('kits-list').innerHTML = html || '<tr><td colspan="7" style="text-align:center;padding:20px;">No kits created yet. Use the form above to create one.</td></tr>';
+    }
+
+    async function saveKit() {
+        const name = document.getElementById('kit-name').value.trim();
+        if (!name) return alert('Enter a kit name');
+        const itemsRaw = document.getElementById('kit-items').value.trim();
+        const items = itemsRaw ? itemsRaw.split('\n').map(l => l.trim()).filter(l => l.length > 0) : [];
+        const data = {
+            name,
+            icon: document.getElementById('kit-icon').value.trim() || 'CHEST',
+            cost: parseInt(document.getElementById('kit-cost').value) || 0,
+            cooldown: parseInt(document.getElementById('kit-cooldown').value) || 0,
+            permission: document.getElementById('kit-permission').value.trim(),
+            description: document.getElementById('kit-description').value.trim(),
+            items
+        };
+        const result = await apiCall('/kits', 'POST', data);
+        if (result !== null) {
+            document.getElementById('kits-status').innerHTML = '<span style="color:#4ec9b0;">✅ Kit "' + name + '" saved!</span>';
+            document.getElementById('kit-name').value = '';
+            document.getElementById('kit-icon').value = 'CHEST';
+            document.getElementById('kit-cost').value = '0';
+            document.getElementById('kit-cooldown').value = '0';
+            document.getElementById('kit-permission').value = '';
+            document.getElementById('kit-description').value = '';
+            document.getElementById('kit-items').value = '';
+            loadKits();
+        } else {
+            document.getElementById('kits-status').innerHTML = '<span style="color:#d32f2f;">❌ Failed to save kit</span>';
+        }
+    }
+
+    async function editKit(name) {
+        const data = await apiCall('/kits');
+        if (!data || !data.kits) return;
+        const kit = data.kits.find(k => k.name === name);
+        if (!kit) return;
+        document.getElementById('kit-name').value = kit.name;
+        document.getElementById('kit-icon').value = kit.icon;
+        document.getElementById('kit-cost').value = kit.cost;
+        document.getElementById('kit-cooldown').value = kit.cooldown;
+        document.getElementById('kit-permission').value = kit.permission || '';
+        document.getElementById('kit-description').value = kit.description || '';
+        document.getElementById('kit-items').value = kit.items.join('\n');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function deleteKit(name) {
+        if (!confirm('Delete kit "' + name + '"?')) return;
+        await apiCall('/kits/' + encodeURIComponent(name), 'DELETE');
+        document.getElementById('kits-status').innerHTML = '<span style="color:#4ec9b0;">✅ Kit "' + name + '" deleted.</span>';
+        loadKits();
     }
 
     async function viewPlayerReputation(player) {

@@ -1040,6 +1040,84 @@ public class WebServer {
             ctx.json(future.get());
         });
 
+        // --- KITS ---
+        app.get("/api/kits", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> kits = new ArrayList<>();
+                if (plugin.getDataConfig().contains("kits")) {
+                    for (String kitName : plugin.getDataConfig().getConfigurationSection("kits").getKeys(false)) {
+                        String path = "kits." + kitName;
+                        Map<String, Object> kit = new HashMap<>();
+                        kit.put("name", kitName);
+                        kit.put("icon", plugin.getDataConfig().getString(path + ".icon", "CHEST"));
+                        kit.put("cost", plugin.getDataConfig().getInt(path + ".cost", 0));
+                        kit.put("cooldown", plugin.getDataConfig().getInt(path + ".cooldown", 0));
+                        kit.put("permission", plugin.getDataConfig().getString(path + ".permission", ""));
+                        kit.put("description", plugin.getDataConfig().getString(path + ".description", ""));
+                        kit.put("items", plugin.getDataConfig().getStringList(path + ".items"));
+                        kits.add(kit);
+                    }
+                }
+                return kits;
+            });
+            ctx.json(Map.of("kits", future.get()));
+        });
+
+        app.post("/api/kits", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> body = mapper.readValue(ctx.body(), java.util.Map.class);
+
+            String name = (String) body.get("name");
+            if (name == null || name.trim().isEmpty()) { ctx.status(400).result("Kit name required"); return; }
+            name = name.trim();
+
+            final String kitName = name;
+            final String icon = body.get("icon") != null ? ((String) body.get("icon")).toUpperCase() : "CHEST";
+            final int cost = body.get("cost") != null ? ((Number) body.get("cost")).intValue() : 0;
+            final int cooldown = body.get("cooldown") != null ? ((Number) body.get("cooldown")).intValue() : 0;
+            final String permission = body.get("permission") != null ? (String) body.get("permission") : "";
+            final String description = body.get("description") != null ? (String) body.get("description") : "";
+            final List<String> items = body.get("items") != null ? (List<String>) body.get("items") : new ArrayList<>();
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                String path = "kits." + kitName;
+                plugin.getDataConfig().set(path + ".icon", icon);
+                plugin.getDataConfig().set(path + ".cost", cost);
+                plugin.getDataConfig().set(path + ".cooldown", cooldown);
+                plugin.getDataConfig().set(path + ".permission", permission);
+                plugin.getDataConfig().set(path + ".description", description);
+                plugin.getDataConfig().set(path + ".items", items);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", "created/updated kit", kitName);
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/kits/{name}", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            String kitName = ctx.pathParam("name");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("kits." + kitName, null);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", "deleted kit", kitName);
+            });
+            ctx.json(Map.of("success", true));
+        });
+
         // --- MAINTENANCE MODE ---
         app.get("/api/maintenance", ctx -> {
             String auth = ctx.header("Authorization");

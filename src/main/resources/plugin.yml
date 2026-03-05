@@ -13,6 +13,9 @@ commands:
   tpa:
     description: Teleport request system
     usage: /tpa accept|deny <player>
+  kit:
+    description: Browse and claim kits
+    usage: /kit
 permissions:
   dmt.admin:
     description: Allows use of admin tools

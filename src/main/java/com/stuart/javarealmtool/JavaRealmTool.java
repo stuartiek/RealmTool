@@ -66,6 +66,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_WORLD_OPTIONS = ChatColor.YELLOW + "World: ";
     private final String GUI_CREATE_TYPE = ChatColor.GOLD + "Create World - Select Type";
     private final String GUI_DELETE_CONFIRM = ChatColor.RED + "Delete World: ";
+    private final String GUI_KIT_LIST = ChatColor.GOLD + "Kits";
+    private final String GUI_KIT_PREVIEW = ChatColor.GOLD + "Kit: ";
+    private final String GUI_KIT_CONFIRM = ChatColor.GREEN + "Purchase Kit: ";
+    private final Map<UUID, Long> kitCooldowns = new HashMap<>();
 
     private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
     private static class PunishmentContext {
@@ -85,6 +89,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (getCommand("dmt") != null) getCommand("dmt").setExecutor(this);
         if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
+        if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -305,6 +310,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
             }
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("kit")) {
+            openKitListGUI(p);
             return true;
         }
 
@@ -537,6 +547,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         playerList.setItemMeta(plMeta);
         gui.setItem(getNextGridSlot(), playerList);
         
+        // Kits
+        ItemStack kits = new ItemStack(Material.CHEST);
+        ItemMeta kitMeta = kits.getItemMeta();
+        kitMeta.setDisplayName(ChatColor.GOLD + "Kits");
+        kitMeta.setLore(Arrays.asList(ChatColor.GRAY + "Browse and purchase kits"));
+        kits.setItemMeta(kitMeta);
+        gui.setItem(getNextGridSlot(), kits);
+        
         // Back button
         ItemStack back = new ItemStack(Material.BARRIER);
         ItemMeta bMeta = back.getItemMeta();
@@ -545,6 +563,160 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         gui.setItem(53, back);
         
         p.openInventory(gui);
+    }
+
+    private void openKitListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_KIT_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+
+        if (dataConfig.contains("kits")) {
+            for (String kitName : dataConfig.getConfigurationSection("kits").getKeys(false)) {
+                String path = "kits." + kitName;
+                String icon = dataConfig.getString(path + ".icon", "CHEST");
+                int cost = dataConfig.getInt(path + ".cost", 0);
+                int cooldown = dataConfig.getInt(path + ".cooldown", 0);
+                String desc = dataConfig.getString(path + ".description", "");
+
+                Material mat = Material.CHEST;
+                try { mat = Material.valueOf(icon.toUpperCase()); } catch (Exception ignored) {}
+
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName(ChatColor.GOLD + kitName);
+                List<String> lore = new ArrayList<>();
+                if (!desc.isEmpty()) lore.add(ChatColor.GRAY + desc);
+                lore.add("");
+                if (cost > 0) lore.add(ChatColor.GREEN + "Cost: " + cost + " XP Levels");
+                else lore.add(ChatColor.GREEN + "Free");
+                if (cooldown > 0) lore.add(ChatColor.YELLOW + "Cooldown: " + cooldown + "s");
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to preview & purchase");
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+
+        p.openInventory(gui);
+    }
+
+    private void openKitPreviewGUI(Player p, String kitName) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_KIT_PREVIEW + kitName);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+
+        String path = "kits." + kitName;
+        List<String> itemStrings = dataConfig.getStringList(path + ".items");
+        int slot = 10; // Start in the inner area
+        for (String itemStr : itemStrings) {
+            if (slot >= 44) break;
+            // Skip border slots
+            if (slot % 9 == 0 || slot % 9 == 8) { slot++; continue; }
+            try {
+                // Format: MATERIAL:amount or MATERIAL
+                String[] parts = itemStr.split(":");
+                Material mat = Material.valueOf(parts[0].toUpperCase());
+                int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                ItemStack display = new ItemStack(mat, amount);
+                gui.setItem(slot, display);
+            } catch (Exception ignored) {}
+            slot++;
+        }
+
+        // Purchase button
+        int cost = dataConfig.getInt(path + ".cost", 0);
+        ItemStack purchase = new ItemStack(Material.EMERALD_BLOCK);
+        ItemMeta pMeta = purchase.getItemMeta();
+        pMeta.setDisplayName(ChatColor.GREEN + "Purchase Kit");
+        List<String> lore = new ArrayList<>();
+        if (cost > 0) lore.add(ChatColor.YELLOW + "Cost: " + cost + " XP Levels");
+        else lore.add(ChatColor.GREEN + "Free!");
+        pMeta.setLore(lore);
+        purchase.setItemMeta(pMeta);
+        gui.setItem(49, purchase);
+
+        // Back button
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back to Kits");
+        back.setItemMeta(bMeta);
+        gui.setItem(45, back);
+
+        p.openInventory(gui);
+    }
+
+    private boolean claimKit(Player p, String kitName) {
+        String path = "kits." + kitName;
+        if (!dataConfig.contains(path)) {
+            p.sendMessage(ChatColor.RED + "Kit not found.");
+            return false;
+        }
+        int cost = dataConfig.getInt(path + ".cost", 0);
+        int cooldown = dataConfig.getInt(path + ".cooldown", 0);
+        String permission = dataConfig.getString(path + ".permission", "");
+
+        // Permission check
+        if (!permission.isEmpty() && !p.hasPermission(permission)) {
+            p.sendMessage(ChatColor.RED + "You don't have permission for this kit.");
+            return false;
+        }
+
+        // Cooldown check
+        String cooldownKey = "kit_cooldowns." + p.getUniqueId() + "." + kitName;
+        long lastUsed = dataConfig.getLong(cooldownKey, 0);
+        long now = System.currentTimeMillis();
+        if (cooldown > 0 && lastUsed > 0) {
+            long remaining = (lastUsed + (cooldown * 1000L)) - now;
+            if (remaining > 0) {
+                long secs = remaining / 1000;
+                String timeStr = secs >= 3600 ? (secs / 3600) + "h " + ((secs % 3600) / 60) + "m" :
+                                 secs >= 60 ? (secs / 60) + "m " + (secs % 60) + "s" : secs + "s";
+                p.sendMessage(ChatColor.RED + "Kit on cooldown! " + ChatColor.YELLOW + timeStr + " remaining.");
+                return false;
+            }
+        }
+
+        // Cost check (XP levels)
+        if (cost > 0) {
+            if (p.getLevel() < cost) {
+                p.sendMessage(ChatColor.RED + "Not enough XP levels! You need " + ChatColor.YELLOW + cost + ChatColor.RED + " levels. (You have " + p.getLevel() + ")");
+                return false;
+            }
+            p.setLevel(p.getLevel() - cost);
+        }
+
+        // Give items
+        List<String> itemStrings = dataConfig.getStringList(path + ".items");
+        for (String itemStr : itemStrings) {
+            try {
+                String[] parts = itemStr.split(":");
+                Material mat = Material.valueOf(parts[0].toUpperCase());
+                int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                ItemStack item = new ItemStack(mat, amount);
+                HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(item);
+                for (ItemStack drop : overflow.values()) {
+                    p.getWorld().dropItemNaturally(p.getLocation(), drop);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // Set cooldown
+        if (cooldown > 0) {
+            dataConfig.set(cooldownKey, now);
+            saveDataFile();
+        }
+
+        p.sendMessage(ChatColor.GREEN + "You received the " + ChatColor.GOLD + kitName + ChatColor.GREEN + " kit!");
+        logAction(p.getName(), "claimed_kit", kitName);
+        return true;
     }
 
     private void openPlayerListTPA(Player p) {
@@ -1244,7 +1416,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             && !title.startsWith(ChatColor.RED + "Delete:") && !title.equals(GUI_CLAIMS) && !title.equals(GUI_CLAIM_CONFIRM)
             && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)
             && !title.equals(GUI_WORLD_UTILITIES) && !title.equals(GUI_WORLD_LIST)
-            && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)) return;
+            && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)
+            && !title.equals(GUI_KIT_LIST) && !title.startsWith(GUI_KIT_PREVIEW) && !title.startsWith(GUI_KIT_CONFIRM)) return;
 
         e.setCancelled(true);
         if (e.getCurrentItem() == null) return;
@@ -1303,8 +1476,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 openClaimsMenu(p);
             } else if (itemName.equals("Players (TPA)")) {
                 openPlayerListTPA(p);
+            } else if (itemName.equals("Kits")) {
+                openKitListGUI(p);
             } else if (type == Material.BARRIER) {
                 p.closeInventory();
+            }
+            return;
+        }
+
+        // Kit List
+        if (title.equals(GUI_KIT_LIST)) {
+            if (type == Material.BARRIER) {
+                p.closeInventory();
+            } else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                openKitPreviewGUI(p, itemName);
+            }
+            return;
+        }
+
+        // Kit Preview
+        if (title.startsWith(GUI_KIT_PREVIEW)) {
+            String kitName = title.replace(GUI_KIT_PREVIEW, "");
+            if (type == Material.BARRIER) {
+                openKitListGUI(p);
+            } else if (type == Material.EMERALD_BLOCK) {
+                p.closeInventory();
+                claimKit(p, kitName);
             }
             return;
         }
