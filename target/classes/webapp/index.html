@@ -1,1013 +1,506 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realm Tool - Server Management</title>
+    <title>Drowsy Management Dashboard</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #e0e0e0; }
-        .container { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
-        .sidebar { background: #252526; border-right: 1px solid #3e3e42; padding: 20px; overflow-y: auto; }
-        .navbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-        .nav-btn { padding: 10px 15px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; font-size: 12px; }
-        .nav-btn.active { background: #1177bb; }
-        .nav-btn:hover { background: #1177bb; }
-        .content { padding: 30px; overflow-y: auto; }
-        .tab { display: none; }
-        .tab.active { display: block; animation: fadeIn 0.3s; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        h2 { color: #4ec9b0; margin-bottom: 20px; }
-        input, textarea, select { background: #2d2d30; color: #e0e0e0; border: 1px solid #3e3e42; padding: 8px; margin: 5px 0; border-radius: 4px; font-family: inherit; }
-        input:focus, textarea:focus, select:focus { outline: none; border-color: #0e639c; }
-        button { padding: 8px 15px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
-        button:hover { background: #1177bb; }
-        .btn-danger { background: #d32f2f; }
-        .btn-danger:hover { background: #f44336; }
-        .btn-success { background: #388e3c; }
-        .btn-success:hover { background: #4caf50; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        table th, table td { padding: 12px; text-align: left; border-bottom: 1px solid #3e3e42; }
-        table th { background: #2d2d30; color: #4ec9b0; }
-        table tr:hover { background: #2d2d30; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: #252526; padding: 20px; border-radius: 4px; border-left: 3px solid #0e639c; }
-        .stats { font-size: 24px; font-weight: bold; color: #4ec9b0; }
-        .label { color: #969696; font-size: 12px; margin-top: 5px; }
-        .msg-success { color: #4ec9b0; }
-        .msg-error { color: #f44336; }
-        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #3e3e42; border-top-color: #4ec9b0; border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .player-status { display: inline-block; width: 8px; height: 8px; background: #4ec9b0; border-radius: 50%; margin-right: 5px; }
-        .punished { color: #d32f2f; }
-        .full-width { width: 100%; margin: 10px 0; }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); color: #f0f0f0; margin: 0; padding: 1rem; }
+        .container { max-width: 1400px; margin: auto; }
+        h1, h2, h3 { color: #58a6ff; margin-top: 0; }
+        h1 { margin-bottom: 2rem; }
+        
+        .navbar { display: flex; gap: 0.5rem; margin-bottom: 2rem; border-bottom: 2px solid #444; padding-bottom: 1rem; flex-wrap: wrap; }
+        .nav-btn { padding: 0.8rem 1.5rem; background: #333; border: none; color: #f0f0f0; cursor: pointer; border-radius: 4px; font-size: 1rem; transition: 0.2s; }
+        .nav-btn.active { background: #58a6ff; color: white; }
+        .nav-btn:hover { background: #444; }
+        
+        .section { display: none; }
+        .section.active { display: block; }
+        
+        #auth { background: #383838; padding: 2rem; border-radius: 8px; max-width: 400px; }
+        #auth input { width: 100%; padding: 0.8rem; margin-bottom: 1rem; background: #2c2c2c; border: 1px solid #555; color: #f0f0f0; border-radius: 4px; }
+        #auth button { width: 100%; padding: 0.8rem; background: #58a6ff; border: none; color: white; cursor: pointer; border-radius: 4px; font-size: 1rem; }
+        #auth button:hover { background: #79b8ff; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .card { background: #383838; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #58a6ff; }
+        .card-title { font-size: 0.9rem; color: #aaa; text-transform: uppercase; margin-bottom: 0.5rem; }
+        .card-value { font-size: 2rem; font-weight: bold; }
+        .card-warn { border-left-color: #d29922; }
+        .card-alert { border-left-color: #da3633; }
+        
+        .list { background: #383838; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; max-height: 500px; overflow-y: auto; }
+        .list ul { list-style: none; padding: 0; margin: 0; }
+        .list li { background: #444; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .list li small { color: #aaa; }
+        
+        input[type="text"], input[type="password"], input[type="number"], textarea, select { 
+            width: 100%; padding: 0.8rem; margin-bottom: 1rem; background: #2c2c2c; border: 1px solid #555; 
+            color: #f0f0f0; border-radius: 4px; font-family: inherit;
+        }
+        textarea { resize: vertical; min-height: 100px; }
+        
+        button { padding: 0.8rem 1.5rem; background: #58a6ff; border: none; color: white; cursor: pointer; border-radius: 4px; margin-right: 0.5rem; margin-bottom: 0.5rem; }
+        button:hover { background: #79b8ff; }
+        button.danger { background: #da3633; }
+        button.danger:hover { background: #f85149; }
+        button.success { background: #3fb950; }
+        button.success:hover { background: #4ff159; }
+        button.warn { background: #d29922; }
+        button.warn:hover { background: #e0a23c; }
+        button.sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
+        
+        .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .input-group { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+        .input-group input { margin: 0; flex: 1; }
+        
+        .badge { display: inline-block; padding: 0.2rem 0.6rem; background: #444; border-radius: 3px; font-size: 0.8rem; margin: 0.2rem; }
+        .badge.punished { background: #da3633; }
+        .badge.warned { background: #d29922; }
+        
+        .player-item { background: #444; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #58a6ff; }
+        .player-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .player-info { font-size: 0.9rem; color: #aaa; }
+        .player-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        
+        .ticket-item { background: #555; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 4px solid #d29922; }
+        .ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+        .ticket-message { margin: 0.5rem 0; font-style: italic; }
+        
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+            .navbar { flex-direction: column; }
+            .nav-btn { width: 100%; }
+        }
+        
+        .status-online { color: #3fb950; }
+        .status-offline { color: #999; }
     </style>
 </head>
 <body>
+
 <div class="container">
-    <div class="sidebar">
-        <h1 style="color: #4ec9b0; font-size: 18px; margin-bottom: 30px;">Realm Tool</h1>
-        <div class="navbar" style="flex-direction: column;">
-            <button class="nav-btn active" onclick="switchTab('overview')">📊 Overview</button>
-            <button class="nav-btn" onclick="switchTab('players')">👥 Players</button>
-            <button class="nav-btn" onclick="switchTab('tickets')">🎫 Tickets</button>
-            <button class="nav-btn" onclick="switchTab('notes')">📝 Notes</button>
-            <button class="nav-btn" onclick="switchTab('history')">📜 History</button>
-            <button class="nav-btn" onclick="switchTab('chat')">💬 Chat</button>
-            <button class="nav-btn" onclick="switchTab('moderation')">⚖️ Moderation</button>
-            <button class="nav-btn" onclick="switchTab('whitelist')">📋 Whitelist</button>
-            <button class="nav-btn" onclick="switchTab('mutes')">🔇 Mutes</button>
-            <button class="nav-btn" onclick="switchTab('ips')">🔍 IP Tracking</button>
-            <button class="nav-btn" onclick="switchTab('sessions')">🕐 Sessions</button>
-            <button class="nav-btn" onclick="switchTab('templates')">📄 Templates</button>
-            <button class="nav-btn" onclick="switchTab('worlds')">🌍 Worlds</button>
-            <button class="nav-btn" onclick="switchTab('plugins')">🔌 Plugins</button>
-            <button class="nav-btn" onclick="switchTab('gamerules')">🎮 Game Rules</button>
-            <button class="nav-btn" onclick="switchTab('bulk')">📦 Bulk Actions</button>
-            <button class="nav-btn" onclick="switchTab('reports')">🚩 Reports</button>
-            <button class="nav-btn" onclick="switchTab('restart')">⏳ Restart</button>
-            <button class="nav-btn" onclick="switchTab('console')">⌨️ Console</button>
-            <hr style="border: 0; border-top: 1px solid #3e3e42; margin: 20px 0;">
-            <button class="nav-btn" id="logout-btn" onclick="logout()" style="background: #d32f2f; width: 100%;">🚪 Logout</button>
-        </div>
+    <h1>🛠️ Drowsy Management Dashboard</h1>
+
+    <!-- Authentication Section -->
+    <div id="auth">
+        <h2>Authentication</h2>
+        <input type="password" id="apiKey" placeholder="Enter API Key">
+        <button onclick="authenticate()">Login</button>
     </div>
 
-    <div class="content">
-        <!-- OVERVIEW -->
-        <div id="overview" class="tab active">
-            <h2>📊 Server Overview</h2>
+    <!-- Dashboard (hidden until authenticated) -->
+    <div id="dashboard" style="display: none;">
+        <!-- Navigation Tabs -->
+        <div class="navbar">
+            <button class="nav-btn active" onclick="showTab('overview')">📊 Overview</button>
+            <button class="nav-btn" onclick="showTab('players')">👥 Players</button>
+            <button class="nav-btn" onclick="showTab('tickets')">🎫 Tickets</button>
+            <button class="nav-btn" onclick="showTab('notes')">📝 Notes</button>
+            <button class="nav-btn" onclick="showTab('history')">📜 History</button>
+            <button class="nav-btn" onclick="showTab('chat')">💬 Chat</button>
+            <button class="nav-btn" onclick="showTab('moderation')">⚖️ Moderation</button>
+            <button class="nav-btn" onclick="showTab('console')">⌨️ Console</button>
+            <button class="nav-btn" style="margin-left: auto; background: #555;" onclick="logout()">🚪 Logout</button>
+        </div>
+
+        <!-- Overview Tab -->
+        <div id="overview" class="section active">
+            <h2>Server Overview</h2>
             <div class="grid">
                 <div class="card">
-                    <div class="label">Online Players</div>
-                    <div class="stats" id="stat-players">0</div>
+                    <div class="card-title">Online Players</div>
+                    <div class="card-value" id="stat-players">0</div>
                 </div>
                 <div class="card">
-                    <div class="label">Punished Players</div>
-                    <div class="stats" id="stat-punished">0</div>
+                    <div class="card-title">TPS</div>
+                    <div class="card-value" id="stat-tps" style="color: #3fb950;">20.0</div>
                 </div>
                 <div class="card">
-                    <div class="label">Open Tickets</div>
-                    <div class="stats" id="stat-tickets">0</div>
+                    <div class="card-title">Memory Usage</div>
+                    <div class="card-value" id="stat-mem">0%</div>
                 </div>
-                <div class="card">
-                    <div class="label">Muted Players</div>
-                    <div class="stats" id="stat-muted">0</div>
+                <div class="card card-warn">
+                    <div class="card-title">Punished Players</div>
+                    <div class="card-value" id="stat-punished">0</div>
                 </div>
             </div>
-            <h3 style="color: #4ec9b0; margin-top: 30px;">📢 Broadcast</h3>
-            <input type="text" id="broadcast-msg" placeholder="Broadcast message..." class="full-width">
-            <button onclick="broadcast()" class="full-width">Send Broadcast</button>
-        </div>
 
-        <!-- PLAYERS -->
-        <div id="players" class="tab">
-            <h2>👥 Online Players</h2>
-            <input type="text" id="player-search" placeholder="Search players..." class="full-width" oninput="filterPlayers()">
-            <table>
-                <tr><th>Name</th><th>Health</th><th>Location</th><th>Warnings</th><th>Playtime</th><th>Status</th><th>Actions</th></tr>
-                <tbody id="players-list"></tbody>
-            </table>
-        </div>
-
-        <!-- TICKETS -->
-        <div id="tickets" class="tab">
-            <h2>🎫 Tickets</h2>
-            <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                <select id="ticket-status-filter" style="padding: 6px 10px;">
-                    <option value="">All Status</option>
-                    <option value="open">Open</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="resolved">Resolved</option>
-                    <option value="closed">Closed</option>
-                </select>
-                <select id="ticket-priority-filter" style="padding: 6px 10px;">
-                    <option value="">All Priority</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="critical">Critical</option>
-                </select>
-                <button onclick="loadTickets()" style="padding: 6px 12px; background: #2196F3;">Apply Filters</button>
-            </div>
-            <table>
-                <tr><th>ID</th><th>Player</th><th>Priority</th><th>Category</th><th>Status</th><th>Message</th><th>Created</th><th>Action</th></tr>
-                <tbody id="tickets-list"></tbody>
-            </table>
-        </div>
-
-        <!-- TICKET DETAIL MODAL -->
-        <div id="ticket-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; overflow-y: auto;">
-            <div style="background: #222; margin: 40px auto; padding: 20px; width: 90%; max-width: 700px; border-radius: 8px; color: #ccc;">
-                <h2 id="modal-ticket-id">Ticket #0</h2>
-                <div style="margin-bottom: 15px;">
-                    <p><strong>Player:</strong> <span id="modal-player">N/A</span></p>
-                    <p><strong>Status:</strong> 
-                        <select id="modal-status" style="padding: 4px; margin-left: 10px;">
-                            <option value="open">Open</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="resolved">Resolved</option>
-                            <option value="closed">Closed</option>
-                        </select>
-                    </p>
-                    <p><strong>Priority:</strong>
-                        <select id="modal-priority" style="padding: 4px; margin-left: 10px;">
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                            <option value="critical">Critical</option>
-                        </select>
-                    </p>
-                    <p><strong>Category:</strong>
-                        <select id="modal-category" style="padding: 4px; margin-left: 10px;">
-                            <option value="bug">Bug</option>
-                            <option value="griefing">Griefing</option>
-                            <option value="chat">Chat Abuse</option>
-                            <option value="item_loss">Item Loss</option>
-                            <option value="pvp">PvP Complaint</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </p>
-                    <p><strong>Assignee:</strong> <input type="text" id="modal-assignee" style="padding: 4px; margin-left: 10px; width: 200px;"></p>
-                </div>
-                <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
-                    <p><strong>Message:</strong></p>
-                    <p id="modal-message" style="margin: 5px 0;">N/A</p>
-                </div>
-                <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
-                    <p><strong>Responses:</strong></p>
-                    <div id="modal-responses" style="max-height: 200px; overflow-y: auto;"></div>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <p><strong>Add Response:</strong></p>
-                    <input type="text" id="modal-response-text" placeholder="Your response..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: #1a1a1a; border: 1px solid #444; color: #ccc;">
-                    <button onclick="addTicketResponse()" style="padding: 6px 12px; background: #4CAF50;">Add Response</button>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <p><strong>Resolution Reason:</strong></p>
-                    <select id="modal-resolution-reason" style="padding: 6px 10px; width: 200px;">
-                        <option value="">Not Resolved</option>
-                        <option value="fixed">Fixed</option>
-                        <option value="false_report">False Report</option>
-                        <option value="duplicate">Duplicate</option>
-                        <option value="spam">Spam</option>
-                        <option value="other">Other</option>
-                    </select>
-                    <button onclick="resolveTicket()" style="padding: 6px 12px; margin-left: 10px; background: #F44336;">Resolve & Close</button>
-                </div>
-                <div>
-                    <button onclick="updateTicketFields()" style="padding: 6px 12px; background: #2196F3;">Save Changes</button>
-                    <button onclick="document.getElementById('ticket-modal').style.display = 'none';" style="padding: 6px 12px; background: #666; margin-left: 10px;">Close</button>
+            <h2>Broadcast Message</h2>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <div class="input-group">
+                    <input type="text" id="broadcastMsg" placeholder="Enter announcement message...">
+                    <button class="warn" onclick="sendBroadcast()">Send</button>
                 </div>
             </div>
         </div>
 
-        <!-- NOTES -->
-        <div id="notes" class="tab">
-            <h2>📝 Player Notes</h2>
-            <input type="text" id="note-player" placeholder="Player name..." list="players-datalist" style="width: 48%; margin-right: 2%;">
-            <input type="text" id="note-text" placeholder="Note content..." style="width: 48%; margin: 0;">
-            <button onclick="addNote()" class="full-width">Add Note</button>
-            <h3 style="margin-top: 20px; color: #4ec9b0;">View Notes</h3>
-            <input type="text" id="note-search-player" placeholder="Search player notes..." list="players-datalist" class="full-width" oninput="searchNotes()">
-            <div id="notes-display"></div>
+        <!-- Players Tab -->
+        <div id="players" class="section">
+            <h2>Online Players</h2>
+            <input type="text" id="playerSearch" placeholder="Search players..." onkeyup="filterPlayers()" style="margin-bottom: 1rem;">
+            <div id="player-list" class="list"><ul></ul></div>
         </div>
 
-        <!-- NOTE DETAIL MODAL -->
-        <div id="note-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; overflow-y: auto;">
-            <div style="background: #222; margin: 40px auto; padding: 20px; width: 90%; max-width: 700px; border-radius: 8px; color: #ccc;">
-                <h2>📝 Note for <span id="modal-note-player">Player</span></h2>
-                <div style="background: #1a1a1a; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
-                    <p><strong>Note Content:</strong></p>
-                    <textarea id="modal-note-text" style="width: 100%; height: 120px; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #ccc; border-radius: 4px; font-family: monospace;"></textarea>
+        <!-- Tickets Tab -->
+        <div id="tickets" class="section">
+            <h2>Open Tickets</h2>
+            <div id="ticket-list" class="list"><ul></ul></div>
+        </div>
+
+        <!-- Notes Tab -->
+        <div id="notes" class="section">
+            <h2>Player Notes</h2>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <input type="text" id="notesPlayer" placeholder="Player name...">
+                <textarea id="notesText" placeholder="Enter note..."></textarea>
+                <button class="success" onclick="addNote()">Add Note</button>
+                <button onclick="loadNotes()">Load Notes</button>
+            </div>
+            <div id="notes-list" class="list"><ul></ul></div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="history" class="section">
+            <h2>Action History</h2>
+            <button onclick="loadHistory()" style="margin-bottom: 1rem;">Refresh</button>
+            <div id="history-list" class="list"><ul></ul></div>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="chat" class="section">
+            <h2>Server Chat (Last 30 messages)</h2>
+            <button onclick="loadChat()" style="margin-bottom: 1rem;">Refresh</button>
+            <div id="chat-list" class="list"><ul></ul></div>
+        </div>
+
+        <!-- Moderation Tab -->
+        <div id="moderation" class="section">
+            <h2>⚖️ Moderation Tools</h2>
+
+            <h3>Ban Management</h3>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <input type="text" id="banPlayer" placeholder="Player name...">
+                <textarea id="banReason" placeholder="Ban reason..."></textarea>
+                <div class="controls">
+                    <button class="danger" onclick="banPlayer()">Ban Player</button>
+                    <button class="success" onclick="unbanPlayer()">Unban Player</button>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <button onclick="saveNoteEdit()" style="padding: 8px 16px; background: #4CAF50;">Save Changes</button>
-                    <button onclick="deleteNoteFromModal()" style="padding: 8px 16px; background: #F44336;">Delete Note</button>
-                    <button onclick="document.getElementById('note-modal').style.display = 'none';" style="padding: 8px 16px; background: #666; margin-left: auto;">Close</button>
+                <h4>Banned Players:</h4>
+                <div id="banned-list" class="list"><ul></ul></div>
+            </div>
+
+            <h3>Warnings</h3>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <input type="text" id="warnPlayer" placeholder="Player name...">
+                <textarea id="warnReason" placeholder="Warning reason..."></textarea>
+                <div class="controls">
+                    <button class="warn" onclick="warnPlayer()">Warn Player</button>
+                    <button onclick="loadWarnings()">View Warnings</button>
+                </div>
+                <div id="warnings-list" class="list"><ul></ul></div>
+            </div>
+
+            <h3>Inventory & Status</h3>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <input type="text" id="statusPlayer" placeholder="Player name...">
+                <div class="controls">
+                    <button onclick="healPlayer()">Heal Player</button>
+                    <button class="danger" onclick="kickPlayer()">Kick Player</button>
                 </div>
             </div>
         </div>
 
-        <!-- HISTORY -->
-        <div id="history" class="tab">
-            <h2>📜 Action History</h2>
-            <table>
-                <tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th></tr>
-                <tbody id="history-list"></tbody>
-            </table>
-        </div>
-
-        <!-- CHAT -->
-        <div id="chat" class="tab">
-            <h2>💬 Chat Monitor</h2>
-            <div id="chat-display" style="background: #2d2d30; padding: 15px; border-radius: 4px; height: 400px; overflow-y: auto; margin-bottom: 20px;"></div>
-            <button onclick="refreshChat()" class="full-width">Refresh Chat</button>
-        </div>
-
-        <datalist id="players-datalist"></datalist>
-
-        <!-- MODERATION -->
-        <div id="moderation" class="tab">
-            <h2>⚖️ Moderation</h2>
-            <div class="grid">
-                <div class="card" style="border-left: 4px solid #d32f2f;">
-                    <h3 style="color: #f44336; margin-bottom: 15px;">🚫 Ban Player</h3>
-                    <input type="text" id="mod-ban-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
-                    <textarea id="mod-ban-reason" placeholder="Ban reason..." rows="4" style="width: 100%; margin-top: 10px;"></textarea>
-                    <button onclick="banPlayer()" class="full-width btn-danger" style="margin-top: 10px; font-weight: bold;">BAN PLAYER</button>
-                </div>
-                <div class="card" style="border-left: 4px solid #ff9800;">
-                    <h3 style="color: #ffb74d; margin-bottom: 15px;">⚠️ Warn Player</h3>
-                    <input type="text" id="mod-warn-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
-                    <textarea id="mod-warn-reason" placeholder="Warning reason..." rows="4" style="width: 100%; margin-top: 10px;"></textarea>
-                    <button onclick="warnPlayer()" class="full-width" style="margin-top: 10px; background: #ff9800; font-weight: bold;">WARN PLAYER</button>
-                </div>
-                <div class="card" style="border-left: 4px solid #ff6b6b;">
-                    <h3 style="color: #ff7979; margin-bottom: 15px;">⏰ Punish 1 Hour</h3>
-                    <input type="text" id="mod-punish1h-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
-                    <p style="color: #969696; font-size: 12px; margin: 10px 0; font-style: italic;">Lock player in place for 1 hour</p>
-                    <button onclick="punishPlayer(60)" class="full-width" style="margin-top: 5px; background: #d32f2f; font-weight: bold;">PUNISH 1H</button>
-                </div>
-                <div class="card" style="border-left: 4px solid #e91e63;">
-                    <h3 style="color: #f06292; margin-bottom: 15px;">⏰ Punish 3 Hours</h3>
-                    <input type="text" id="mod-punish3h-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
-                    <p style="color: #969696; font-size: 12px; margin: 10px 0; font-style: italic;">Lock player in place for 3 hours</p>
-                    <button onclick="punishPlayer(180)" class="full-width" style="margin-top: 5px; background: #c2185b; font-weight: bold;">PUNISH 3H</button>
-                </div>
+        <!-- Console Tab -->
+        <div id="console" class="section">
+            <h2>Server Console</h2>
+            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <textarea id="command" placeholder="Enter command (without /)..." style="font-family: monospace;"></textarea>
+                <button onclick="executeCommand()">Execute</button>
             </div>
-            <h3 style="margin-top: 40px; color: #4ec9b0; border-bottom: 2px solid #4ec9b0; padding-bottom: 10px;">🚷 Banned Players</h3>
-            <table>
-                <tr><th>Player</th><th>Reason</th><th>Action</th></tr>
-                <tbody id="banned-list"></tbody>
-            </table>
-        </div>
-
-        <!-- WHITELIST -->
-        <div id="whitelist" class="tab">
-            <h2>📋 Whitelist Management</h2>
-            <input type="text" id="whitelist-player" placeholder="Player name to add..." list="players-datalist" style="width: 70%; margin-right: 2%;">
-            <button onclick="addToWhitelist()" style="width: 25%;">Add to Whitelist</button>
-            <table style="margin-top: 20px;">
-                <tr><th>Player</th><th>Action</th></tr>
-                <tbody id="whitelist-list"></tbody>
-            </table>
-        </div>
-
-        <!-- MUTES -->
-        <div id="mutes" class="tab">
-            <h2>🔇 Mute Management</h2>
-            <input type="text" id="mute-player" placeholder="Player name..." list="players-datalist" style="width: 48%; margin-right: 2%;">
-            <input type="text" id="mute-reason" placeholder="Reason..." style="width: 48%; margin: 0;">
-            <button onclick="mutePlayer()" class="full-width">Mute Player</button>
-            <h3 style="margin-top: 20px; color: #4ec9b0;">Muted Players</h3>
-            <table>
-                <tr><th>Player</th><th>Reason</th><th>Action</th></tr>
-                <tbody id="muted-list"></tbody>
-            </table>
-        </div>
-
-        <!-- IP TRACKING -->
-        <div id="ips" class="tab">
-            <h2>🔍 IP Tracking</h2>
-            <input type="text" id="ip-search-player" placeholder="Search player..." class="full-width">
-            <button onclick="searchIPs()" class="full-width">Search IPs</button>
-            <div id="ips-display" style="margin-top: 20px;"></div>
-        </div>
-
-        <!-- SESSIONS -->
-        <div id="sessions" class="tab">
-            <h2>🕐 Session History</h2>
-            <input type="text" id="session-search-player" placeholder="Search player..." class="full-width">
-            <button onclick="searchSessions()" class="full-width">Search Sessions</button>
-            <div id="sessions-display" style="margin-top: 20px;"></div>
-        </div>
-
-        <!-- TEMPLATES -->
-        <div id="templates" class="tab">
-            <h2>📄 Message Templates</h2>
-            <input type="text" id="template-name" placeholder="Template name..." style="width: 48%; margin-right: 2%;">
-            <input type="text" id="template-content" placeholder="Template content..." style="width: 48%; margin: 0;">
-            <button onclick="saveTemplate()" class="full-width">Save Template</button>
-            <h3 style="margin-top: 20px; color: #4ec9b0;">Saved Templates</h3>
-            <div id="templates-list"></div>
-        </div>
-
-        <!-- WORLDS -->
-        <div id="worlds" class="tab">
-            <h2>🌍 Worlds</h2>
-            <table>
-                <tr><th>World Name</th><th>Players</th><th>Environment</th><th>Difficulty</th></tr>
-                <tbody id="worlds-list"></tbody>
-            </table>
-        </div>
-
-        <!-- PLUGINS -->
-        <div id="plugins" class="tab">
-            <h2>🔌 Plugins</h2>
-            <table>
-                <tr><th>Plugin Name</th><th>Version</th></tr>
-                <tbody id="plugins-list"></tbody>
-            </table>
-        </div>
-
-        <!-- GAMERULES -->
-        <div id="gamerules" class="tab">
-            <h2>🎮 Game Rules</h2>
-            <div class="grid">
-                <div class="card">
-                    <h3>PVP</h3>
-                    <div id="gamerule-pvp">Loading...</div>
-                    <button onclick="setGameRule('pvp', true)" class="btn-success full-width">Enable PVP</button>
-                    <button onclick="setGameRule('pvp', false)" class="btn-danger full-width">Disable PVP</button>
-                </div>
-                <div class="card">
-                    <h3>Difficulty</h3>
-                    <div id="gamerule-difficulty">Loading...</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- BULK ACTIONS -->
-        <div id="bulk" class="tab">
-            <h2>📦 Bulk Actions</h2>
-            <textarea id="bulk-players" placeholder="Player names (comma separated)..." style="width: 100%; height: 100px;"></textarea>
-            <p style="color: #969696; font-size: 12px; margin: 10px 0;">💡 Tip: Start typing a name after comma for autocomplete suggestions</p>
-            <select id="bulk-action" class="full-width">
-                <option value="kick">Kick All</option>
-                <option value="ban">Ban All</option>
-                <option value="warn">Warn All</option>
-            </select>
-            <input type="text" id="bulk-reason" placeholder="Reason..." class="full-width">
-            <button onclick="executeBulkAction()" class="full-width btn-danger">Execute Bulk Action</button>
-        </div>
-
-        <!-- REPORTS -->
-        <div id="reports" class="tab">
-            <h2>🚩 Player Reports</h2>
-            <input type="text" id="report-reporter" placeholder="Your name..." list="players-datalist" style="width: 33%; margin-right: 2%;">
-            <input type="text" id="report-reported" placeholder="Reported player..." list="players-datalist" style="width: 33%; margin-right: 2%;">
-            <input type="text" id="report-reason" placeholder="Reason..." style="width: 31%; margin: 0;">
-            <button onclick="submitReport()" class="full-width">Submit Report</button>
-            <h3 style="margin-top: 20px; color: #4ec9b0;">Recent Reports</h3>
-            <div id="reports-display" style="height: 400px; overflow-y: auto;"></div>
-        </div>
-
-        <!-- RESTART -->
-        <div id="restart" class="tab">
-            <h2>⏳ Server Restart</h2>
-            <div class="card">
-                <h3>Schedule Restart</h3>
-                <label>Delay (minutes):</label>
-                <input type="number" id="restart-delay" value="5" min="1" max="240">
-                <button onclick="scheduleRestart()" class="full-width btn-danger">Schedule Restart</button>
-                <div id="restart-status" style="margin-top: 10px; color: #4ec9b0;"></div>
-            </div>
-            <div class="card" style="margin-top: 20px;">
-                <h3>⚙️ Backup Server</h3>
-                <button onclick="triggerBackup()" class="full-width btn-success">Create Backup Now</button>
-                <div id="backup-status" style="margin-top: 10px; color: #4ec9b0;"></div>
-            </div>
-        </div>
-
-        <!-- CONSOLE -->
-        <div id="console" class="tab">
-            <h2>⌨️ Console Commands</h2>
-            <input type="text" id="console-cmd" placeholder="Enter command..." class="full-width">
-            <button onclick="executeCommand()" class="full-width">Execute</button>
-            <div id="console-output" style="background: #2d2d30; padding: 15px; margin-top: 20px; border-radius: 4px; font-family: monospace; height: 300px; overflow-y: auto;"></div>
+            <h3>Example Commands:</h3>
+            <ul>
+                <li>say Server announcement</li>
+                <li>save-all</li>
+                <li>reload confirm</li>
+                <li>give @p diamond 64</li>
+                <li>time set day</li>
+                <li>weather clear</li>
+            </ul>
         </div>
     </div>
 </div>
 
 <script>
-    // Authentication check - redirect to login if no API key stored
-    if (!localStorage.getItem('apiKey')) {
-        window.location.href = 'login.html';
-    }
+    let apiKey = '';
+    let autoRefresh = true;
 
-    const API_KEY = localStorage.getItem('apiKey');
-    const API_URL = `/api`;
-
-    function switchTab(name) {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.getElementById(name).classList.add('active');
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
-        
-        // Load tab-specific data
-        if (name === 'players') loadPlayers();
-        if (name === 'tickets') loadTickets();
-        if (name === 'moderation') loadBanned();
-        if (name === 'chat') startChatAutoRefresh();
-        if (name === 'whitelist') loadWhitelist();
-        if (name === 'mutes') loadMuted();
-        if (name === 'templates') loadTemplates();
-        if (name === 'worlds') loadWorlds();
-        if (name === 'plugins') loadPlugins();
-        if (name === 'gamerules') loadGameRules();
-        if (name === 'reports') loadReports();
-        if (name === 'overview') updateOverview();
+    function authenticate() {
+        const keyInput = document.getElementById('apiKey').value;
+        if (!keyInput) return alert('Please enter an API key.');
+        apiKey = keyInput;
+        document.getElementById('auth').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'block';
+        fetchData();
+        setInterval(fetchData, 5000);
     }
 
     function logout() {
-        localStorage.removeItem('apiKey');
-        window.location.href = 'login.html';
+        apiKey = '';
+        document.getElementById('auth').style.display = 'block';
+        document.getElementById('dashboard').style.display = 'none';
+        document.getElementById('apiKey').value = '';
+        alert('Logged out.');
     }
 
-    async function apiCall(endpoint, method = 'GET', params = null) {
-        const url = params ? `${API_URL}${endpoint}?${new URLSearchParams(params).toString()}` : `${API_URL}${endpoint}`;
+    function showTab(tabName) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById(tabName).classList.add('active');
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        event.target.classList.add('active');
+    }
+
+    async function fetchData() {
+        if (!apiKey) return;
         try {
-            const response = await fetch(url, {
-                method,
-                headers: { 'Authorization': `Bearer ${API_KEY}` }
+            // Fetch Players
+            const pRes = await fetch('/api/players', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (pRes.status === 401) return logout();
+            const data = await pRes.json();
+            const playerList = data.players || [];
+
+            // Update Overview Stats
+            document.getElementById('stat-players').textContent = playerList.length;
+            document.getElementById('stat-tps').textContent = data.tps.toFixed(1);
+            document.getElementById('stat-mem').textContent = data.percentMem + '%';
+            
+            const punished = playerList.filter(p => p.punished).length;
+            document.getElementById('stat-punished').textContent = punished;
+
+            // Update Player List
+            const pListEl = document.querySelector('#player-list ul');
+            pListEl.innerHTML = '';
+            playerList.forEach(p => {
+                const li = document.createElement('li');
+                const warned = p.warnings > 0;
+                li.className = 'player-item';
+                li.innerHTML = `
+                    <div class="player-header">
+                        <div>
+                            <b>${p.name}</b>
+                            <span class="status-online">●</span>
+                            ${p.punished ? '<span class="badge punished">PUNISHED</span>' : ''}
+                            ${warned ? '<span class="badge warned">' + p.warnings + ' WARNING(S)</span>' : ''}
+                        </div>
+                    </div>
+                    <div class="player-info">❤️ ${p.health}/20 | 📍 ${p.world} (${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)})</div>
+                    <div class="player-actions">
+                        <button class="sm danger" onclick="doAction('kick', '${p.name}', 'Kicked by web admin')">Kick</button>
+                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '1h')">1h</button>
+                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '3h')">3h</button>
+                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '24h')">24h</button>
+                        ${p.punished ? '<button class="sm success" onclick="doAction(\'unpunish\', \'' + p.name + '\', \'\')">Unpunish</button>' : ''}
+                        <button class="sm" onclick="doAction('heal', '${p.name}', '')">Heal</button>
+                    </div>
+                `;
+                pListEl.appendChild(li);
             });
-            return await response.json();
-        } catch (e) {
-            console.error('API Error:', e);
-            return null;
-        }
+
+            // Fetch Tickets
+            const tRes = await fetch('/api/tickets', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            const tickets = await tRes.json();
+            const tListEl = document.querySelector('#ticket-list ul');
+            tListEl.innerHTML = '';
+            tickets.forEach(t => {
+                const li = document.createElement('li');
+                li.className = 'ticket-item';
+                li.innerHTML = `
+                    <div class="ticket-header">
+                        <div><b>#${t.id}</b> by <b>${t.player}</b></div>
+                        <button class="sm" onclick="closeTicket('${t.id}')">Close</button>
+                    </div>
+                    <div class="ticket-message">"${t.message}"</div>
+                    <small>${t.time}</small>
+                `;
+                tListEl.appendChild(li);
+            });
+
+        } catch (e) { console.error(e); }
     }
 
-    async function updateOverview() {
-        const response = await apiCall('/players');
-        const players = response && response.players ? response.players : [];
-        const tickets = await apiCall('/tickets');
-        const muted = await apiCall('/muted');
-        
-        let punished = 0;
-        if (players && players.length > 0) {
-            updatePlayerDatalist(players.map(p => p.name));
-            players.forEach(p => { if (p.punished) punished++; });
-            document.getElementById('stat-players').textContent = players.length;
-        }
-        document.getElementById('stat-punished').textContent = punished;
-        document.getElementById('stat-tickets').textContent = tickets ? tickets.length : 0;
-        document.getElementById('stat-muted').textContent = muted ? muted.length : 0;
+    async function doAction(action, player, value = '') {
+        if (!apiKey) return;
+        try {
+            const url = `/api/actions/${action}?player=${encodeURIComponent(player || '')}&value=${encodeURIComponent(value)}`;
+            const res = await fetch(url, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (res.status === 401) return logout();
+            alert(action.toUpperCase() + ': OK');
+            fetchData();
+        } catch (e) { console.error(e); }
     }
 
-    async function broadcast() {
-        const msg = document.getElementById('broadcast-msg').value;
-        if (!msg) return alert('Enter a message');
-        await apiCall('/actions/broadcast', 'POST', { message: msg });
-        document.getElementById('broadcast-msg').value = '';
-        alert('Broadcast sent!');
-    }
-
-    async function loadPlayers() {
-        const response = await apiCall('/players');
-        const players = response && response.players ? response.players : [];
-        const playerNames = players.map(p => p.name);
-        updatePlayerDatalist(playerNames);
-        const html = players.length > 0 ? players.map(p => `
-            <tr class="${p.punished ? 'punished' : ''}">
-                <td><img src="https://mc-heads.net/avatar/${p.name}/32" alt="${p.name}" style="width: 24px; height: 24px; border-radius: 3px; margin-right: 8px; vertical-align: middle; background: #444;"><span class="player-status"></span>${p.name}</td>
-                <td>${p.health}/20</td>
-                <td>${p.world} (${p.x}, ${p.y}, ${p.z})</td>
-                <td>${p.warnings || 0}</td>
-                <td>${p.playtime || 0} h</td>
-                <td>${p.punished ? '⏸️ Punished' : '✅ OK'}</td>
-                <td>
-                    <button onclick="kickPlayer('${p.name}')" style="padding: 4px 8px; font-size: 11px;">Kick</button>
-                    <button onclick="healPlayer('${p.name}')" style="padding: 4px 8px; font-size: 11px;">Heal</button>
-                </td>
-            </tr>
-        `).join('') : '<tr><td colspan="7">No players online</td></tr>';
-        document.getElementById('players-list').innerHTML = html;
-    }
-
-    function updatePlayerDatalist(playerNames) {
-        const datalist = document.getElementById('players-datalist');
-        if (!datalist) {
-            console.error('Datalist element not found');
-            return;
-        }
-        if (!playerNames || playerNames.length === 0) {
-            console.warn('No player names to add to datalist');
-            return;
-        }
-        datalist.innerHTML = playerNames.map(name => `<option value="${name}">`).join('');
-        console.log('Updated datalist with players:', playerNames);
-    }
-
-    function filterPlayers() {
-        const search = document.getElementById('player-search').value.toLowerCase();
-        document.querySelectorAll('#players-list tr').forEach(tr => {
-            tr.style.display = tr.textContent.toLowerCase().includes(search) ? '' : 'none';
-        });
-    }
-
-    async function kickPlayer(player) {
-        await apiCall('/actions/kick', 'POST', { player });
-        loadPlayers();
-    }
-
-    async function healPlayer(player) {
-        await apiCall('/actions/heal', 'POST', { player });
-        loadPlayers();
-    }
-
-    async function loadTickets() {
-        const statusFilter = document.getElementById('ticket-status-filter')?.value || '';
-        const priorityFilter = document.getElementById('ticket-priority-filter')?.value || '';
-        const url = '/tickets' + (statusFilter || priorityFilter ? '?' + new URLSearchParams({
-            status: statusFilter, priority: priorityFilter
-        }) : '');
-        const tickets = await apiCall(url);
-        
-        const getPriorityColor = (p) => {
-            const colors = { critical: '#F44336', high: '#FF9800', medium: '#FFC107', low: '#4CAF50' };
-            return colors[p] || '#999';
-        };
-        
-        const getCategoryLabel = (c) => {
-            const labels = { bug: 'Bug', griefing: 'Griefing', chat: 'Chat', item_loss: 'Item Loss', pvp: 'PvP', other: 'Other' };
-            return labels[c] || 'Unknown';
-        };
-        
-        const getStatusBadge = (s) => {
-            const colors = { open: '#FF9800', in_progress: '#2196F3', resolved: '#4CAF50', closed: '#666' };
-            return `<span style="background: ${colors[s] || '#999'}; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${s}</span>`;
-        };
-
-        const html = tickets ? tickets.map(t => `
-            <tr onclick="openTicketModal(${t.id})" style="cursor: pointer;">
-                <td>${t.id}</td>
-                <td>${t.player}</td>
-                <td><span style="background: ${getPriorityColor(t.priority)}; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: white;">${t.priority}</span></td>
-                <td>${getCategoryLabel(t.category)}</td>
-                <td>${getStatusBadge(t.status)}</td>
-                <td>${t.message.substring(0, 40)}${t.message.length > 40 ? '...' : ''}</td>
-                <td>${t.time}</td>
-                <td onclick="event.stopPropagation();"><button onclick="closeTicket(${t.id})" style="padding: 4px 8px; font-size: 11px; background: #388e3c;">Close</button></td>
-            </tr>
-        `).join('') : '<tr><td colspan="8">No tickets</td></tr>';
-        document.getElementById('tickets-list').innerHTML = html;
-    }
-
-    async function openTicketModal(ticketId) {
-        const ticket = await apiCall(`/ticket/${ticketId}`);
-        if (!ticket) return alert('Ticket not found');
-        
-        document.getElementById('modal-ticket-id').textContent = `Ticket #${ticket.id}`;
-        document.getElementById('modal-player').textContent = ticket.player;
-        document.getElementById('modal-message').textContent = ticket.message;
-        document.getElementById('modal-status').value = ticket.status;
-        document.getElementById('modal-priority').value = ticket.priority;
-        document.getElementById('modal-category').value = ticket.category;
-        document.getElementById('modal-assignee').value = ticket.assignee || '';
-        document.getElementById('modal-resolution-reason').value = '';
-        
-        window.currentTicketId = ticketId;
-        
-        const responsesHtml = ticket.responses && Object.values(ticket.responses).length > 0 ?
-            Object.values(ticket.responses).map(r => `
-                <div style="background: #2a2a2a; padding: 8px; margin-bottom: 8px; border-left: 3px solid #2196F3; border-radius: 3px;">
-                    <strong>${r.admin}</strong> <span style="color: #999; font-size: 11px;">${r.timestamp}</span><br>
-                    <span style="color: #bbb;">${r.message}</span>
-                </div>
-            `).join('') :
-            '<p style="color: #999;">No responses yet</p>';
-        
-        document.getElementById('modal-responses').innerHTML = responsesHtml;
-        document.getElementById('modal-response-text').value = '';
-        
-        document.getElementById('ticket-modal').style.display = 'block';
-    }
-
-    async function updateTicketFields() {
-        const ticketId = window.currentTicketId;
-        const priority = document.getElementById('modal-priority').value;
-        const category = document.getElementById('modal-category').value;
-        const status = document.getElementById('modal-status').value;
-        const assignee = document.getElementById('modal-assignee').value;
-        
-        const params = new URLSearchParams({
-            priority, category, status, assignee
-        });
-        
-        await apiCall(`/ticket/${ticketId}?${params}`, 'PATCH');
-        loadTickets();
-    }
-
-    async function addTicketResponse() {
-        const ticketId = window.currentTicketId;
-        const message = document.getElementById('modal-response-text').value;
-        if (!message) return alert('Enter a response');
-        
-        const adminName = prompt('Your name?') || 'Admin';
-        const params = new URLSearchParams({
-            admin: adminName,
-            message: message
-        });
-        
-        await apiCall(`/ticket/${ticketId}/response?${params}`, 'POST');
-        document.getElementById('modal-response-text').value = '';
-        openTicketModal(ticketId);
-    }
-
-    async function resolveTicket() {
-        const ticketId = window.currentTicketId;
-        const reason = document.getElementById('modal-resolution-reason').value;
-        
-        if (!reason) return alert('Select a resolution reason');
-        
-        const params = new URLSearchParams({ reason });
-        await apiCall(`/ticket/${ticketId}/resolve?${params}`, 'POST');
-        document.getElementById('ticket-modal').style.display = 'none';
-        loadTickets();
+    async function sendBroadcast() {
+        const msg = document.getElementById('broadcastMsg').value;
+        if (!msg) return;
+        await doAction('broadcast', null, msg);
+        document.getElementById('broadcastMsg').value = '';
     }
 
     async function closeTicket(id) {
-        await apiCall(`/ticket/close/${id}`, 'POST');
-        loadTickets();
-    }
-
-    async function addNote() {
-        const player = document.getElementById('note-player').value;
-        const text = document.getElementById('note-text').value;
-        if (!player || !text) return alert('Fill in all fields');
-        await apiCall('/actions/addnote', 'POST', { player, note: text });
-        document.getElementById('note-player').value = '';
-        document.getElementById('note-text').value = '';
-        alert('Note added!');
-    }
-
-    async function searchNotes() {
-        const player = document.getElementById('note-search-player').value;
-        if (!player) return;
-        const notes = await apiCall('/notes', 'GET', { player });
-        
-        const html = notes && notes.length > 0 ? notes.map(n => `
-            <div class="note-card" data-player="${player}" data-index="${n.index}" style="background: #2d2d30; padding: 15px; margin: 8px 0; border-radius: 4px; border-left: 4px solid #4ec9b0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#3a3a40'" onmouseout="this.style.background='#2d2d30';">
-                <p style="margin: 0; color: #4ec9b0; font-weight: bold;">Note #${n.index + 1}</p>
-                <p style="margin: 5px 0 0 0; color: #ccc;">${n.text}</p>
-                <p style="margin: 8px 0 0 0; color: #999; font-size: 12px;">Click to edit or delete</p>
-            </div>
-        `).join('') : '<p style="color: #999;">No notes found</p>';
-        document.getElementById('notes-display').innerHTML = html;
-        
-        // Add click handlers to note cards
-        document.querySelectorAll('.note-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const player = card.getAttribute('data-player');
-                const index = parseInt(card.getAttribute('data-index'));
-                openNoteModal(player, index);
-            });
-        });
-    }
-
-    async function openNoteModal(player, index) {
-        document.getElementById('modal-note-player').textContent = player;
-        
-        // Fetch the current note data
-        const notes = await apiCall('/notes', 'GET', { player });
-        if (!notes || !notes[index]) return alert('Note not found');
-        
-        const noteText = notes[index].text;
-        document.getElementById('modal-note-text').value = noteText;
-        
-        window.currentNotePlayer = player;
-        window.currentNoteIndex = index;
-        
-        document.getElementById('note-modal').style.display = 'block';
-    }
-
-    async function saveNoteEdit() {
-        const player = window.currentNotePlayer;
-        const index = window.currentNoteIndex;
-        const newText = document.getElementById('modal-note-text').value;
-        
-        if (!newText) return alert('Note cannot be empty');
-        
-        const params = new URLSearchParams({ text: newText });
-        await apiCall(`/note/${player}/${index}?${params}`, 'PATCH');
-        document.getElementById('note-modal').style.display = 'none';
-        searchNotes();
-    }
-
-    async function deleteNoteFromModal() {
-        const player = window.currentNotePlayer;
-        const index = window.currentNoteIndex;
-        
-        if (!confirm('Are you sure you want to delete this note?')) return;
-        
-        await apiCall(`/note/${player}/${index}`, 'DELETE');
-        document.getElementById('note-modal').style.display = 'none';
-        searchNotes();
+        if (!apiKey) return;
+        try {
+            const res = await fetch(`/api/ticket/close/${id}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (res.status === 401) return logout();
+            alert('Ticket closed');
+            fetchData();
+        } catch (e) { console.error(e); }
     }
 
     async function loadHistory() {
-        const history = await apiCall('/history');
-        const html = history ? history.map(h => `
-            <tr>
-                <td>${h.timestamp}</td>
-                <td>${h.admin}</td>
-                <td>${h.action}</td>
-                <td>${h.target}</td>
-            </tr>
-        `).join('') : '<tr><td colspan="4">No history</td></tr>';
-        document.getElementById('history-list').innerHTML = html;
+        if (!apiKey) return;
+        try {
+            const res = await fetch('/api/history', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (res.status === 401) return logout();
+            const history = await res.json();
+            const hListEl = document.querySelector('#history-list ul');
+            hListEl.innerHTML = '';
+            history.forEach(h => {
+                const li = document.createElement('li');
+                li.innerHTML = `<small>${h}</small>`;
+                hListEl.appendChild(li);
+            });
+        } catch (e) { console.error(e); }
     }
 
-    async function refreshChat() {
-        const chat = await apiCall('/chat');
-        const html = (chat || []).map(c => `<div style="padding: 8px; border-bottom: 1px solid #444;"><span style="color: #999; font-size: 11px;">${c.timestamp || ''}</span> <strong style="color: #4ec9b0;">${c.player || 'Unknown'}:</strong> <span style="color: #ccc;">${c.message || ''}</span></div>`).join('');
-        const chatDisplay = document.getElementById('chat-display');
-        chatDisplay.innerHTML = html || '<div style="padding: 8px; color: #999;">No chat messages yet</div>';
-        chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    async function loadChat() {
+        if (!apiKey) return;
+        try {
+            const res = await fetch('/api/chat', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (res.status === 401) return logout();
+            const chat = await res.json();
+            const cListEl = document.querySelector('#chat-list ul');
+            cListEl.innerHTML = '';
+            chat.forEach(c => {
+                const li = document.createElement('li');
+                li.innerHTML = `<small><code>${c}</code></small>`;
+                cListEl.appendChild(li);
+            });
+        } catch (e) { console.error(e); }
     }
 
-    function startChatAutoRefresh() {
-        refreshChat();
-        setInterval(refreshChat, 3000);
+    async function loadNotes() {
+        const player = document.getElementById('notesPlayer').value;
+        if (!player || !apiKey) return;
+        try {
+            const res = await fetch(`/api/notes?player=${encodeURIComponent(player)}`, { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            const notes = await res.json();
+            const nListEl = document.querySelector('#notes-list ul');
+            nListEl.innerHTML = '';
+            notes.forEach(n => {
+                const li = document.createElement('li');
+                li.innerHTML = `<small>${n}</small>`;
+                nListEl.appendChild(li);
+            });
+        } catch (e) { console.error(e); }
     }
 
-    async function banPlayer() {
-        const player = document.getElementById('mod-ban-player').value;
-        const reason = document.getElementById('mod-ban-reason').value;
-        if (!player) return alert('Enter player name');
-        await apiCall('/actions/ban', 'POST', { player, reason: reason || 'No reason' });
-        document.getElementById('mod-ban-player').value = '';
-        document.getElementById('mod-ban-reason').value = '';
-        alert('Player banned!');
-        loadBanned();
+    async function addNote() {
+        const player = document.getElementById('notesPlayer').value;
+        const note = document.getElementById('notesText').value;
+        if (!player || !note) return;
+        await doAction('addnote', player, note);
+        document.getElementById('notesText').value = '';
+        loadNotes();
     }
 
     async function warnPlayer() {
-        const player = document.getElementById('mod-warn-player').value;
-        const reason = document.getElementById('mod-warn-reason').value;
-        if (!player) return alert('Enter player name');
-        await apiCall('/actions/warn', 'POST', { player, reason: reason || 'No reason' });
-        document.getElementById('mod-warn-player').value = '';
-        document.getElementById('mod-warn-reason').value = '';
-        alert('Player warned!');
+        const player = document.getElementById('warnPlayer').value;
+        const reason = document.getElementById('warnReason').value;
+        if (!player) return;
+        await doAction('warn', player, reason);
+        document.getElementById('warnReason').value = '';
+        loadWarnings();
     }
 
-    async function punishPlayer(minutes) {
-        const player = document.getElementById(`mod-punish${minutes}m-player`).value;
-        if (!player) return alert('Enter player name');
-        await apiCall('/actions/punish', 'POST', { player, minutes });
-        document.getElementById(`mod-punish${minutes}m-player`).value = '';
-        alert('Player punished!');
+    async function loadWarnings() {
+        const player = document.getElementById('warnPlayer').value;
+        if (!player || !apiKey) return;
+        try {
+            const res = await fetch(`/api/warnings?player=${encodeURIComponent(player)}`, { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            const warnings = await res.json();
+            const wListEl = document.querySelector('#warnings-list ul');
+            wListEl.innerHTML = '';
+            warnings.forEach(w => {
+                const li = document.createElement('li');
+                li.innerHTML = `<small>⚠️ ${w}</small>`;
+                wListEl.appendChild(li);
+            });
+        } catch (e) { console.error(e); }
     }
 
-    async function loadBanned() {
-        const banned = await apiCall('/banned');
-        const html = banned ? banned.map(b => `
-            <tr>
-                <td>${b}</td>
-                <td>N/A</td>
-                <td><button onclick="unbanPlayer('${b}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unban</button></td>
-            </tr>
-        `).join('') : '<tr><td colspan="3">No banned players</td></tr>';
-        document.getElementById('banned-list').innerHTML = html;
-    }
-
-    async function unbanPlayer(player) {
-        await apiCall('/actions/unban', 'POST', { player });
+    async function banPlayer() {
+        const player = document.getElementById('banPlayer').value;
+        const reason = document.getElementById('banReason').value;
+        if (!player) return;
+        await doAction('ban', player, reason);
+        document.getElementById('banReason').value = '';
         loadBanned();
     }
 
-    async function addToWhitelist() {
-        const player = document.getElementById('whitelist-player').value;
-        if (!player) return alert('Enter player name');
-        await apiCall('/whitelist/add', 'POST', { player });
-        document.getElementById('whitelist-player').value = '';
-        alert('Added to whitelist!');
-        loadWhitelist();
+    async function unbanPlayer() {
+        const player = document.getElementById('banPlayer').value;
+        if (!player) return;
+        await doAction('unban', player, 'Unbanned via web');
+        loadBanned();
     }
 
-    async function loadWhitelist() {
-        const whitelist = await apiCall('/whitelist');
-        const html = whitelist ? whitelist.map(p => `
-            <tr>
-                <td>${p}</td>
-                <td><button onclick="removeFromWhitelist('${p}')" style="padding: 4px 8px; font-size: 11px;" class="btn-danger">Remove</button></td>
-            </tr>
-        `).join('') : '<tr><td colspan="2">Whitelist empty</td></tr>';
-        document.getElementById('whitelist-list').innerHTML = html;
+    async function loadBanned() {
+        if (!apiKey) return;
+        try {
+            const res = await fetch('/api/banned', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+            const banned = await res.json();
+            const bListEl = document.querySelector('#banned-list ul');
+            bListEl.innerHTML = '';
+            banned.forEach(b => {
+                const li = document.createElement('li');
+                li.innerHTML = `<b>${b}</b> <button class="sm success" onclick="document.getElementById('banPlayer').value='${b}'; unbanPlayer()">Unban</button>`;
+                bListEl.appendChild(li);
+            });
+        } catch (e) { console.error(e); }
     }
 
-    async function removeFromWhitelist(player) {
-        await apiCall('/whitelist/remove', 'POST', { player });
-        loadWhitelist();
+    async function healPlayer() {
+        const player = document.getElementById('statusPlayer').value;
+        if (!player) return;
+        await doAction('heal', player, '');
     }
 
-    async function mutePlayer() {
-        const player = document.getElementById('mute-player').value;
-        const reason = document.getElementById('mute-reason').value;
-        if (!player) return alert('Enter player name');
-        await apiCall('/mute', 'POST', { player, reason: reason || 'No reason' });
-        document.getElementById('mute-player').value = '';
-        document.getElementById('mute-reason').value = '';
-        alert('Player muted!');
-        loadMuted();
-    }
-
-    async function loadMuted() {
-        const muted = await apiCall('/muted');
-        const html = muted ? muted.map(m => {
-            const parts = m.split('|');
-            return `
-                <tr>
-                    <td>${parts[0] || 'Unknown'}</td>
-                    <td>${parts[1] || 'No reason'}</td>
-                    <td><button onclick="unmutePlayer('${parts[0]}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unmute</button></td>
-                </tr>
-            `;
-        }).join('') : '<tr><td colspan="3">No muted players</td></tr>';
-        document.getElementById('muted-list').innerHTML = html;
-    }
-
-    async function unmutePlayer(player) {
-        await apiCall('/unmute', 'POST', { player });
-        loadMuted();
-    }
-
-    async function searchIPs() {
-        const player = document.getElementById('ip-search-player').value;
-        if (!player) return alert('Enter player name');
-        const ips = await apiCall('/ips', 'GET', { player });
-        const html = ips && ips.length ? ips.map(ip => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${ip}</div>`).join('') : 'No IPs recorded';
-        document.getElementById('ips-display').innerHTML = html;
-    }
-
-    async function searchSessions() {
-        const player = document.getElementById('session-search-player').value;
-        if (!player) return alert('Enter player name');
-        const sessions = await apiCall('/sessions', 'GET', { player });
-        const html = sessions && sessions.length ? sessions.map(s => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${s}</div>`).join('') : 'No sessions found';
-        document.getElementById('sessions-display').innerHTML = html;
-    }
-
-    async function saveTemplate() {
-        const name = document.getElementById('template-name').value;
-        const content = document.getElementById('template-content').value;
-        if (!name || !content) return alert('Fill in all fields');
-        await apiCall('/template/save', 'POST', { name, content });
-        document.getElementById('template-name').value = '';
-        document.getElementById('template-content').value = '';
-        alert('Template saved!');
-        loadTemplates();
-    }
-
-    async function loadTemplates() {
-        const templates = await apiCall('/templates');
-        let html = '';
-        if (templates && Object.keys(templates).length > 0) {
-            html = Object.entries(templates).map(([name, content]) => `
-                <div style="background: #2d2d30; padding: 15px; margin: 10px 0; border-radius: 4px;">
-                    <h4>${name}</h4>
-                    <p>${content}</p>
-                </div>
-            `).join('');
-        } else {
-            html = 'No templates saved';
-        }
-        document.getElementById('templates-list').innerHTML = html;
-    }
-
-    async function loadWorlds() {
-        const worlds = await apiCall('/worlds');
-        const html = worlds ? worlds.map(w => `
-            <tr>
-                <td>${w.name}</td>
-                <td>${w.players}</td>
-                <td>${w.environment}</td>
-                <td>${w.difficulty}</td>
-            </tr>
-        `).join('') : '<tr><td colspan="4">No worlds</td></tr>';
-        document.getElementById('worlds-list').innerHTML = html;
-    }
-
-    async function loadPlugins() {
-        const plugins = await apiCall('/plugins');
-        const html = plugins ? plugins.map(p => {
-            const parts = p.split(' v');
-            return `<tr><td>${parts[0]}</td><td>${parts[1] || 'Unknown'}</td></tr>`;
-        }).join('') : '<tr><td colspan="2">No plugins</td></tr>';
-        document.getElementById('plugins-list').innerHTML = html;
-    }
-
-    async function loadGameRules() {
-        const rules = await apiCall('/gamerules');
-        if (rules) {
-            document.getElementById('gamerule-pvp').textContent = rules.pvp ? '✅ Enabled' : '❌ Disabled';
-            document.getElementById('gamerule-difficulty').textContent = rules.difficulty || 'Unknown';
-        }
-    }
-
-    async function setGameRule(rule, value) {
-        await apiCall('/gamerule', 'POST', { rule, value });
-        loadGameRules();
-    }
-
-    async function executeBulkAction() {
-        const players = document.getElementById('bulk-players').value;
-        const action = document.getElementById('bulk-action').value;
-        const reason = document.getElementById('bulk-reason').value;
-        if (!players) return alert('Enter player list');
-        await apiCall('/bulk', 'POST', { players, action, reason: reason || 'Bulk action' });
-        alert('Bulk action executed!');
-    }
-
-    async function submitReport() {
-        const reporter = document.getElementById('report-reporter').value;
-        const reported = document.getElementById('report-reported').value;
-        const reason = document.getElementById('report-reason').value;
-        if (!reporter || !reported || !reason) return alert('Fill in all fields');
-        await apiCall('/report', 'POST', { reporter, reported, reason });
-        document.getElementById('report-reporter').value = '';
-        document.getElementById('report-reported').value = '';
-        document.getElementById('report-reason').value = '';
-        alert('Report submitted!');
-        loadReports();
-    }
-
-    async function loadReports() {
-        const reports = await apiCall('/reports');
-        const html = reports ? reports.map(r => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${r}</div>`).join('') : 'No reports';
-        document.getElementById('reports-display').innerHTML = html;
-    }
-
-    async function scheduleRestart() {
-        const delay = document.getElementById('restart-delay').value;
-        if (!delay) return alert('Enter delay');
-        await apiCall('/restart', 'POST', { delay });
-        document.getElementById('restart-status').textContent = `Restart scheduled in ${delay} minutes!`;
-    }
-
-    async function triggerBackup() {
-        await apiCall('/backup', 'POST');
-        document.getElementById('backup-status').textContent = 'Backup triggered!';
+    async function kickPlayer() {
+        const player = document.getElementById('statusPlayer').value;
+        if (!player) return;
+        await doAction('kick', player, 'Kicked by web admin');
     }
 
     async function executeCommand() {
-        const cmd = document.getElementById('console-cmd').value;
-        if (!cmd) return;
-        await apiCall('/command', 'POST', { command: cmd });
-        document.getElementById('console-cmd').value = '';
-        document.getElementById('console-output').innerHTML += `<div>&gt; ${cmd}</div>`;
+        const cmd = document.getElementById('command').value;
+        if (!cmd || !apiKey) return;
+        try {
+            const res = await fetch(`/api/command?cmd=${encodeURIComponent(cmd)}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
+            if (res.status === 401) return logout();
+            alert('Command executed');
+            document.getElementById('command').value = '';
+        } catch (e) { console.error(e); }
     }
 
-    // Auto-load overview on page load and refresh player datalist every 5 seconds
-    (async () => {
-        await updateOverview();
-        const response = await apiCall('/players');
-        if (response && response.players) {
-            updatePlayerDatalist(response.players.map(p => p.name));
-        }
-    })();
-    
-    setInterval(updateOverview, 30000);
-    setInterval(() => {
-        (async () => {
-            const response = await apiCall('/players');
-            if (response && response.players && response.players.length > 0) {
-                updatePlayerDatalist(response.players.map(p => p.name));
-            }
-        })();
-    }, 5000);
+    function filterPlayers() {
+        const search = document.getElementById('playerSearch').value.toLowerCase();
+        document.querySelectorAll('#player-list li').forEach(li => {
+            li.style.display = li.textContent.toLowerCase().includes(search) ? 'flex' : 'none';
+        });
+    }
 </script>
+
 </body>
 </html>

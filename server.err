@@ -1,0 +1,2 @@
+Error: Could not find or load main class com.stuart.javarealmtool.Launcher
+Caused by: java.lang.ClassNotFoundException: com.stuart.javarealmtool.Launcher
