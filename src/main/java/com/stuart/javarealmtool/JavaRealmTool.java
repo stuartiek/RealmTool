@@ -1167,7 +1167,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         // Debug: Main menu click
         if (title.equals(GUI_MAIN)) {
-            Player p = (Player) e.getWhoClicked();
             int slot = e.getRawSlot();
             p.sendMessage(ChatColor.YELLOW + "[DEBUG] Clicked slot: " + slot);
             if (slot == 31) {

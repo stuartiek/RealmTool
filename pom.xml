@@ -6,7 +6,7 @@
 
     <groupId>com.stuart</groupId>
     <artifactId>DrowsyManagementTool</artifactId>
-    <version>7.0</version>
+    <version>8.0</version>
     <packaging>jar</packaging>
 
     <name>Drowsy Management Tool</name>
@@ -83,7 +83,7 @@
                 </includes>
             </resource>
             <resource>
-                <directory>src/main/resources/webapp</directory>
+                <directory>src/main/webapp</directory>
                 <filtering>false</filtering>
                 <includes>
                     <include>**</include>

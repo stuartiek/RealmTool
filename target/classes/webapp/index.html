@@ -1,506 +1,3652 @@
+
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Drowsy Management Dashboard</title>
+    <title>Realm Tool - Server Management</title>
     <style>
-        * { box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%); color: #f0f0f0; margin: 0; padding: 1rem; }
-        .container { max-width: 1400px; margin: auto; }
-        h1, h2, h3 { color: #58a6ff; margin-top: 0; }
-        h1 { margin-bottom: 2rem; }
-        
-        .navbar { display: flex; gap: 0.5rem; margin-bottom: 2rem; border-bottom: 2px solid #444; padding-bottom: 1rem; flex-wrap: wrap; }
-        .nav-btn { padding: 0.8rem 1.5rem; background: #333; border: none; color: #f0f0f0; cursor: pointer; border-radius: 4px; font-size: 1rem; transition: 0.2s; }
-        .nav-btn.active { background: #58a6ff; color: white; }
-        .nav-btn:hover { background: #444; }
-        
-        .section { display: none; }
-        .section.active { display: block; }
-        
-        #auth { background: #383838; padding: 2rem; border-radius: 8px; max-width: 400px; }
-        #auth input { width: 100%; padding: 0.8rem; margin-bottom: 1rem; background: #2c2c2c; border: 1px solid #555; color: #f0f0f0; border-radius: 4px; }
-        #auth button { width: 100%; padding: 0.8rem; background: #58a6ff; border: none; color: white; cursor: pointer; border-radius: 4px; font-size: 1rem; }
-        #auth button:hover { background: #79b8ff; }
-        
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .card { background: #383838; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #58a6ff; }
-        .card-title { font-size: 0.9rem; color: #aaa; text-transform: uppercase; margin-bottom: 0.5rem; }
-        .card-value { font-size: 2rem; font-weight: bold; }
-        .card-warn { border-left-color: #d29922; }
-        .card-alert { border-left-color: #da3633; }
-        
-        .list { background: #383838; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; max-height: 500px; overflow-y: auto; }
-        .list ul { list-style: none; padding: 0; margin: 0; }
-        .list li { background: #444; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
-        .list li small { color: #aaa; }
-        
-        input[type="text"], input[type="password"], input[type="number"], textarea, select { 
-            width: 100%; padding: 0.8rem; margin-bottom: 1rem; background: #2c2c2c; border: 1px solid #555; 
-            color: #f0f0f0; border-radius: 4px; font-family: inherit;
-        }
-        textarea { resize: vertical; min-height: 100px; }
-        
-        button { padding: 0.8rem 1.5rem; background: #58a6ff; border: none; color: white; cursor: pointer; border-radius: 4px; margin-right: 0.5rem; margin-bottom: 0.5rem; }
-        button:hover { background: #79b8ff; }
-        button.danger { background: #da3633; }
-        button.danger:hover { background: #f85149; }
-        button.success { background: #3fb950; }
-        button.success:hover { background: #4ff159; }
-        button.warn { background: #d29922; }
-        button.warn:hover { background: #e0a23c; }
-        button.sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
-        
-        .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-        .input-group { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
-        .input-group input { margin: 0; flex: 1; }
-        
-        .badge { display: inline-block; padding: 0.2rem 0.6rem; background: #444; border-radius: 3px; font-size: 0.8rem; margin: 0.2rem; }
-        .badge.punished { background: #da3633; }
-        .badge.warned { background: #d29922; }
-        
-        .player-item { background: #444; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #58a6ff; }
-        .player-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-        .player-info { font-size: 0.9rem; color: #aaa; }
-        .player-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-top: 0.5rem; }
-        
-        .ticket-item { background: #555; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 4px solid #d29922; }
-        .ticket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-        .ticket-message { margin: 0.5rem 0; font-style: italic; }
-        
-        @media (max-width: 768px) {
-            .grid { grid-template-columns: 1fr; }
-            .navbar { flex-direction: column; }
-            .nav-btn { width: 100%; }
-        }
-        
-        .status-online { color: #3fb950; }
-        .status-offline { color: #999; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1e1e1e; color: #e0e0e0; }
+        .container { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+        .sidebar { background: #252526; border-right: 1px solid #3e3e42; padding: 20px; overflow: hidden; display: flex; flex-direction: column; }
+        .sidebar-title { color: #4ec9b0; font-size: 18px; margin-bottom: 20px; flex-shrink: 0; }
+        .navbar { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; flex: 1; }
+        .nav-group { margin-bottom: 10px; }
+        .nav-group-btn { width: 100%; padding: 10px 12px; background: #1a1a1b; color: #a0a0a0; border: none; cursor: pointer; border-radius: 4px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; }
+        .nav-group-btn:hover { background: #2d2d30; }
+        .nav-group-btn.collapsed::after { content: '▼'; display: inline-block; font-size: 10px; }
+        .nav-group-btn.expanded::after { content: '▲'; display: inline-block; font-size: 10px; }
+        .nav-group-items { display: flex; flex-direction: column; gap: 3px; padding: 5px 0 5px 10px; max-height: 500px; overflow: hidden; transition: max-height 0.2s; }
+        .nav-group-items.collapsed { max-height: 0; }
+        .nav-btn { padding: 8px 12px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 3px; font-size: 11px; width: 100%; text-align: left; transition: background 0.2s; }
+        .nav-btn.active { background: #1177bb; font-weight: bold; }
+        .nav-btn:hover { background: #1177bb; }
+        .nav-btn-logout { width: 100%; margin-top: auto; background: #d32f2f; flex-shrink: 0; }
+        .nav-btn-logout:hover { background: #f44336; }
+        .content { padding: 30px; overflow-y: auto; }
+        .tab { display: none; }
+        .tab.active { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        h2 { color: #4ec9b0; margin-bottom: 20px; }
+        input, textarea, select { background: #2d2d30; color: #e0e0e0; border: 1px solid #3e3e42; padding: 8px; margin: 5px 0; border-radius: 4px; font-family: inherit; }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: #0e639c; }
+        button { padding: 8px 15px; background: #0e639c; color: white; border: none; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #1177bb; }
+        .btn-danger { background: #d32f2f; }
+        .btn-danger:hover { background: #f44336; }
+        .btn-success { background: #388e3c; }
+        .btn-success:hover { background: #4caf50; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        table th, table td { padding: 12px; text-align: left; border-bottom: 1px solid #3e3e42; }
+        table th { background: #2d2d30; color: #4ec9b0; }
+        table tr:hover { background: #2d2d30; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #252526; padding: 20px; border-radius: 4px; border-left: 3px solid #0e639c; }
+        .stats { font-size: 24px; font-weight: bold; color: #4ec9b0; }
+        .label { color: #969696; font-size: 12px; margin-top: 5px; }
+        .msg-success { color: #4ec9b0; }
+        .msg-error { color: #f44336; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #3e3e42; border-top-color: #4ec9b0; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .player-status { display: inline-block; width: 8px; height: 8px; background: #4ec9b0; border-radius: 50%; margin-right: 5px; }
+        .punished { color: #d32f2f; }
+        .full-width { width: 100%; margin: 10px 0; }
     </style>
 </head>
 <body>
-
 <div class="container">
-    <h1>🛠️ Drowsy Management Dashboard</h1>
+    <div class="sidebar">
+        <div class="sidebar-title">DrowsyCraft Management</div>
+        <div class="navbar">
+            <!-- Overview (Standalone) -->
+            <button class="nav-btn active" onclick="switchTab('overview', this)">📊 Overview</button>
 
-    <!-- Authentication Section -->
-    <div id="auth">
-        <h2>Authentication</h2>
-        <input type="password" id="apiKey" placeholder="Enter API Key">
-        <button onclick="authenticate()">Login</button>
+            <!-- Player Management -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">👥 Player Management</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('players', this)">Players</button>
+                    <button class="nav-btn" onclick="switchTab('sessions', this)">Sessions</button>
+                    <button class="nav-btn" onclick="switchTab('ips', this)">IP Tracking</button>
+                    <button class="nav-btn" onclick="switchTab('reputation', this)">Reputation</button>
+                    <button class="nav-btn" onclick="switchTab('afk', this)">AFK Manager</button>
+                </div>
+            </div>
+
+            <!-- Moderation & Safety -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">⚖️ Moderation</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('moderation', this)">Moderation</button>
+                    <button class="nav-btn" onclick="switchTab('whitelist', this)">Whitelist</button>
+                    <button class="nav-btn" onclick="switchTab('mutes', this)">Mutes</button>
+                    <button class="nav-btn" onclick="switchTab('punishments', this)">Punishments</button>
+                    <button class="nav-btn" onclick="switchTab('reports', this)">Reports</button>
+                </div>
+            </div>
+
+            <!-- Communication & Tickets -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">💬 Communication</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('chat', this)">Chat</button>
+                    <button class="nav-btn" onclick="switchTab('notes', this)">Notes</button>
+                    <button class="nav-btn" onclick="switchTab('tickets', this)">Tickets</button>
+                    <button class="nav-btn" onclick="switchTab('templates', this)">Templates</button>
+                </div>
+            </div>
+
+            <!-- Server Management -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🌍 Server Mgmt</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('worlds', this)">Worlds</button>
+                    <button class="nav-btn" onclick="switchTab('plugins', this)">Plugins</button>
+                    <button class="nav-btn" onclick="switchTab('gamerules', this)">Game Rules</button>
+                    <button class="nav-btn" onclick="switchTab('blocklog', this)">Block Log</button>
+                    <button class="nav-btn" onclick="switchTab('console', this)">Console</button>
+                    <button class="nav-btn" onclick="switchTab('performance', this)">Performance</button>
+                    <button class="nav-btn" onclick="switchTab('restart', this)">Restart</button>
+                </div>
+            </div>
+
+            <!-- Events & Seasons -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🎄 Events</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('events', this)">Event Manager</button>
+                    <button class="nav-btn" onclick="switchTab('eventlog', this)">Event History</button>
+                </div>
+            </div>
+
+            <!-- Analytics & Community -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">📊 Analytics</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('player-analytics', this)">Player Analytics</button>
+                    <button class="nav-btn" onclick="switchTab('leaderboards', this)">Leaderboards</button>
+                    <button class="nav-btn" onclick="switchTab('economy', this)">Economy</button>
+                </div>
+            </div>
+
+            <!-- Logging & Audit -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">📋 Logging</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('history', this)">History</button>
+                    <button class="nav-btn" onclick="switchTab('auditlog', this)">Audit Log</button>
+                    <button class="nav-btn" onclick="switchTab('warnings', this)">Warnings Log</button>
+                    <button class="nav-btn" onclick="switchTab('bulk', this)">Bulk Actions</button>
+                    <button class="nav-btn" onclick="switchTab('serverlogs', this)">Server Logs</button>
+                </div>
+            </div>
+
+            <!-- Community & Appeals -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">💬 Community</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('appeals', this)">Player Appeals</button>
+                    <button class="nav-btn" onclick="switchTab('announcements', this)">Announcements</button>
+                </div>
+            </div>
+
+            <!-- Server Operations -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">⚙️ Operations</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('backups', this)">Backups</button>
+                    <button class="nav-btn" onclick="switchTab('scheduler', this)">Command Scheduler</button>
+                    <button class="nav-btn" onclick="switchTab('maintenance', this)">Maintenance Mode</button>
+                </div>
+            </div>
+
+            <!-- Advanced -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🛠️ Advanced</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('permissions', this)">Permission Groups</button>
+                    <button class="nav-btn" onclick="switchTab('landc-claims', this)">Land Claims</button>
+                    <button class="nav-btn" onclick="switchTab('roleplay', this)">Roleplay Commands</button>
+                    <button class="nav-btn" onclick="switchTab('voterewards', this)">Vote Rewards</button>
+                </div>
+            </div>
+
+            <!-- Integrations -->
+            <div class="nav-group">
+                <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🔗 Integrations</button>
+                <div class="nav-group-items">
+                    <button class="nav-btn" onclick="switchTab('discord', this)">Discord</button>
+                </div>
+            </div>
+
+            <!-- Ranks -->
+            <button class="nav-btn" onclick="switchTab('ranks', this)">⭐ Ranks</button>
+
+            <button class="nav-btn nav-btn-logout" id="logout-btn" onclick="logout()">🚪 Logout</button>
+        </div>
     </div>
 
-    <!-- Dashboard (hidden until authenticated) -->
-    <div id="dashboard" style="display: none;">
-        <!-- Navigation Tabs -->
-        <div class="navbar">
-            <button class="nav-btn active" onclick="showTab('overview')">📊 Overview</button>
-            <button class="nav-btn" onclick="showTab('players')">👥 Players</button>
-            <button class="nav-btn" onclick="showTab('tickets')">🎫 Tickets</button>
-            <button class="nav-btn" onclick="showTab('notes')">📝 Notes</button>
-            <button class="nav-btn" onclick="showTab('history')">📜 History</button>
-            <button class="nav-btn" onclick="showTab('chat')">💬 Chat</button>
-            <button class="nav-btn" onclick="showTab('moderation')">⚖️ Moderation</button>
-            <button class="nav-btn" onclick="showTab('console')">⌨️ Console</button>
-            <button class="nav-btn" style="margin-left: auto; background: #555;" onclick="logout()">🚪 Logout</button>
-        </div>
-
-        <!-- Overview Tab -->
-        <div id="overview" class="section active">
-            <h2>Server Overview</h2>
+    <div class="content">
+        <!-- OVERVIEW -->
+        <div id="overview" class="tab active">
+            <h2>📊 Server Overview</h2>
             <div class="grid">
                 <div class="card">
-                    <div class="card-title">Online Players</div>
-                    <div class="card-value" id="stat-players">0</div>
+                    <div class="label">Online Players</div>
+                    <div class="stats" id="stat-players">0</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">TPS</div>
-                    <div class="card-value" id="stat-tps" style="color: #3fb950;">20.0</div>
+                    <div class="label">Punished Players</div>
+                    <div class="stats" id="stat-punished">0</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Memory Usage</div>
-                    <div class="card-value" id="stat-mem">0%</div>
+                    <div class="label">Open Tickets</div>
+                    <div class="stats" id="stat-tickets">0</div>
                 </div>
-                <div class="card card-warn">
-                    <div class="card-title">Punished Players</div>
-                    <div class="card-value" id="stat-punished">0</div>
-                </div>
-            </div>
-
-            <h2>Broadcast Message</h2>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <div class="input-group">
-                    <input type="text" id="broadcastMsg" placeholder="Enter announcement message...">
-                    <button class="warn" onclick="sendBroadcast()">Send</button>
+                <div class="card">
+                    <div class="label">Muted Players</div>
+                    <div class="stats" id="stat-muted">0</div>
                 </div>
             </div>
+
+            <h3 style="color: #4ec9b0; margin-top: 30px;"> Broadcast</h3>
+            <input type="text" id="broadcast-msg" placeholder="Broadcast message..." class="full-width">
+            <button onclick="broadcast()" class="full-width">Send Broadcast</button>
         </div>
 
-        <!-- Players Tab -->
-        <div id="players" class="section">
-            <h2>Online Players</h2>
-            <input type="text" id="playerSearch" placeholder="Search players..." onkeyup="filterPlayers()" style="margin-bottom: 1rem;">
-            <div id="player-list" class="list"><ul></ul></div>
+        <!-- PLAYERS -->
+        <div id="players" class="tab">
+            <h2>👥 Online Players</h2>
+            <input type="text" id="player-search" placeholder="Search players..." class="full-width" oninput="filterPlayers()">
+            <table>
+                <tr><th>Name</th><th>Health</th><th>Location</th><th>Warnings</th><th>Playtime</th><th>Status</th><th>Actions</th></tr>
+                <tbody id="players-list"></tbody>
+            </table>
         </div>
 
-        <!-- Tickets Tab -->
-        <div id="tickets" class="section">
-            <h2>Open Tickets</h2>
-            <div id="ticket-list" class="list"><ul></ul></div>
-        </div>
-
-        <!-- Notes Tab -->
-        <div id="notes" class="section">
-            <h2>Player Notes</h2>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <input type="text" id="notesPlayer" placeholder="Player name...">
-                <textarea id="notesText" placeholder="Enter note..."></textarea>
-                <button class="success" onclick="addNote()">Add Note</button>
-                <button onclick="loadNotes()">Load Notes</button>
+        <!-- TICKETS -->
+        <div id="tickets" class="tab">
+            <h2>🎫 Tickets</h2>
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <select id="ticket-status-filter" style="padding: 6px 10px;">
+                    <option value="">All Status</option>
+                    <option value="open">Open</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                </select>
+                <select id="ticket-priority-filter" style="padding: 6px 10px;">
+                    <option value="">All Priority</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                </select>
+                <button onclick="loadTickets()" style="padding: 6px 12px; background: #2196F3;">Apply Filters</button>
             </div>
-            <div id="notes-list" class="list"><ul></ul></div>
+            <table>
+                <tr><th>ID</th><th>Player</th><th>Priority</th><th>Category</th><th>Status</th><th>Message</th><th>Created</th><th>Action</th></tr>
+                <tbody id="tickets-list"></tbody>
+            </table>
         </div>
 
-        <!-- History Tab -->
-        <div id="history" class="section">
-            <h2>Action History</h2>
-            <button onclick="loadHistory()" style="margin-bottom: 1rem;">Refresh</button>
-            <div id="history-list" class="list"><ul></ul></div>
-        </div>
-
-        <!-- Chat Tab -->
-        <div id="chat" class="section">
-            <h2>Server Chat (Last 30 messages)</h2>
-            <button onclick="loadChat()" style="margin-bottom: 1rem;">Refresh</button>
-            <div id="chat-list" class="list"><ul></ul></div>
-        </div>
-
-        <!-- Moderation Tab -->
-        <div id="moderation" class="section">
-            <h2>⚖️ Moderation Tools</h2>
-
-            <h3>Ban Management</h3>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <input type="text" id="banPlayer" placeholder="Player name...">
-                <textarea id="banReason" placeholder="Ban reason..."></textarea>
-                <div class="controls">
-                    <button class="danger" onclick="banPlayer()">Ban Player</button>
-                    <button class="success" onclick="unbanPlayer()">Unban Player</button>
+        <!-- TICKET DETAIL MODAL -->
+        <div id="ticket-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; overflow-y: auto;">
+            <div style="background: #222; margin: 40px auto; padding: 20px; width: 90%; max-width: 700px; border-radius: 8px; color: #ccc;">
+                <h2 id="modal-ticket-id">Ticket #0</h2>
+                <div style="margin-bottom: 15px;">
+                    <p><strong>Player:</strong> <span id="modal-player">N/A</span></p>
+                    <p><strong>Status:</strong> 
+                        <select id="modal-status" style="padding: 4px; margin-left: 10px;">
+                            <option value="open">Open</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="closed">Closed</option>
+                        </select>
+                    </p>
+                    <p><strong>Priority:</strong>
+                        <select id="modal-priority" style="padding: 4px; margin-left: 10px;">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </p>
+                    <p><strong>Category:</strong>
+                        <select id="modal-category" style="padding: 4px; margin-left: 10px;">
+                            <option value="bug">Bug</option>
+                            <option value="griefing">Griefing</option>
+                            <option value="chat">Chat Abuse</option>
+                            <option value="item_loss">Item Loss</option>
+                            <option value="pvp">PvP Complaint</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </p>
+                    <p><strong>Assignee:</strong> <input type="text" id="modal-assignee" style="padding: 4px; margin-left: 10px; width: 200px;"></p>
                 </div>
-                <h4>Banned Players:</h4>
-                <div id="banned-list" class="list"><ul></ul></div>
-            </div>
-
-            <h3>Warnings</h3>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <input type="text" id="warnPlayer" placeholder="Player name...">
-                <textarea id="warnReason" placeholder="Warning reason..."></textarea>
-                <div class="controls">
-                    <button class="warn" onclick="warnPlayer()">Warn Player</button>
-                    <button onclick="loadWarnings()">View Warnings</button>
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                    <p><strong>Message:</strong></p>
+                    <p id="modal-message" style="margin: 5px 0;">N/A</p>
                 </div>
-                <div id="warnings-list" class="list"><ul></ul></div>
-            </div>
-
-            <h3>Inventory & Status</h3>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <input type="text" id="statusPlayer" placeholder="Player name...">
-                <div class="controls">
-                    <button onclick="healPlayer()">Heal Player</button>
-                    <button class="danger" onclick="kickPlayer()">Kick Player</button>
+                <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                    <p><strong>Responses:</strong></p>
+                    <div id="modal-responses" style="max-height: 200px; overflow-y: auto;"></div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <p><strong>Add Response:</strong></p>
+                    <input type="text" id="modal-response-text" placeholder="Your response..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: #1a1a1a; border: 1px solid #444; color: #ccc;">
+                    <button onclick="addTicketResponse()" style="padding: 6px 12px; background: #4CAF50;">Add Response</button>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <p><strong>Resolution Reason:</strong></p>
+                    <select id="modal-resolution-reason" style="padding: 6px 10px; width: 200px;">
+                        <option value="">Not Resolved</option>
+                        <option value="fixed">Fixed</option>
+                        <option value="false_report">False Report</option>
+                        <option value="duplicate">Duplicate</option>
+                        <option value="spam">Spam</option>
+                        <option value="other">Other</option>
+                    </select>
+                    <button onclick="resolveTicket()" style="padding: 6px 12px; margin-left: 10px; background: #F44336;">Resolve & Close</button>
+                </div>
+                <div>
+                    <button onclick="updateTicketFields()" style="padding: 6px 12px; background: #2196F3;">Save Changes</button>
+                    <button onclick="document.getElementById('ticket-modal').style.display = 'none';" style="padding: 6px 12px; background: #666; margin-left: 10px;">Close</button>
                 </div>
             </div>
         </div>
 
-        <!-- Console Tab -->
-        <div id="console" class="section">
-            <h2>Server Console</h2>
-            <div style="background: #383838; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-                <textarea id="command" placeholder="Enter command (without /)..." style="font-family: monospace;"></textarea>
-                <button onclick="executeCommand()">Execute</button>
+        <!-- NOTES -->
+        <div id="notes" class="tab">
+            <h2>📝 Player Notes</h2>
+            <input type="text" id="note-player" placeholder="Player name..." list="players-datalist" style="width: 48%; margin-right: 2%;">
+            <input type="text" id="note-text" placeholder="Note content..." style="width: 48%; margin: 0;">
+            <button onclick="addNote()" class="full-width">Add Note</button>
+            <h3 style="margin-top: 20px; color: #4ec9b0;">View Notes</h3>
+            <input type="text" id="note-search-player" placeholder="Search player notes..." list="players-datalist" class="full-width" oninput="searchNotes()">
+            <div id="notes-display"></div>
+        </div>
+
+        <!-- NOTE DETAIL MODAL -->
+        <div id="note-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; overflow-y: auto;">
+            <div style="background: #222; margin: 40px auto; padding: 20px; width: 90%; max-width: 700px; border-radius: 8px; color: #ccc;">
+                <h2>📝 Note for <span id="modal-note-player">Player</span></h2>
+                <div style="background: #1a1a1a; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+                    <p><strong>Note Content:</strong></p>
+                    <textarea id="modal-note-text" style="width: 100%; height: 120px; padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #ccc; border-radius: 4px; font-family: monospace;"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="saveNoteEdit()" style="padding: 8px 16px; background: #4CAF50;">Save Changes</button>
+                    <button onclick="deleteNoteFromModal()" style="padding: 8px 16px; background: #F44336;">Delete Note</button>
+                    <button onclick="document.getElementById('note-modal').style.display = 'none';" style="padding: 8px 16px; background: #666; margin-left: auto;">Close</button>
+                </div>
             </div>
-            <h3>Example Commands:</h3>
-            <ul>
-                <li>say Server announcement</li>
-                <li>save-all</li>
-                <li>reload confirm</li>
-                <li>give @p diamond 64</li>
-                <li>time set day</li>
-                <li>weather clear</li>
-            </ul>
+        </div>
+
+        <!-- HISTORY -->
+        <div id="history" class="tab">
+            <h2>📜 Action History</h2>
+            <table>
+                <tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th></tr>
+                <tbody id="history-list"></tbody>
+            </table>
+        </div>
+
+        <!-- CHAT -->
+        <div id="chat" class="tab">
+            <h2>💬 Chat Monitor</h2>
+            <div id="chat-display" style="background: #2d2d30; padding: 15px; border-radius: 4px; height: 400px; overflow-y: auto; margin-bottom: 20px;"></div>
+            <button onclick="refreshChat()" class="full-width">Refresh Chat</button>
+        </div>
+
+        <datalist id="players-datalist"></datalist>
+
+        <!-- MODERATION -->
+        <div id="moderation" class="tab">
+            <h2>⚖️ Moderation</h2>
+            <div class="grid">
+                <div class="card" style="border-left: 4px solid #d32f2f;">
+                    <h3 style="color: #f44336; margin-bottom: 15px;">🚫 Ban Player</h3>
+                    <input type="text" id="mod-ban-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
+                    <textarea id="mod-ban-reason" placeholder="Ban reason..." rows="4" style="width: 100%; margin-top: 10px;"></textarea>
+                    <button onclick="banPlayer()" class="full-width btn-danger" style="margin-top: 10px; font-weight: bold;">BAN PLAYER</button>
+                </div>
+                <div class="card" style="border-left: 4px solid #ff9800;">
+                    <h3 style="color: #ffb74d; margin-bottom: 15px;">⚠️ Warn Player</h3>
+                    <input type="text" id="mod-warn-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
+                    <textarea id="mod-warn-reason" placeholder="Warning reason..." rows="4" style="width: 100%; margin-top: 10px;"></textarea>
+                    <button onclick="warnPlayer()" class="full-width" style="margin-top: 10px; background: #ff9800; font-weight: bold;">WARN PLAYER</button>
+                </div>
+                <div class="card" style="border-left: 4px solid #ff6b6b;">
+                    <h3 style="color: #ff7979; margin-bottom: 15px;">⏰ Punish 1 Hour</h3>
+                    <input type="text" id="mod-punish1h-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
+                    <p style="color: #969696; font-size: 12px; margin: 10px 0; font-style: italic;">Lock player in place for 1 hour</p>
+                    <button onclick="punishPlayer(60)" class="full-width" style="margin-top: 5px; background: #d32f2f; font-weight: bold;">PUNISH 1H</button>
+                </div>
+                <div class="card" style="border-left: 4px solid #e91e63;">
+                    <h3 style="color: #f06292; margin-bottom: 15px;">⏰ Punish 3 Hours</h3>
+                    <input type="text" id="mod-punish3h-player" placeholder="Player name..." list="players-datalist" style="width: 100%;">
+                    <p style="color: #969696; font-size: 12px; margin: 10px 0; font-style: italic;">Lock player in place for 3 hours</p>
+                    <button onclick="punishPlayer(180)" class="full-width" style="margin-top: 5px; background: #c2185b; font-weight: bold;">PUNISH 3H</button>
+                </div>
+            </div>
+            <h3 style="margin-top: 40px; color: #4ec9b0; border-bottom: 2px solid #4ec9b0; padding-bottom: 10px;">🚷 Banned Players</h3>
+            <table>
+                <tr><th>Player</th><th>Reason</th><th>Action</th></tr>
+                <tbody id="banned-list"></tbody>
+            </table>
+        </div>
+
+        <!-- WHITELIST -->
+        <div id="whitelist" class="tab">
+            <h2>📋 Whitelist Management</h2>
+            <input type="text" id="whitelist-player" placeholder="Player name to add..." list="players-datalist" style="width: 70%; margin-right: 2%;">
+            <button onclick="addToWhitelist()" style="width: 25%;">Add to Whitelist</button>
+            <table style="margin-top: 20px;">
+                <tr><th>Player</th><th>Action</th></tr>
+                <tbody id="whitelist-list"></tbody>
+            </table>
+        </div>
+
+        <!-- MUTES -->
+        <div id="mutes" class="tab">
+            <h2>🔇 Mute Management</h2>
+            <input type="text" id="mute-player" placeholder="Player name..." list="players-datalist" style="width: 48%; margin-right: 2%;">
+            <input type="text" id="mute-reason" placeholder="Reason..." style="width: 48%; margin: 0;">
+            <button onclick="mutePlayer()" class="full-width">Mute Player</button>
+            <h3 style="margin-top: 20px; color: #4ec9b0;">Muted Players</h3>
+            <table>
+                <tr><th>Player</th><th>Reason</th><th>Action</th></tr>
+                <tbody id="muted-list"></tbody>
+            </table>
+        </div>
+
+        <!-- IP TRACKING -->
+        <div id="ips" class="tab">
+            <h2>🔍 IP Tracking</h2>
+            <input type="text" id="ip-search-player" placeholder="Search player..." class="full-width">
+            <button onclick="searchIPs()" class="full-width">Search IPs</button>
+            <div id="ips-display" style="margin-top: 20px;"></div>
+        </div>
+
+        <!-- SESSIONS -->
+        <div id="sessions" class="tab">
+            <h2>🕐 Session History</h2>
+            <input type="text" id="session-search-player" placeholder="Search player..." class="full-width">
+            <button onclick="searchSessions()" class="full-width">Search Sessions</button>
+            <div id="sessions-display" style="margin-top: 20px;"></div>
+        </div>
+
+        <!-- TEMPLATES -->
+        <div id="templates" class="tab">
+            <h2>📄 Message Templates</h2>
+            <input type="text" id="template-name" placeholder="Template name..." style="width: 48%; margin-right: 2%;">
+            <input type="text" id="template-content" placeholder="Template content..." style="width: 48%; margin: 0;">
+            <button onclick="saveTemplate()" class="full-width">Save Template</button>
+            <h3 style="margin-top: 20px; color: #4ec9b0;">Saved Templates</h3>
+            <div id="templates-list"></div>
+        </div>
+
+        <!-- WORLDS -->
+        <div id="worlds" class="tab">
+            <h2>🌍 Worlds</h2>
+            <table>
+                <tr><th>World Name</th><th>Players</th><th>Environment</th><th>Difficulty</th></tr>
+                <tbody id="worlds-list"></tbody>
+            </table>
+        </div>
+
+        <!-- PLUGINS -->
+        <div id="plugins" class="tab">
+            <h2>🔌 Plugins</h2>
+            <table>
+                <tr><th>Plugin Name</th><th>Version</th></tr>
+                <tbody id="plugins-list"></tbody>
+            </table>
+        </div>
+
+        <!-- GAMERULES -->
+        <div id="gamerules" class="tab">
+            <h2>🎮 Game Rules</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>PVP</h3>
+                    <div id="gamerule-pvp">Loading...</div>
+                    <button onclick="setGameRule('pvp', true)" class="btn-success full-width">Enable PVP</button>
+                    <button onclick="setGameRule('pvp', false)" class="btn-danger full-width">Disable PVP</button>
+                </div>
+                <div class="card">
+                    <h3>Difficulty</h3>
+                    <div id="gamerule-difficulty">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BULK ACTIONS -->
+        <div id="bulk" class="tab">
+            <h2>📦 Bulk Actions</h2>
+            <textarea id="bulk-players" placeholder="Player names (comma separated)..." style="width: 100%; height: 100px;"></textarea>
+            <p style="color: #969696; font-size: 12px; margin: 10px 0;">💡 Tip: Start typing a name after comma for autocomplete suggestions</p>
+            <select id="bulk-action" class="full-width">
+                <option value="kick">Kick All</option>
+                <option value="ban">Ban All</option>
+                <option value="warn">Warn All</option>
+            </select>
+            <input type="text" id="bulk-reason" placeholder="Reason..." class="full-width">
+            <button onclick="executeBulkAction()" class="full-width btn-danger">Execute Bulk Action</button>
+        </div>
+
+        <!-- REPORTS -->
+        <div id="reports" class="tab">
+            <h2>🚩 Player Reports</h2>
+            <input type="text" id="report-reporter" placeholder="Your name..." list="players-datalist" style="width: 33%; margin-right: 2%;">
+            <input type="text" id="report-reported" placeholder="Reported player..." list="players-datalist" style="width: 33%; margin-right: 2%;">
+            <input type="text" id="report-reason" placeholder="Reason..." style="width: 31%; margin: 0;">
+            <button onclick="submitReport()" class="full-width">Submit Report</button>
+            <h3 style="margin-top: 20px; color: #4ec9b0;">Recent Reports</h3>
+            <div id="reports-display" style="height: 400px; overflow-y: auto;"></div>
+        </div>
+
+        <!-- RESTART -->
+        <div id="restart" class="tab">
+            <h2>⏳ Server Restart</h2>
+            <div class="card">
+                <h3>Schedule Restart</h3>
+                <label>Delay (minutes):</label>
+                <input type="number" id="restart-delay" value="5" min="1" max="240">
+                <button onclick="scheduleRestart()" class="full-width btn-danger">Schedule Restart</button>
+                <div id="restart-status" style="margin-top: 10px; color: #4ec9b0;"></div>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h3>⚙️ Backup Server</h3>
+                <button onclick="triggerBackup()" class="full-width btn-success">Create Backup Now</button>
+                <div id="backup-status" style="margin-top: 10px; color: #4ec9b0;"></div>
+            </div>
+        </div>
+
+        <!-- CONSOLE -->
+        <div id="console" class="tab">
+            <h2>⌨️ Console Commands</h2>
+            <input type="text" id="console-cmd" placeholder="Enter command..." class="full-width">
+            <button onclick="executeCommand()" class="full-width">Execute</button>
+            <div id="console-output" style="background: #2d2d30; padding: 15px; margin-top: 20px; border-radius: 4px; font-family: monospace; height: 300px; overflow-y: auto;"></div>
+        </div>
+
+        <!-- PERFORMANCE -->
+        <div id="performance" class="tab">
+            <h2>📈 Server Performance</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="label">TPS (Ticks Per Second)</div>
+                    <div class="stats" id="stat-tps">20.0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Memory Usage</div>
+                    <div class="stats" id="stat-memory">0%</div>
+                </div>
+                <div class="card">
+                    <div class="label">Player Count</div>
+                    <div class="stats" id="stat-playercount">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Uptime</div>
+                    <div class="stats" id="stat-uptime">0h 0m</div>
+                </div>
+            </div>
+            <h3 style="margin-top: 30px; color: #4ec9b0;">Player Join History</h3>
+            <div id="join-history" style="background: #2d2d30; padding: 15px; border-radius: 4px; height: 300px; overflow-y: auto;"></div>
+        </div>
+
+        <!-- BLOCK LOG -->
+        <div id="blocklog" class="tab">
+            <h2>🔲 Block Change Log</h2>
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="blocklog-player" placeholder="Filter by player..." style="width: 30%; padding: 6px;">
+                <input type="text" id="blocklog-block" placeholder="Filter by block type..." style="width: 30%; padding: 6px;">
+                <button onclick="loadBlockLog()" style="padding: 6px 12px;">Search</button>
+            </div>
+            <table>
+                <tr><th>Time</th><th>Player</th><th>Action</th><th>Block</th><th>Location</th></tr>
+                <tbody id="blocklog-list"></tbody>
+            </table>
+        </div>
+
+        <!-- PLAYER REPUTATION -->
+        <div id="reputation" class="tab">
+            <h2>⭐ Player Reputation</h2>
+            <input type="text" id="reputation-search" placeholder="Search player..." class="full-width" oninput="searchReputation()">
+            <table>
+                <tr><th>Player</th><th>Score</th><th>Warnings</th><th>Bans</th><th>Status</th><th>Actions</th></tr>
+                <tbody id="reputation-list"></tbody>
+            </table>
+        </div>
+
+        <!-- PERMISSION GROUPS -->
+        <div id="permissions" class="tab">
+            <h2>🔐 Permission Groups</h2>
+            <div style="margin-bottom: 15px;">
+                <input type="text" id="group-name" placeholder="Group name..." style="width: 30%; margin-right: 2%;">
+                <button onclick="createGroup()" style="width: 20%;">Create Group</button>
+            </div>
+            <h3 style="color: #4ec9b0; margin-top: 20px;">Groups</h3>
+            <table>
+                <tr><th>Group</th><th>Members</th><th>Permissions</th><th>Actions</th></tr>
+                <tbody id="groups-list"></tbody>
+            </table>
+            <h3 style="color: #4ec9b0; margin-top: 30px;">Assign Player to Group</h3>
+            <input type="text" id="player-group-assign" placeholder="Player name..." list="players-datalist" style="width: 40%; margin-right: 2%;">
+            <select id="group-select" style="width: 40%;"><option value="">Select Group</option></select>
+            <button onclick="assignPlayerToGroup()" class="full-width" style="margin-top: 10px;">Assign</button>
+        </div>
+
+        <!-- CUSTOM PUNISHMENTS -->
+        <div id="punishments" class="tab">
+            <h2>⏱️ Custom Punishments</h2>
+            <div class="card">
+                <h3>Create Custom Punishment</h3>
+                <input type="text" id="punish-player" placeholder="Player name..." list="players-datalist" style="width: 100%; margin-bottom: 10px;">
+                <label>Duration (minutes): <input type="number" id="punish-duration" min="1" value="30" style="width: 150px;"></label>
+                <textarea id="punish-reason" placeholder="Punishment reason..." style="width: 100%; height: 60px; margin: 10px 0;"></textarea>
+                <button onclick="createCustomPunishment()" class="full-width btn-danger">Create Punishment</button>
+            </div>
+            <h3 style="margin-top: 30px; color: #4ec9b0;">Active Punishments</h3>
+            <table>
+                <tr><th>Player</th><th>Duration</th><th>Reason</th><th>Ends At</th><th>Actions</th></tr>
+                <tbody id="active-punishments"></tbody>
+            </table>
+        </div>
+
+        <!-- AUDIT LOG -->
+        <div id="auditlog" class="tab">
+            <h2>📋 Admin Audit Log</h2>
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="audit-admin" placeholder="Filter by admin..." style="width: 30%; padding: 6px;">
+                <select id="audit-action" style="width: 30%; padding: 6px;">
+                    <option value="">All Actions</option>
+                    <option value="ban">Ban</option>
+                    <option value="warn">Warn</option>
+                    <option value="kick">Kick</option>
+                    <option value="mute">Mute</option>
+                </select>
+                <button onclick="loadAuditLog()" style="padding: 6px 12px;">Search</button>
+            </div>
+            <table>
+                <tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Reason</th></tr>
+                <tbody id="audit-list"></tbody>
+            </table>
+        </div>
+
+        <!-- AFK MANAGER -->
+        <div id="afk" class="tab">
+            <h2>💤 AFK Manager</h2>
+            <div class="card">
+                <h3>AFK Settings</h3>
+                <label>Auto-kick after (minutes): <input type="number" id="afk-timeout" min="5" value="30" style="width: 150px;"></label>
+                <button onclick="saveAFKSettings()" class="full-width btn-success" style="margin-top: 10px;">Save Settings</button>
+            </div>
+            <h3 style="margin-top: 30px; color: #4ec9b0;">AFK Players</h3>
+            <table>
+                <tr><th>Player</th><th>Idle Time</th><th>Last Action</th><th>Actions</th></tr>
+                <tbody id="afk-list"></tbody>
+            </table>
+        </div>
+
+        <!-- ADVANCED SEARCH -->
+        <div id="search" class="tab">
+            <h2>🔎 Advanced Player Search</h2>
+            <div class="card">
+                <h3>Search Criteria</h3>
+                <label>Player Name: <input type="text" id="search-name" placeholder="Exact or partial..." style="width: 300px;"></label>
+                <label>Min Playtime (hours): <input type="number" id="search-playtime-min" min="0" style="width: 150px;"></label>
+                <label>Max Playtime (hours): <input type="number" id="search-playtime-max" style="width: 150px;"></label>
+                <label>Warnings: <input type="number" id="search-warnings" min="0" style="width: 150px;"></label>
+                <label>Banned: <select id="search-banned" style="width: 200px;"><option value="">Any</option><option value="0">Not Banned</option><option value="1">Banned</option></select></label>
+                <button onclick="executeAdvancedSearch()" class="full-width btn-success" style="margin-top: 15px;">Search</button>
+            </div>
+            <h3 style="margin-top: 30px; color: #4ec9b0;">Results</h3>
+            <table>
+                <tr><th>Player</th><th>Playtime</th><th>Warnings</th><th>Reputation</th><th>Status</th></tr>
+                <tbody id="search-results"></tbody>
+            </table>
+        </div>
+
+        <!-- DISCORD INTEGRATION -->
+        <div id="discord" class="tab">
+            <h2>🤖 Discord Integration</h2>
+            <div class="card">
+                <h3>📡 Webhook Configuration</h3>
+                <label>Primary Webhook URL:</label>
+                <input type="text" id="discord-webhook" placeholder="https://discordapp.com/api/webhooks/..." style="width: 100%;">
+                
+                <label style="margin-top: 15px;">Additional Webhook URLs:</label>
+                <input type="text" id="webhook-ban" placeholder="Bans webhook URL" style="width: 100%; margin-top: 5px;" title="Optional: Separate webhook for ban alerts">
+                <input type="text" id="webhook-warn" placeholder="Warnings webhook URL" style="width: 100%; margin-top: 5px;" title="Optional: Separate webhook for warnings">
+                <input type="text" id="webhook-report" placeholder="Reports webhook URL" style="width: 100%; margin-top: 5px;" title="Optional: Separate webhook for reports">
+                
+                <button onclick="saveDiscordSettings()" class="full-width btn-success" style="margin-top: 15px;">💾 Save Settings</button>
+                <button onclick="testDiscordWebhook()" class="full-width" style="margin-top: 10px; background: #2196F3;">🧪 Test Webhook</button>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h3>✅ Event Alerts</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <label><input type="checkbox" id="discord-bans" checked> 🚫 Player Bans</label><br>
+                        <label><input type="checkbox" id="discord-warns" checked> ⚠️ Warnings</label><br>
+                        <label><input type="checkbox" id="discord-reports" checked> 📢 Player Reports</label><br>
+                        <label><input type="checkbox" id="discord-joins" checked> ✅ Player Joins</label><br>
+                        <label><input type="checkbox" id="discord-leaves" checked> 🚪 Player Leaves</label><br>
+                    </div>
+                    <div>
+                        <label><input type="checkbox" id="discord-deaths"> 💀 Death Notifications</label><br>
+                        <label><input type="checkbox" id="discord-block_logging"> ⛏️ Block Logging</label><br>
+                        <label><input type="checkbox" id="discord-container_logging"> 📦 Container Access</label><br>
+                        <label><input type="checkbox" id="discord-command_logging"> 🔧 Command Logging</label><br>
+                        <label><input type="checkbox" id="discord-milestone_alerts"> 🎮 Playtime Milestones</label><br>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h3>⚙️ Monitoring & Maintenance</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <label><input type="checkbox" id="discord-performance_alerts"> ⚠️ Performance Alerts</label><br>
+                        <label style="font-size: 11px; color: #969696;">CPU/Memory/TPS monitoring every 60s</label><br><br>
+                        <label><input type="checkbox" id="discord-health_check"> 🏥 Webhook Health Check</label><br>
+                        <label style="font-size: 11px; color: #969696;">Validates webhook connectivity every 30 min</label>
+                    </div>
+                    <div>
+                        <label><input type="checkbox" id="discord-daily_summary"> 📊 Daily Summary</label><br>
+                        <label style="font-size: 11px; color: #969696;">Compiles 24-hour stats and resets counters</label><br><br>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h3>📈 Webhook Statistics</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Webhooks Sent</div>
+                        <div style="font-size: 20px; color: #4ec9b0;" id="stat-webhooks-sent">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Webhooks Failed</div>
+                        <div style="font-size: 20px; color: #d32f2f;" id="stat-webhooks-failed">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Today's Joins</div>
+                        <div style="font-size: 20px; color: #4ec9b0;" id="stat-joins-today">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Today's Leaves</div>
+                        <div style="font-size: 20px; color: #888;" id="stat-leaves-today">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Today's Bans</div>
+                        <div style="font-size: 20px; color: #d32f2f;" id="stat-bans-today">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Today's Warns</div>
+                        <div style="font-size: 20px; color: #ff9800;" id="stat-warns-today">0</div>
+                    </div>
+                    <div style="background: #2d2d30; padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #969696;">Today's Reports</div>
+                        <div style="font-size: 20px; color: #2196F3;" id="stat-reports-today">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="discord-status" style="margin-top: 20px; padding: 10px; background: #2d2d30; border-radius: 4px; color: #969696;"></div>
+        </div>
+
+        <!-- RANKS SYSTEM -->
+        <div id="ranks" class="tab">
+            <h2>⭐ Player Ranks Management</h2>
+            
+            <!-- Create New Rank -->
+            <div class="card">
+                <h3>➕ Create New Rank</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                    <div>
+                        <label>Rank Name:</label>
+                        <input type="text" id="rank-name" placeholder="e.g., Moderator, Helper, VIP">
+                    </div>
+                    <div>
+                        <label>Display Color:</label>
+                        <input type="color" id="rank-color" value="#4ec9b0" style="height: 35px;">
+                    </div>
+                    <div>
+                        <label>Rank Level:</label>
+                        <input type="number" id="rank-level" min="1" value="1" style="width: 100%;">
+                    </div>
+                </div>
+                <textarea id="rank-description" placeholder="Rank description and responsibilities..." style="width: 100%; height: 60px; margin-bottom: 10px;"></textarea>
+                <button onclick="createRank()" class="full-width btn-success">Create Rank</button>
+            </div>
+
+            <!-- Ranks List -->
+            <h3 style="color: #4ec9b0; margin-top: 30px;">📋 All Ranks</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Rank Name</th>
+                        <th>Level</th>
+                        <th>Color</th>
+                        <th>Members</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="ranks-list"></tbody>
+            </table>
+
+            <!-- Promote/Demote Players -->
+            <div class="card" style="margin-top: 30px;">
+                <h3>🎖️ Promote / Demote Player</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <label>Select Player:</label>
+                        <input type="text" id="player-rank-input" placeholder="Player name..." list="players-datalist" style="width: 100%;">
+                    </div>
+                    <div>
+                        <label>New Rank:</label>
+                        <select id="new-rank-select" style="width: 100%; height: 35px;">
+                            <option value="">Select Rank</option>
+                        </select>
+                    </div>
+                </div>
+                <input type="text" id="promotion-reason" placeholder="Reason for promotion (optional)" style="width: 100%; margin-top: 10px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                    <button onclick="promotePlayer()" class="btn-success">✅ Promote</button>
+                    <button onclick="demotePlayer()" class="btn-danger">❌ Demote</button>
+                </div>
+            </div>
+
+            <!-- Player Ranks -->
+            <h3 style="color: #4ec9b0; margin-top: 30px;">👥 Player Ranks</h3>
+            <input type="text" id="search-player-rank" placeholder="Search player..." style="width: 100%; margin-bottom: 15px;" onkeyup="filterPlayerRanks()">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Player Name</th>
+                        <th>Current Rank</th>
+                        <th>Rank Level</th>
+                        <th>Promoted By</th>
+                        <th>Promotion Date</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="player-ranks-list"></tbody>
+            </table>
+
+            <div id="ranks-status" style="margin-top: 20px; padding: 10px; background: #2d2d30; border-radius: 4px; color: #969696;"></div>
+        </div>
+
+        <!-- PLAYER ANALYTICS -->
+        <div id="player-analytics" class="tab">
+            <h2>📊 Player Analytics</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <div class="card">
+                    <div class="label">Total Players</div>
+                    <div class="stats" id="analytics-total-players">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Avg. Session Time</div>
+                    <div class="stats" id="analytics-avg-session">0h</div>
+                </div>
+                <div class="card">
+                    <div class="label">Most Active Player</div>
+                    <div class="stats" id="analytics-most-active">-</div>
+                </div>
+            </div>
+            <h3>Playtime Statistics</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Total Playtime</th>
+                        <th>Sessions</th>
+                        <th>Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody id="analytics-table"></tbody>
+            </table>
+            <div id="analytics-status" style="margin-top: 20px; color: #969696;"></div>
+        </div>
+
+        <!-- LEADERBOARDS -->
+        <div id="leaderboards" class="tab">
+            <h2>🏆 Leaderboards</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h3>Top Playtime</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Player</th>
+                                <th>Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-playtime"></tbody>
+                    </table>
+                </div>
+                <div>
+                    <h3>Most Sessions</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Player</th>
+                                <th>Sessions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-sessions"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ECONOMY -->
+        <div id="economy" class="tab">
+            <h2>💰 Economy Dashboard</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <div class="card">
+                    <div class="label">Total Currency</div>
+                    <div class="stats" id="economy-total">$0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Richest Player</div>
+                    <div class="stats" id="economy-richest">-</div>
+                </div>
+            </div>
+            <h3>Player Balances</h3>
+            <input type="text" placeholder="Search player..." style="width: 100%; margin-bottom: 15px;" id="economy-search" onkeyup="filterEconomyTable()">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Balance</th>
+                        <th>Total Earned</th>
+                        <th>Total Spent</th>
+                    </tr>
+                </thead>
+                <tbody id="economy-table"></tbody>
+            </table>
+        </div>
+
+        <!-- WARNINGS LOG -->
+        <div id="warnings" class="tab">
+            <h2>⚠️ Warnings Log</h2>
+            <h3>Issue Warning</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                <input type="text" placeholder="Player name..." style="width: 100%;" list="players-datalist" id="warn-player">
+                <input type="text" placeholder="Reason..." style="width: 100%;" id="warn-reason">
+                <button onclick="issueWarning()" class="btn-warning" style="grid-column: 1/-1;">⚠️ Issue Warning</button>
+            </div>
+            <h3>Warning History</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Warning #</th>
+                        <th>Reason</th>
+                        <th>Issued By</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="warnings-table"></tbody>
+            </table>
+            <div id="warnings-status" style="margin-top: 20px; color: #969696;"></div>
+        </div>
+
+        <!-- AUDIT LOG -->
+        <div id="auditlog" class="tab">
+            <h2>🔍 Audit Log</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                <input type="text" placeholder="Filter by admin..." id="audit-admin-filter" onkeyup="filterAuditLog()">
+                <input type="text" placeholder="Filter by action..." id="audit-action-filter" onkeyup="filterAuditLog()">
+                <select id="audit-date-filter" onchange="filterAuditLog()">
+                    <option value="">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="month">This Month</option>
+                </select>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Admin</th>
+                        <th>Action</th>
+                        <th>Target</th>
+                        <th>Reason</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="auditlog-table"></tbody>
+            </table>
+        </div>
+
+        <!-- BULK ACTIONS -->
+        <div id="bulk" class="tab">
+            <h2>⚡ Bulk Actions</h2>
+            <h3>Perform Action on Multiple Players</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <select id="bulk-action-type">
+                    <option value="">Select Action</option>
+                    <option value="kick">Kick All</option>
+                    <option value="mute">Mute All</option>
+                    <option value="ban">Ban All (WITH REASON)</option>
+                </select>
+                <input type="text" placeholder="Reason (required for ban)" id="bulk-action-reason">
+                <input type="text" placeholder="Filter players (optional)" id="bulk-filter">
+                <button onclick="executeBulkAction()" class="btn-danger" style="grid-column: 1/-1;">⚡ Execute Bulk Action</button>
+            </div>
+            <h3>Bulk Action History</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Admin</th>
+                        <th>Action</th>
+                        <th>Affected Players</th>
+                        <th>Reason</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="bulk-actions-table"></tbody>
+            </table>
+        </div>
+
+        <!-- SERVER LOGS -->
+        <div id="serverlogs" class="tab">
+            <h2>📝 Server Logs</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+                <input type="text" placeholder="Search logs..." id="logs-search" onkeyup="filterLogs()">
+                <select id="logs-level-filter" onchange="filterLogs()">
+                    <option value="">All Levels</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARN">WARN</option>
+                    <option value="ERROR">ERROR</option>
+                </select>
+                <button onclick="clearLogs()" class="btn-danger">Clear Logs</button>
+            </div>
+            <div style="background: #1a1a1a; border: 1px solid #3e3e42; border-radius: 4px; padding: 15px; height: 500px; overflow-y: auto; font-family: monospace; font-size: 11px;" id="logs-viewer"></div>
+        </div>
+
+        <!-- PLAYER APPEALS -->
+        <div id="appeals" class="tab">
+            <h2>📬 Player Appeals</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <div class="card">
+                    <div class="label">Pending Appeals</div>
+                    <div class="stats" id="appeals-pending">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Approved</div>
+                    <div class="stats" id="appeals-approved">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Denied</div>
+                    <div class="stats" id="appeals-denied">0</div>
+                </div>
+            </div>
+            <h3>Appeals Queue</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Ban Reason</th>
+                        <th>Appeal Message</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="appeals-table"></tbody>
+            </table>
+            <div id="appeals-status" style="margin-top: 20px; color: #969696;"></div>
+        </div>
+
+        <!-- ANNOUNCEMENTS -->
+        <div id="announcements" class="tab">
+            <h2>📢 Announcements</h2>
+            <h3>Schedule Announcement</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <input type="text" placeholder="Announcement message..." id="announce-msg" style="grid-column: 1/-1;">
+                <input type="datetime-local" id="announce-time">
+                <button onclick="scheduleAnnouncement()" class="btn-success" style="grid-column: 1/-1;">📢 Schedule Announcement</button>
+            </div>
+            <h3>Scheduled Announcements</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Message</th>
+                        <th>Scheduled Time</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="announcements-table"></tbody>
+            </table>
+        </div>
+
+        <!-- BACKUPS -->
+        <div id="backups" class="tab">
+            <h2>💾 Backups</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <button onclick="createBackup()" class="btn-success">💾 Create Backup Now</button>
+                <button onclick="loadBackups()" class="btn-info">🔄 Refresh List</button>
+            </div>
+            <h3>Backup History</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Backup Date</th>
+                        <th>File Size</th>
+                        <th>Server Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="backups-table"></tbody>
+            </table>
+            <div id="backups-status" style="margin-top: 20px; color: #969696;"></div>
+        </div>
+
+        <!-- COMMAND SCHEDULER -->
+        <div id="scheduler" class="tab">
+            <h2>⏰ Command Scheduler</h2>
+            <h3>Schedule Command</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <input type="text" placeholder="Command (without /)..." id="scheduler-cmd" style="grid-column: 1/-1;">
+                <input type="datetime-local" id="scheduler-time">
+                <button onclick="scheduleCommand()" class="btn-success" style="grid-column: 1/-1;">⏰ Schedule Command</button>
+            </div>
+            <h3>Scheduled Commands</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Command</th>
+                        <th>Scheduled Time</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="scheduler-table"></tbody>
+            </table>
+        </div>
+
+        <!-- MAINTENANCE MODE -->
+        <div id="maintenance" class="tab">
+            <h2>🔧 Maintenance Mode</h2>
+            <div style="background: #252526; border: 1px solid #3e3e42; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div>
+                        <label>Maintenance Status</label>
+                        <select id="maintenance-status">
+                            <option value="off">Off</option>
+                            <option value="on">On</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Maintenance Message</label>
+                        <input type="text" placeholder="Server is under maintenance..." id="maintenance-msg">
+                    </div>
+                </div>
+                <div style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <input type="datetime-local" id="maintenance-end" placeholder="End time">
+                    <button onclick="setMaintenance()" class="btn-warning" style="grid-column: 1/-1;">🔧 Apply Maintenance Mode</button>
+                </div>
+            </div>
+            <h3>Whitelist Exempt Players</h3>
+            <input type="text" placeholder="Add player to whitelist..." id="maintenance-whitelist-player">
+            <button onclick="addMaintenanceWhitelist()" class="btn-success">✅ Add</button>
+            <table style="margin-top: 20px;">
+                <thead>
+                    <tr>
+                        <th>Player</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="maintenance-whitelist-table"></tbody>
+            </table>
+        </div>
+
+        <!-- PERMISSION GROUPS -->
+        <div id="permissions" class="tab">
+            <h2>🔐 Permission Groups</h2>
+            <h3>Create Group</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <input type="text" placeholder="Group name..." id="perm-group-name">
+                <input type="color" id="perm-group-color" value="#0e639c">
+                <button onclick="createPermissionGroup()" class="btn-success" style="grid-column: 1/-1;">➕ Create Group</button>
+            </div>
+            <h3>Manage Groups</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Group Name</th>
+                        <th>Color</th>
+                        <th>Permissions</th>
+                        <th>Members</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="permissions-table"></tbody>
+            </table>
+        </div>
+
+        <!-- LAND CLAIMS -->
+        <div id="landc-claims" class="tab">
+            <h2>🏗️ Land Claims</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <div class="card">
+                    <div class="label">Total Claims</div>
+                    <div class="stats" id="claims-total">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Disputed</div>
+                    <div class="stats" id="claims-disputed">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Largest Claim</div>
+                    <div class="stats" id="claims-largest">0 blks</div>
+                </div>
+            </div>
+            <h3>Claims List</h3>
+            <input type="text" placeholder="Search player..." id="claims-search" onkeyup="filterClaimsTable()">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Owner</th>
+                        <th>Location</th>
+                        <th>Size</th>
+                        <th>Members</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="claims-table"></tbody>
+            </table>
+        </div>
+
+        <!-- ROLEPLAY COMMANDS -->
+        <div id="roleplay" class="tab">
+            <h2>🎭 Roleplay Commands</h2>
+            <h3>Create Command</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <input type="text" placeholder="Command name..." id="rp-cmd-name">
+                <input type="text" placeholder="Command trigger..." id="rp-cmd-trigger">
+                <textarea placeholder="Response message..." id="rp-cmd-response" style="grid-column: 1/-1; height: 100px;"></textarea>
+                <button onclick="createRoleplayCommand()" class="btn-success" style="grid-column: 1/-1;">➕ Create Command</button>
+            </div>
+            <h3>Custom Commands</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Command</th>
+                        <th>Trigger</th>
+                        <th>Response</th>
+                        <th>Uses</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="roleplay-table"></tbody>
+            </table>
+        </div>
+
+        <!-- VOTE REWARDS -->
+        <div id="voterewards" class="tab">
+            <h2>🗳️ Vote Rewards</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;">
+                <div class="card">
+                    <div class="label">Total Votes</div>
+                    <div class="stats" id="votes-total">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">This Month</div>
+                    <div class="stats" id="votes-month">0</div>
+                </div>
+                <div class="card">
+                    <div class="label">Top Voter</div>
+                    <div class="stats" id="votes-top">-</div>
+                </div>
+            </div>
+            <h3>Reward Configuration</h3>
+            <div style="background: #252526; border: 1px solid #3e3e42; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <input type="text" placeholder="Reward command (with {player})..." id="vote-reward-cmd">
+                    <input type="number" placeholder="Reward amount" id="vote-reward-amount">
+                    <button onclick="setVoteReward()" class="btn-success" style="grid-column: 1/-1;">💾 Save Reward</button>
+                </div>
+            </div>
+            <h3>Vote Leaderboard</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Player</th>
+                        <th>Votes</th>
+                        <th>Last Vote</th>
+                    </tr>
+                </thead>
+                <tbody id="votes-table"></tbody>
+            </table>
+        </div>
+
+        <!-- EVENTS -->
+        <div id="events" class="tab">
+            <h2>🎄 Event Manager</h2>
+            <p style="color: #999; margin-bottom: 20px;">Create seasonal and special events with visual effects on the map!</p>
+            
+            <h3>Active Events</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Players Online</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="active-events-table"></tbody>
+            </table>
+
+            <h3>Available Events</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-top: 20px;">
+                <div class="card" style="cursor: pointer;" onclick="startEvent('christmas')">
+                    <h4 style="color: #4ec9b0;">🎄 Christmas</h4>
+                    <p style="font-size: 12px; color: #999;">Falling snow everywhere on the map</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="event.stopPropagation(); startEvent('christmas')">Enable Event</button>
+                </div>
+                <div class="card" style="cursor: pointer;">
+                    <h4 style="color: #ff9800;">🎃 Halloween</h4>
+                    <p style="font-size: 12px; color: #999;">Dark sky, spiders, and creepy effects</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="startEvent('halloween')">Enable Event</button>
+                </div>
+                <div class="card" style="cursor: pointer;">
+                    <h4 style="color: #9c27b0;">🎆 New Year</h4>
+                    <p style="font-size: 12px; color: #999;">Fireworks and confetti particles</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="startEvent('newyear')">Enable Event</button>
+                </div>
+                <div class="card" style="cursor: pointer;">
+                    <h4 style="color: #f44336;">❤️ Valentine's Day</h4>
+                    <p style="font-size: 12px; color: #999;">Floating hearts and romantic particles</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="startEvent('valentine')">Enable Event</button>
+                </div>
+                <div class="card" style="cursor: pointer;">
+                    <h4 style="color: #4ec9b0;">🌸 Spring</h4>
+                    <p style="font-size: 12px; color: #999;">Falling cherry blossom petals</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="startEvent('spring')">Enable Event</button>
+                </div>
+                <div class="card" style="cursor: pointer;">
+                    <h4 style="color: #ffc107;">☀️ Summer</h4>
+                    <p style="font-size: 12px; color: #999;">Bright sun, heat waves, and particles</p>
+                    <button class="btn-success" style="width: 100%; margin-top: 10px;" onclick="startEvent('summer')">Enable Event</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- EVENT LOG -->
+        <div id="eventlog" class="tab">
+            <h2>📋 Event History</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Event</th>
+                        <th>Started By</th>
+                        <th>Start Time</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="event-history-table"></tbody>
+            </table>
         </div>
     </div>
 </div>
 
 <script>
-    let apiKey = '';
-    let autoRefresh = true;
+    // Authentication check - redirect to login if no API key stored
+    if (!localStorage.getItem('apiKey')) {
+        window.location.href = 'login.html';
+    }
 
-    function authenticate() {
-        const keyInput = document.getElementById('apiKey').value;
-        if (!keyInput) return alert('Please enter an API key.');
-        apiKey = keyInput;
-        document.getElementById('auth').style.display = 'none';
-        document.getElementById('dashboard').style.display = 'block';
-        fetchData();
-        setInterval(fetchData, 5000);
+    const API_KEY = localStorage.getItem('apiKey');
+    const API_URL = `/api`;
+
+    function toggleNavGroup(button) {
+        const items = button.nextElementSibling;
+        const isCollapsed = items.classList.contains('collapsed');
+        
+        if (isCollapsed) {
+            items.classList.remove('collapsed');
+            button.classList.add('expanded');
+            button.classList.remove('collapsed');
+        } else {
+            items.classList.add('collapsed');
+            button.classList.remove('expanded');
+            button.classList.add('collapsed');
+        }
+    }
+
+    function switchTab(name, button) {
+        // Hide all tabs
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        
+        // Show selected tab
+        const tabElement = document.getElementById(name);
+        if (tabElement) {
+            tabElement.classList.add('active');
+        }
+        
+        // Remove active from all buttons
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        
+        // Add active to clicked button
+        if (!button && event && event.currentTarget) {
+            button = event.currentTarget;
+        }
+        if (button && button.classList) {
+            button.classList.add('active');
+        }
+        
+        // Load tab-specific data
+        if (name === 'overview') updateOverview();
+        if (name === 'players') loadPlayers();
+        if (name === 'tickets') loadTickets();
+        if (name === 'moderation') loadBanned();
+        if (name === 'chat') startChatAutoRefresh();
+        if (name === 'whitelist') loadWhitelist();
+        if (name === 'mutes') loadMuted();
+        if (name === 'templates') loadTemplates();
+        if (name === 'worlds') loadWorlds();
+        if (name === 'plugins') loadPlugins();
+        if (name === 'gamerules') loadGameRules();
+        if (name === 'reports') loadReports();
+        if (name === 'map') initMap();
+        if (name === 'performance') loadPerformance();
+        if (name === 'blocklog') loadBlockLog();
+        if (name === 'reputation') loadReputation();
+        if (name === 'permissions') loadPermissions();
+        if (name === 'punishments') loadPunishments();
+        if (name === 'auditlog') loadAuditLog();
+        if (name === 'afk') loadAFKPlayers();
+        if (name === 'discord') loadDiscordSettings();
+        if (name === 'ranks') loadRanks();
+        if (name === 'player-analytics') loadPlayerAnalytics();
+        if (name === 'leaderboards') loadLeaderboards();
+        if (name === 'economy') loadEconomy();
+        if (name === 'warnings') loadWarnings();
+        if (name === 'bulk') loadBulkActionsHistory();
+        if (name === 'serverlogs') loadServerLogs();
+        if (name === 'appeals') loadAppeals();
+        if (name === 'announcements') loadAnnouncements();
+        if (name === 'backups') loadBackups();
+        if (name === 'scheduler') loadScheduledCommands();
+        if (name === 'maintenance') loadMaintenanceMode();
+        if (name === 'landc-claims') loadLandClaims();
+        if (name === 'roleplay') loadRoleplayCommands();
+        if (name === 'voterewards') loadVoteRewards();
     }
 
     function logout() {
-        apiKey = '';
-        document.getElementById('auth').style.display = 'block';
-        document.getElementById('dashboard').style.display = 'none';
-        document.getElementById('apiKey').value = '';
-        alert('Logged out.');
+        localStorage.removeItem('apiKey');
+        window.location.href = 'login.html';
     }
 
-    function showTab(tabName) {
-        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-        document.getElementById(tabName).classList.add('active');
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
-    }
-
-    async function fetchData() {
-        if (!apiKey) return;
+    async function apiCall(endpoint, method = 'GET', params = null) {
+        const url = (method === 'GET' && params) ? `${API_URL}${endpoint}?${new URLSearchParams(params).toString()}` : `${API_URL}${endpoint}`;
+        const options = {
+            method,
+            headers: { 'Authorization': `Bearer ${API_KEY}` }
+        };
+        
+        // For POST/PUT requests, send params as JSON body
+        if ((method === 'POST' || method === 'PUT') && params) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(params);
+        }
+        
         try {
-            // Fetch Players
-            const pRes = await fetch('/api/players', { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (pRes.status === 401) return logout();
-            const data = await pRes.json();
-            const playerList = data.players || [];
-
-            // Update Overview Stats
-            document.getElementById('stat-players').textContent = playerList.length;
-            document.getElementById('stat-tps').textContent = data.tps.toFixed(1);
-            document.getElementById('stat-mem').textContent = data.percentMem + '%';
-            
-            const punished = playerList.filter(p => p.punished).length;
-            document.getElementById('stat-punished').textContent = punished;
-
-            // Update Player List
-            const pListEl = document.querySelector('#player-list ul');
-            pListEl.innerHTML = '';
-            playerList.forEach(p => {
-                const li = document.createElement('li');
-                const warned = p.warnings > 0;
-                li.className = 'player-item';
-                li.innerHTML = `
-                    <div class="player-header">
-                        <div>
-                            <b>${p.name}</b>
-                            <span class="status-online">●</span>
-                            ${p.punished ? '<span class="badge punished">PUNISHED</span>' : ''}
-                            ${warned ? '<span class="badge warned">' + p.warnings + ' WARNING(S)</span>' : ''}
-                        </div>
-                    </div>
-                    <div class="player-info">❤️ ${p.health}/20 | 📍 ${p.world} (${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)})</div>
-                    <div class="player-actions">
-                        <button class="sm danger" onclick="doAction('kick', '${p.name}', 'Kicked by web admin')">Kick</button>
-                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '1h')">1h</button>
-                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '3h')">3h</button>
-                        <button class="sm warn" onclick="doAction('punish', '${p.name}', '24h')">24h</button>
-                        ${p.punished ? '<button class="sm success" onclick="doAction(\'unpunish\', \'' + p.name + '\', \'\')">Unpunish</button>' : ''}
-                        <button class="sm" onclick="doAction('heal', '${p.name}', '')">Heal</button>
-                    </div>
-                `;
-                pListEl.appendChild(li);
-            });
-
-            // Fetch Tickets
-            const tRes = await fetch('/api/tickets', { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            const tickets = await tRes.json();
-            const tListEl = document.querySelector('#ticket-list ul');
-            tListEl.innerHTML = '';
-            tickets.forEach(t => {
-                const li = document.createElement('li');
-                li.className = 'ticket-item';
-                li.innerHTML = `
-                    <div class="ticket-header">
-                        <div><b>#${t.id}</b> by <b>${t.player}</b></div>
-                        <button class="sm" onclick="closeTicket('${t.id}')">Close</button>
-                    </div>
-                    <div class="ticket-message">"${t.message}"</div>
-                    <small>${t.time}</small>
-                `;
-                tListEl.appendChild(li);
-            });
-
-        } catch (e) { console.error(e); }
+            const response = await fetch(url, options);
+            return await response.json();
+        } catch (e) {
+            console.error('API Error:', e);
+            return null;
+        }
     }
 
-    async function doAction(action, player, value = '') {
-        if (!apiKey) return;
-        try {
-            const url = `/api/actions/${action}?player=${encodeURIComponent(player || '')}&value=${encodeURIComponent(value)}`;
-            const res = await fetch(url, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (res.status === 401) return logout();
-            alert(action.toUpperCase() + ': OK');
-            fetchData();
-        } catch (e) { console.error(e); }
+    async function updateOverview() {
+        const response = await apiCall('/players');
+        const players = response && response.players ? response.players : [];
+        const tickets = await apiCall('/tickets');
+        const muted = await apiCall('/muted');
+        
+        let punished = 0;
+        if (players && players.length > 0) {
+            updatePlayerDatalist(players.map(p => p.name));
+            players.forEach(p => { if (p.punished) punished++; });
+            document.getElementById('stat-players').textContent = players.length;
+        }
+        document.getElementById('stat-punished').textContent = punished;
+        document.getElementById('stat-tickets').textContent = tickets ? tickets.length : 0;
+        document.getElementById('stat-muted').textContent = muted ? muted.length : 0;
     }
 
-    async function sendBroadcast() {
-        const msg = document.getElementById('broadcastMsg').value;
-        if (!msg) return;
-        await doAction('broadcast', null, msg);
-        document.getElementById('broadcastMsg').value = '';
+    async function broadcast() {
+        const msg = document.getElementById('broadcast-msg').value;
+        if (!msg) return alert('Enter a message');
+        await apiCall('/actions/broadcast', 'POST', { message: msg });
+        document.getElementById('broadcast-msg').value = '';
+        alert('Broadcast sent!');
     }
 
-    async function closeTicket(id) {
-        if (!apiKey) return;
-        try {
-            const res = await fetch(`/api/ticket/close/${id}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (res.status === 401) return logout();
-            alert('Ticket closed');
-            fetchData();
-        } catch (e) { console.error(e); }
+    async function loadPlayers() {
+        const response = await apiCall('/players');
+        const players = response && response.players ? response.players : [];
+        const playerNames = players.map(p => p.name);
+        updatePlayerDatalist(playerNames);
+        const html = players.length > 0 ? players.map(p => `
+            <tr class="${p.punished ? 'punished' : ''}">
+                <td><img src="https://mc-heads.net/avatar/${p.name}/32" alt="${p.name}" style="width: 24px; height: 24px; border-radius: 3px; margin-right: 8px; vertical-align: middle; background: #444;"><span class="player-status"></span>${p.name}</td>
+                <td>${p.health}/20</td>
+                <td>${p.world} (${p.x}, ${p.y}, ${p.z})</td>
+                <td>${p.warnings || 0}</td>
+                <td>${p.playtime || 0} h</td>
+                <td>${p.punished ? '⏸️ Punished' : '✅ OK'}</td>
+                <td>
+                    <button onclick="kickPlayer('${p.name}')" style="padding: 4px 8px; font-size: 11px;">Kick</button>
+                    <button onclick="healPlayer('${p.name}')" style="padding: 4px 8px; font-size: 11px;">Heal</button>
+                </td>
+            </tr>
+        `).join('') : '<tr><td colspan="7">No players online</td></tr>';
+        document.getElementById('players-list').innerHTML = html;
     }
 
-    async function loadHistory() {
-        if (!apiKey) return;
-        try {
-            const res = await fetch('/api/history', { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (res.status === 401) return logout();
-            const history = await res.json();
-            const hListEl = document.querySelector('#history-list ul');
-            hListEl.innerHTML = '';
-            history.forEach(h => {
-                const li = document.createElement('li');
-                li.innerHTML = `<small>${h}</small>`;
-                hListEl.appendChild(li);
-            });
-        } catch (e) { console.error(e); }
-    }
-
-    async function loadChat() {
-        if (!apiKey) return;
-        try {
-            const res = await fetch('/api/chat', { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (res.status === 401) return logout();
-            const chat = await res.json();
-            const cListEl = document.querySelector('#chat-list ul');
-            cListEl.innerHTML = '';
-            chat.forEach(c => {
-                const li = document.createElement('li');
-                li.innerHTML = `<small><code>${c}</code></small>`;
-                cListEl.appendChild(li);
-            });
-        } catch (e) { console.error(e); }
-    }
-
-    async function loadNotes() {
-        const player = document.getElementById('notesPlayer').value;
-        if (!player || !apiKey) return;
-        try {
-            const res = await fetch(`/api/notes?player=${encodeURIComponent(player)}`, { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            const notes = await res.json();
-            const nListEl = document.querySelector('#notes-list ul');
-            nListEl.innerHTML = '';
-            notes.forEach(n => {
-                const li = document.createElement('li');
-                li.innerHTML = `<small>${n}</small>`;
-                nListEl.appendChild(li);
-            });
-        } catch (e) { console.error(e); }
-    }
-
-    async function addNote() {
-        const player = document.getElementById('notesPlayer').value;
-        const note = document.getElementById('notesText').value;
-        if (!player || !note) return;
-        await doAction('addnote', player, note);
-        document.getElementById('notesText').value = '';
-        loadNotes();
-    }
-
-    async function warnPlayer() {
-        const player = document.getElementById('warnPlayer').value;
-        const reason = document.getElementById('warnReason').value;
-        if (!player) return;
-        await doAction('warn', player, reason);
-        document.getElementById('warnReason').value = '';
-        loadWarnings();
-    }
-
-    async function loadWarnings() {
-        const player = document.getElementById('warnPlayer').value;
-        if (!player || !apiKey) return;
-        try {
-            const res = await fetch(`/api/warnings?player=${encodeURIComponent(player)}`, { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            const warnings = await res.json();
-            const wListEl = document.querySelector('#warnings-list ul');
-            wListEl.innerHTML = '';
-            warnings.forEach(w => {
-                const li = document.createElement('li');
-                li.innerHTML = `<small>⚠️ ${w}</small>`;
-                wListEl.appendChild(li);
-            });
-        } catch (e) { console.error(e); }
-    }
-
-    async function banPlayer() {
-        const player = document.getElementById('banPlayer').value;
-        const reason = document.getElementById('banReason').value;
-        if (!player) return;
-        await doAction('ban', player, reason);
-        document.getElementById('banReason').value = '';
-        loadBanned();
-    }
-
-    async function unbanPlayer() {
-        const player = document.getElementById('banPlayer').value;
-        if (!player) return;
-        await doAction('unban', player, 'Unbanned via web');
-        loadBanned();
-    }
-
-    async function loadBanned() {
-        if (!apiKey) return;
-        try {
-            const res = await fetch('/api/banned', { headers: { 'Authorization': 'Bearer ' + apiKey } });
-            const banned = await res.json();
-            const bListEl = document.querySelector('#banned-list ul');
-            bListEl.innerHTML = '';
-            banned.forEach(b => {
-                const li = document.createElement('li');
-                li.innerHTML = `<b>${b}</b> <button class="sm success" onclick="document.getElementById('banPlayer').value='${b}'; unbanPlayer()">Unban</button>`;
-                bListEl.appendChild(li);
-            });
-        } catch (e) { console.error(e); }
-    }
-
-    async function healPlayer() {
-        const player = document.getElementById('statusPlayer').value;
-        if (!player) return;
-        await doAction('heal', player, '');
-    }
-
-    async function kickPlayer() {
-        const player = document.getElementById('statusPlayer').value;
-        if (!player) return;
-        await doAction('kick', player, 'Kicked by web admin');
-    }
-
-    async function executeCommand() {
-        const cmd = document.getElementById('command').value;
-        if (!cmd || !apiKey) return;
-        try {
-            const res = await fetch(`/api/command?cmd=${encodeURIComponent(cmd)}`, { method: 'POST', headers: { 'Authorization': 'Bearer ' + apiKey } });
-            if (res.status === 401) return logout();
-            alert('Command executed');
-            document.getElementById('command').value = '';
-        } catch (e) { console.error(e); }
+    function updatePlayerDatalist(playerNames) {
+        const datalist = document.getElementById('players-datalist');
+        if (!datalist) {
+            console.error('Datalist element not found');
+            return;
+        }
+        if (!playerNames || playerNames.length === 0) {
+            console.warn('No player names to add to datalist');
+            return;
+        }
+        datalist.innerHTML = playerNames.map(name => `<option value="${name}">`).join('');
+        console.log('Updated datalist with players:', playerNames);
     }
 
     function filterPlayers() {
-        const search = document.getElementById('playerSearch').value.toLowerCase();
-        document.querySelectorAll('#player-list li').forEach(li => {
-            li.style.display = li.textContent.toLowerCase().includes(search) ? 'flex' : 'none';
+        const search = document.getElementById('player-search').value.toLowerCase();
+        document.querySelectorAll('#players-list tr').forEach(tr => {
+            tr.style.display = tr.textContent.toLowerCase().includes(search) ? '' : 'none';
         });
     }
-</script>
 
+    async function kickPlayer(player) {
+        await apiCall('/actions/kick', 'POST', { player });
+        loadPlayers();
+    }
+
+    async function healPlayer(player) {
+        await apiCall('/actions/heal', 'POST', { player });
+        loadPlayers();
+    }
+
+    async function loadTickets() {
+        const statusFilter = document.getElementById('ticket-status-filter')?.value || '';
+        const priorityFilter = document.getElementById('ticket-priority-filter')?.value || '';
+        const url = '/tickets' + (statusFilter || priorityFilter ? '?' + new URLSearchParams({
+            status: statusFilter, priority: priorityFilter
+        }) : '');
+        const tickets = await apiCall(url);
+        
+        const getPriorityColor = (p) => {
+            const colors = { critical: '#F44336', high: '#FF9800', medium: '#FFC107', low: '#4CAF50' };
+            return colors[p] || '#999';
+        };
+        
+        const getCategoryLabel = (c) => {
+            const labels = { bug: 'Bug', griefing: 'Griefing', chat: 'Chat', item_loss: 'Item Loss', pvp: 'PvP', other: 'Other' };
+            return labels[c] || 'Unknown';
+        };
+        
+        const getStatusBadge = (s) => {
+            const colors = { open: '#FF9800', in_progress: '#2196F3', resolved: '#4CAF50', closed: '#666' };
+            return `<span style="background: ${colors[s] || '#999'}; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${s}</span>`;
+        };
+
+        const html = tickets ? tickets.map(t => `
+            <tr onclick="openTicketModal(${t.id})" style="cursor: pointer;">
+                <td>${t.id}</td>
+                <td>${t.player}</td>
+                <td><span style="background: ${getPriorityColor(t.priority)}; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: white;">${t.priority}</span></td>
+                <td>${getCategoryLabel(t.category)}</td>
+                <td>${getStatusBadge(t.status)}</td>
+                <td>${t.message.substring(0, 40)}${t.message.length > 40 ? '...' : ''}</td>
+                <td>${t.time}</td>
+                <td onclick="event.stopPropagation();"><button onclick="closeTicket(${t.id})" style="padding: 4px 8px; font-size: 11px; background: #388e3c;">Close</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="8">No tickets</td></tr>';
+        document.getElementById('tickets-list').innerHTML = html;
+    }
+
+    async function openTicketModal(ticketId) {
+        const ticket = await apiCall(`/ticket/${ticketId}`);
+        if (!ticket) return alert('Ticket not found');
+        
+        document.getElementById('modal-ticket-id').textContent = `Ticket #${ticket.id}`;
+        document.getElementById('modal-player').textContent = ticket.player;
+        document.getElementById('modal-message').textContent = ticket.message;
+        document.getElementById('modal-status').value = ticket.status;
+        document.getElementById('modal-priority').value = ticket.priority;
+        document.getElementById('modal-category').value = ticket.category;
+        document.getElementById('modal-assignee').value = ticket.assignee || '';
+        document.getElementById('modal-resolution-reason').value = '';
+        
+        window.currentTicketId = ticketId;
+        
+        const responsesHtml = ticket.responses && Object.values(ticket.responses).length > 0 ?
+            Object.values(ticket.responses).map(r => `
+                <div style="background: #2a2a2a; padding: 8px; margin-bottom: 8px; border-left: 3px solid #2196F3; border-radius: 3px;">
+                    <strong>${r.admin}</strong> <span style="color: #999; font-size: 11px;">${r.timestamp}</span><br>
+                    <span style="color: #bbb;">${r.message}</span>
+                </div>
+            `).join('') :
+            '<p style="color: #999;">No responses yet</p>';
+        
+        document.getElementById('modal-responses').innerHTML = responsesHtml;
+        document.getElementById('modal-response-text').value = '';
+        
+        document.getElementById('ticket-modal').style.display = 'block';
+    }
+
+    async function updateTicketFields() {
+        const ticketId = window.currentTicketId;
+        const priority = document.getElementById('modal-priority').value;
+        const category = document.getElementById('modal-category').value;
+        const status = document.getElementById('modal-status').value;
+        const assignee = document.getElementById('modal-assignee').value;
+        
+        const params = new URLSearchParams({
+            priority, category, status, assignee
+        });
+        
+        await apiCall(`/ticket/${ticketId}?${params}`, 'PATCH');
+        loadTickets();
+    }
+
+    async function addTicketResponse() {
+        const ticketId = window.currentTicketId;
+        const message = document.getElementById('modal-response-text').value;
+        if (!message) return alert('Enter a response');
+        
+        const adminName = prompt('Your name?') || 'Admin';
+        const params = new URLSearchParams({
+            admin: adminName,
+            message: message
+        });
+        
+        await apiCall(`/ticket/${ticketId}/response?${params}`, 'POST');
+        document.getElementById('modal-response-text').value = '';
+        openTicketModal(ticketId);
+    }
+
+    async function resolveTicket() {
+        const ticketId = window.currentTicketId;
+        const reason = document.getElementById('modal-resolution-reason').value;
+        
+        if (!reason) return alert('Select a resolution reason');
+        
+        const params = new URLSearchParams({ reason });
+        await apiCall(`/ticket/${ticketId}/resolve?${params}`, 'POST');
+        document.getElementById('ticket-modal').style.display = 'none';
+        loadTickets();
+    }
+
+    async function closeTicket(id) {
+        await apiCall(`/ticket/close/${id}`, 'POST');
+        loadTickets();
+    }
+
+    async function addNote() {
+        const player = document.getElementById('note-player').value;
+        const text = document.getElementById('note-text').value;
+        if (!player || !text) return alert('Fill in all fields');
+        await apiCall('/actions/addnote', 'POST', { player, note: text });
+        document.getElementById('note-player').value = '';
+        document.getElementById('note-text').value = '';
+        alert('Note added!');
+    }
+
+    async function searchNotes() {
+        const player = document.getElementById('note-search-player').value;
+        if (!player) return;
+        const notes = await apiCall('/notes', 'GET', { player });
+        
+        const html = notes && notes.length > 0 ? notes.map(n => `
+            <div class="note-card" data-player="${player}" data-index="${n.index}" style="background: #2d2d30; padding: 15px; margin: 8px 0; border-radius: 4px; border-left: 4px solid #4ec9b0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#3a3a40'" onmouseout="this.style.background='#2d2d30';">
+                <p style="margin: 0; color: #4ec9b0; font-weight: bold;">Note #${n.index + 1}</p>
+                <p style="margin: 5px 0 0 0; color: #ccc;">${n.text}</p>
+                <p style="margin: 8px 0 0 0; color: #999; font-size: 12px;">Click to edit or delete</p>
+            </div>
+        `).join('') : '<p style="color: #999;">No notes found</p>';
+        document.getElementById('notes-display').innerHTML = html;
+        
+        // Add click handlers to note cards
+        document.querySelectorAll('.note-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const player = card.getAttribute('data-player');
+                const index = parseInt(card.getAttribute('data-index'));
+                openNoteModal(player, index);
+            });
+        });
+    }
+
+    async function openNoteModal(player, index) {
+        document.getElementById('modal-note-player').textContent = player;
+        
+        // Fetch the current note data
+        const notes = await apiCall('/notes', 'GET', { player });
+        if (!notes || !notes[index]) return alert('Note not found');
+        
+        const noteText = notes[index].text;
+        document.getElementById('modal-note-text').value = noteText;
+        
+        window.currentNotePlayer = player;
+        window.currentNoteIndex = index;
+        
+        document.getElementById('note-modal').style.display = 'block';
+    }
+
+    async function saveNoteEdit() {
+        const player = window.currentNotePlayer;
+        const index = window.currentNoteIndex;
+        const newText = document.getElementById('modal-note-text').value;
+        
+        if (!newText) return alert('Note cannot be empty');
+        
+        const params = new URLSearchParams({ text: newText });
+        await apiCall(`/note/${player}/${index}?${params}`, 'PATCH');
+        document.getElementById('note-modal').style.display = 'none';
+        searchNotes();
+    }
+
+    async function deleteNoteFromModal() {
+        const player = window.currentNotePlayer;
+        const index = window.currentNoteIndex;
+        
+        if (!confirm('Are you sure you want to delete this note?')) return;
+        
+        await apiCall(`/note/${player}/${index}`, 'DELETE');
+        document.getElementById('note-modal').style.display = 'none';
+        searchNotes();
+    }
+
+    async function loadHistory() {
+        const history = await apiCall('/history');
+        const html = history ? history.map(h => `
+            <tr>
+                <td>${h.timestamp}</td>
+                <td>${h.admin}</td>
+                <td>${h.action}</td>
+                <td>${h.target}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="4">No history</td></tr>';
+        document.getElementById('history-list').innerHTML = html;
+    }
+
+    async function refreshChat() {
+        const chat = await apiCall('/chat');
+        const html = (chat || []).map(c => `<div style="padding: 8px; border-bottom: 1px solid #444;"><span style="color: #999; font-size: 11px;">${c.timestamp || ''}</span> <strong style="color: #4ec9b0;">${c.player || 'Unknown'}:</strong> <span style="color: #ccc;">${c.message || ''}</span></div>`).join('');
+        const chatDisplay = document.getElementById('chat-display');
+        chatDisplay.innerHTML = html || '<div style="padding: 8px; color: #999;">No chat messages yet</div>';
+        chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    }
+
+    function startChatAutoRefresh() {
+        refreshChat();
+        setInterval(refreshChat, 3000);
+    }
+
+    async function banPlayer() {
+        const player = document.getElementById('mod-ban-player').value;
+        const reason = document.getElementById('mod-ban-reason').value;
+        if (!player) return alert('Enter player name');
+        await apiCall('/actions/ban', 'POST', { player, reason: reason || 'No reason' });
+        document.getElementById('mod-ban-player').value = '';
+        document.getElementById('mod-ban-reason').value = '';
+        alert('Player banned!');
+        loadBanned();
+    }
+
+    async function warnPlayer() {
+        const player = document.getElementById('mod-warn-player').value;
+        const reason = document.getElementById('mod-warn-reason').value;
+        if (!player) return alert('Enter player name');
+        await apiCall('/actions/warn', 'POST', { player, reason: reason || 'No reason' });
+        document.getElementById('mod-warn-player').value = '';
+        document.getElementById('mod-warn-reason').value = '';
+        alert('Player warned!');
+    }
+
+    async function punishPlayer(minutes) {
+        const player = document.getElementById(`mod-punish${minutes}m-player`).value;
+        if (!player) return alert('Enter player name');
+        await apiCall('/actions/punish', 'POST', { player, minutes });
+        document.getElementById(`mod-punish${minutes}m-player`).value = '';
+        alert('Player punished!');
+    }
+
+    async function loadBanned() {
+        const banned = await apiCall('/banned');
+        const html = banned ? banned.map(b => `
+            <tr>
+                <td>${b}</td>
+                <td>N/A</td>
+                <td><button onclick="unbanPlayer('${b}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unban</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="3">No banned players</td></tr>';
+        document.getElementById('banned-list').innerHTML = html;
+    }
+
+    async function unbanPlayer(player) {
+        await apiCall('/actions/unban', 'POST', { player });
+        loadBanned();
+    }
+
+    async function addToWhitelist() {
+        const player = document.getElementById('whitelist-player').value;
+        if (!player) return alert('Enter player name');
+        await apiCall('/whitelist/add', 'POST', { player });
+        document.getElementById('whitelist-player').value = '';
+        alert('Added to whitelist!');
+        loadWhitelist();
+    }
+
+    async function loadWhitelist() {
+        const whitelist = await apiCall('/whitelist');
+        const html = whitelist ? whitelist.map(p => `
+            <tr>
+                <td>${p}</td>
+                <td><button onclick="removeFromWhitelist('${p}')" style="padding: 4px 8px; font-size: 11px;" class="btn-danger">Remove</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="2">Whitelist empty</td></tr>';
+        document.getElementById('whitelist-list').innerHTML = html;
+    }
+
+    async function removeFromWhitelist(player) {
+        await apiCall('/whitelist/remove', 'POST', { player });
+        loadWhitelist();
+    }
+
+    async function mutePlayer() {
+        const player = document.getElementById('mute-player').value;
+        const reason = document.getElementById('mute-reason').value;
+        if (!player) return alert('Enter player name');
+        await apiCall('/mute', 'POST', { player, reason: reason || 'No reason' });
+        document.getElementById('mute-player').value = '';
+        document.getElementById('mute-reason').value = '';
+        alert('Player muted!');
+        loadMuted();
+    }
+
+    async function loadMuted() {
+        const muted = await apiCall('/muted');
+        const html = muted ? muted.map(m => {
+            const parts = m.split('|');
+            return `
+                <tr>
+                    <td>${parts[0] || 'Unknown'}</td>
+                    <td>${parts[1] || 'No reason'}</td>
+                    <td><button onclick="unmutePlayer('${parts[0]}')" style="padding: 4px 8px; font-size: 11px;" class="btn-success">Unmute</button></td>
+                </tr>
+            `;
+        }).join('') : '<tr><td colspan="3">No muted players</td></tr>';
+        document.getElementById('muted-list').innerHTML = html;
+    }
+
+    async function unmutePlayer(player) {
+        await apiCall('/unmute', 'POST', { player });
+        loadMuted();
+    }
+
+    async function searchIPs() {
+        const player = document.getElementById('ip-search-player').value;
+        if (!player) return alert('Enter player name');
+        const ips = await apiCall('/ips', 'GET', { player });
+        const html = ips && ips.length ? ips.map(ip => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${ip}</div>`).join('') : 'No IPs recorded';
+        document.getElementById('ips-display').innerHTML = html;
+    }
+
+    async function searchSessions() {
+        const player = document.getElementById('session-search-player').value;
+        if (!player) return alert('Enter player name');
+        const sessions = await apiCall('/sessions', 'GET', { player });
+        const html = sessions && sessions.length ? sessions.map(s => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${s}</div>`).join('') : 'No sessions found';
+        document.getElementById('sessions-display').innerHTML = html;
+    }
+
+    async function saveTemplate() {
+        const name = document.getElementById('template-name').value;
+        const content = document.getElementById('template-content').value;
+        if (!name || !content) return alert('Fill in all fields');
+        await apiCall('/template/save', 'POST', { name, content });
+        document.getElementById('template-name').value = '';
+        document.getElementById('template-content').value = '';
+        alert('Template saved!');
+        loadTemplates();
+    }
+
+    async function loadTemplates() {
+        const templates = await apiCall('/templates');
+        let html = '';
+        if (templates && Object.keys(templates).length > 0) {
+            html = Object.entries(templates).map(([name, content]) => `
+                <div style="background: #2d2d30; padding: 15px; margin: 10px 0; border-radius: 4px;">
+                    <h4>${name}</h4>
+                    <p>${content}</p>
+                </div>
+            `).join('');
+        } else {
+            html = 'No templates saved';
+        }
+        document.getElementById('templates-list').innerHTML = html;
+    }
+
+    async function loadWorlds() {
+        const worlds = await apiCall('/worlds');
+        const html = worlds ? worlds.map(w => `
+            <tr>
+                <td>${w.name}</td>
+                <td>${w.players}</td>
+                <td>${w.environment}</td>
+                <td>${w.difficulty}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="4">No worlds</td></tr>';
+        document.getElementById('worlds-list').innerHTML = html;
+    }
+
+    async function loadPlugins() {
+        const plugins = await apiCall('/plugins');
+        const html = plugins ? plugins.map(p => {
+            const parts = p.split(' v');
+            return `<tr><td>${parts[0]}</td><td>${parts[1] || 'Unknown'}</td></tr>`;
+        }).join('') : '<tr><td colspan="2">No plugins</td></tr>';
+        document.getElementById('plugins-list').innerHTML = html;
+    }
+
+    async function loadGameRules() {
+        const rules = await apiCall('/gamerules');
+        if (rules) {
+            document.getElementById('gamerule-pvp').textContent = rules.pvp ? '✅ Enabled' : '❌ Disabled';
+            document.getElementById('gamerule-difficulty').textContent = rules.difficulty || 'Unknown';
+        }
+    }
+
+    async function setGameRule(rule, value) {
+        await apiCall('/gamerule', 'POST', { rule, value });
+        loadGameRules();
+    }
+
+    async function executeBulkAction() {
+        const players = document.getElementById('bulk-players').value;
+        const action = document.getElementById('bulk-action').value;
+        const reason = document.getElementById('bulk-reason').value;
+        if (!players) return alert('Enter player list');
+        await apiCall('/bulk', 'POST', { players, action, reason: reason || 'Bulk action' });
+        alert('Bulk action executed!');
+    }
+
+    async function submitReport() {
+        const reporter = document.getElementById('report-reporter').value;
+        const reported = document.getElementById('report-reported').value;
+        const reason = document.getElementById('report-reason').value;
+        if (!reporter || !reported || !reason) return alert('Fill in all fields');
+        await apiCall('/report', 'POST', { reporter, reported, reason });
+        document.getElementById('report-reporter').value = '';
+        document.getElementById('report-reported').value = '';
+        document.getElementById('report-reason').value = '';
+        alert('Report submitted!');
+        loadReports();
+    }
+
+    async function loadReports() {
+        const reports = await apiCall('/reports');
+        const html = reports ? reports.map(r => `<div style="background: #2d2d30; padding: 10px; margin: 5px 0; border-radius: 4px;">${r}</div>`).join('') : 'No reports';
+        document.getElementById('reports-display').innerHTML = html;
+    }
+
+    async function scheduleRestart() {
+        const delay = document.getElementById('restart-delay').value;
+        if (!delay) return alert('Enter delay');
+        await apiCall('/restart', 'POST', { delay });
+        document.getElementById('restart-status').textContent = `Restart scheduled in ${delay} minutes!`;
+    }
+
+    async function triggerBackup() {
+        await apiCall('/backup', 'POST');
+        document.getElementById('backup-status').textContent = 'Backup triggered!';
+    }
+
+    async function executeCommand() {
+        const cmd = document.getElementById('console-cmd').value;
+        if (!cmd) return;
+        await apiCall('/command', 'POST', { command: cmd });
+        document.getElementById('console-cmd').value = '';
+        document.getElementById('console-output').innerHTML += `<div>&gt; ${cmd}</div>`;
+    }
+
+    // Auto-load overview on page load and refresh player datalist every 5 seconds
+    (async () => {
+        await updateOverview();
+        const response = await apiCall('/players');
+        if (response && response.players) {
+            updatePlayerDatalist(response.players.map(p => p.name));
+        }
+    })();
+    
+    // --- OVERVIEW MAP FUNCTIONS ---
+    let overviewMapCanvas, overviewMapCtx, overviewMapPlayers = [];
+    const overviewMapScale = 0.5; // pixels per block
+    
+    function initOverviewMap() {
+        overviewMapCanvas = document.getElementById('overview-map-canvas');
+        if (!overviewMapCanvas) return;
+        
+        overviewMapCtx = overviewMapCanvas.getContext('2d');
+        
+        // Get dimensions from the element's computed size
+        const rect = overviewMapCanvas.getBoundingClientRect();
+        const width = rect.width > 0 ? rect.width : 500;
+        const height = rect.height > 0 ? rect.height : 300;
+        
+        // Set canvas resolution (in pixels)
+        overviewMapCanvas.width = width;
+        overviewMapCanvas.height = height;
+        
+        drawOverviewMap();
+    }
+    
+    function drawOverviewMap() {
+        if (!overviewMapCanvas || !overviewMapCtx) return;
+        
+        // Clear canvas
+        overviewMapCtx.fillStyle = '#1a1a1a';
+        overviewMapCtx.fillRect(0, 0, overviewMapCanvas.width, overviewMapCanvas.height);
+        
+        if (overviewMapPlayers.length === 0) {
+            overviewMapCtx.fillStyle = '#666';
+            overviewMapCtx.font = '14px monospace';
+            overviewMapCtx.textAlign = 'center';
+            overviewMapCtx.fillText('No players online', overviewMapCanvas.width / 2, overviewMapCanvas.height / 2);
+            return;
+        }
+        
+        // Calculate bounds
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        overviewMapPlayers.forEach(p => {
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minZ = Math.min(minZ, p.z);
+            maxZ = Math.max(maxZ, p.z);
+        });
+        
+        // Add padding
+        const padding = 50;
+        const worldWidth = Math.max(maxX - minX, 100);
+        const worldHeight = Math.max(maxZ - minZ, 100);
+        const scaleX = (overviewMapCanvas.width - padding * 2) / worldWidth;
+        const scaleY = (overviewMapCanvas.height - padding * 2) / worldHeight;
+        const scale = Math.min(scaleX, scaleY);
+        
+        // Draw grid
+        overviewMapCtx.strokeStyle = 'rgba(62, 62, 66, 0.3)';
+        overviewMapCtx.lineWidth = 0.5;
+        const gridSpacing = 100 * scale;
+        for (let i = padding; i < overviewMapCanvas.width; i += gridSpacing) {
+            overviewMapCtx.beginPath();
+            overviewMapCtx.moveTo(i, 0);
+            overviewMapCtx.lineTo(i, overviewMapCanvas.height);
+            overviewMapCtx.stroke();
+        }
+        for (let i = padding; i < overviewMapCanvas.height; i += gridSpacing) {
+            overviewMapCtx.beginPath();
+            overviewMapCtx.moveTo(0, i);
+            overviewMapCtx.lineTo(overviewMapCanvas.width, i);
+            overviewMapCtx.stroke();
+        }
+        
+        // Draw players
+        overviewMapPlayers.forEach(p => {
+            const canvasX = padding + (p.x - minX) * scale;
+            const canvasY = padding + (p.z - minZ) * scale;
+            
+            // Player marker
+            const rankColor = (p.rank && p.rank.color) ? p.rank.color : '#0e639c';
+            overviewMapCtx.fillStyle = rankColor;
+            overviewMapCtx.beginPath();
+            overviewMapCtx.arc(canvasX, canvasY, 6, 0, Math.PI * 2);
+            overviewMapCtx.fill();
+            
+            // Player name
+            overviewMapCtx.fillStyle = '#4ec9b0';
+            overviewMapCtx.font = '10px monospace';
+            overviewMapCtx.textAlign = 'center';
+            overviewMapCtx.textBaseline = 'top';
+            overviewMapCtx.fillText(p.name, canvasX, canvasY + 10);
+        });
+    }
+    
+    // --- LIVE MAP FUNCTIONS ---
+    let mapCanvas, mapCtx, mapPlayers = [], mapZoom = 1, mapOffset = { x: 0, y: 0 }, mapRefreshInterval;
+    const mapScale = 1; // pixels per block at zoom 1x
+    const mapCenterX = () => mapCanvas.width / 2;
+    const mapCenterY = () => mapCanvas.height / 2;
+    let playerHeadCache = {};
+    let cachedWorldMap = null;
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let dragDistance = 0;
+
+    async function initMap() {
+        mapCanvas = document.getElementById('map-canvas');
+        mapCtx = mapCanvas.getContext('2d');
+        
+        // Set canvas to fill container
+        const container = mapCanvas.parentElement;
+        mapCanvas.width = container.clientWidth - 4;
+        mapCanvas.height = container.clientHeight - 90; // Account for controls
+        
+        // Make canvas fill remaining space
+        mapCanvas.style.width = '100%';
+        mapCanvas.style.height = (container.clientHeight - 90) + 'px';
+        
+        // Add mouse drag listeners
+        mapCanvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragDistance = 0;
+            dragStart.x = e.clientX;
+            dragStart.y = e.clientY;
+            mapCanvas.style.cursor = 'grabbing';
+        });
+        
+        mapCanvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) {
+                mapCanvas.style.cursor = 'grab';
+                return;
+            }
+            
+            const deltaX = e.clientX - dragStart.x;
+            const deltaY = e.clientY - dragStart.y;
+            dragDistance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            
+            // Update map offset (inverted so dragging right moves view left)
+            mapOffset.x -= deltaX / (mapZoom * mapScale);
+            mapOffset.y -= deltaY / (mapZoom * mapScale);
+            
+            dragStart.x = e.clientX;
+            dragStart.y = e.clientY;
+            
+            drawMap();
+        });
+        
+        mapCanvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            mapCanvas.style.cursor = 'grab';
+        });
+        
+        mapCanvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+        });
+        
+        // Setup world filter dropdown
+        const worldSelect = document.getElementById('map-world-filter');
+        worldSelect.innerHTML = '<option value="">All Worlds</option>';
+        
+        const response = await apiCall('/players');
+        if (response && response.players) {
+            const worlds = [...new Set(response.players.map(p => p.world))].sort();
+            worlds.forEach(w => {
+                const opt = document.createElement('option');
+                opt.value = w;
+                opt.textContent = w;
+                worldSelect.appendChild(opt);
+            });
+        }
+
+        // Clear old interval
+        if (mapRefreshInterval) clearInterval(mapRefreshInterval);
+        
+        // Initial map draw and auto-refresh
+        updateMap();
+        mapRefreshInterval = setInterval(updateMap, 1500);
+    }
+
+    async function updateMap() {
+        try {
+            const worldFilter = document.getElementById('map-world-filter')?.value || '';
+            const response = await apiCall('/players');
+            console.log('Players API response:', response);
+            
+            let players = response && response.players ? response.players : [];
+            console.log('All players:', players);
+            
+            if (worldFilter) {
+                players = players.filter(p => p.world === worldFilter);
+            }
+            mapPlayers = players;
+
+            // Update player count
+            document.getElementById('map-player-count').textContent = players.length;
+
+            // Populate player sidebar
+            const playerListHtml = players.length ? players.map(p => {
+                const rankColor = (p.rank && p.rank.color) ? p.rank.color : '#0e639c';
+                const rankName = (p.rank && p.rank.name) ? p.rank.name : 'Player';
+                return `
+                    <div onclick="centerOnPlayer('${p.name}', ${p.x}, ${p.z})" 
+                         style="padding: 12px; margin-bottom: 8px; background: #2d2d30; border-left: 4px solid ${rankColor}; cursor: pointer; border-radius: 3px; transition: all 0.2s; user-select: none;"
+                         onmouseover="this.style.background='#3e3e42'" onmouseout="this.style.background='#2d2d30'">
+                        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                            <div style="width: 32px; height: 32px; background: #3e3e42; border-radius: 3px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                                <img src="https://mc-heads.net/avatar/${p.name}/32" style="width: 32px; height: 32px; border-radius: 2px;" onerror="this.style.display='none'">
+                            </div>
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 600; color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.name}</div>
+                                <div style="font-size: 11px; color: #969696;">${rankName}</div>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: #969696; line-height: 1.3;">
+                            <div>📍 [${Math.round(p.x)}, ${Math.round(p.z)}]</div>
+                            <div>🌍 ${p.world}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('') : '<div style="padding: 12px; color: #969696; text-align: center; font-size: 12px;">No players online</div>';
+            
+            document.getElementById('map-players-list').innerHTML = playerListHtml;
+            document.getElementById('map-player-info').textContent = players.length + ' player' + (players.length !== 1 ? 's' : '');
+
+            // Determine which world to show map for
+            let mapWorld = worldFilter;
+            if (!mapWorld && players.length > 0) {
+                mapWorld = players[0].world; // Use first player's world
+            } else if (!mapWorld) {
+                mapWorld = 'world'; // Default to main world
+            }
+
+            // Fetch world map data (optional - don't block on failure)
+            try {
+                const mapData = await apiCall('/worldmap', 'GET', { 
+                    world: mapWorld, 
+                    x: Math.round(mapOffset.x), 
+                    z: Math.round(mapOffset.y), 
+                    size: 256 
+                });
+                if (mapData && !mapData.error) {
+                    cachedWorldMap = mapData;
+                    console.log('World map loaded for', mapWorld);
+                }
+            } catch (e) {
+                console.log('World map failed, continuing without it:', e);
+            }
+            
+            drawMap();
+        } catch (e) {
+            console.error('updateMap error:', e);
+            document.getElementById('map-players-list').innerHTML = '<div style="padding: 12px; color: #d32f2f;">Error loading players</div>';
+        }
+    }
+
+    function worldToCanvas(x, z) {
+        // Calculate distance from center
+        const canvasX = mapCenterX() + (x - mapOffset.x) * mapZoom * mapScale;
+        const canvasY = mapCenterY() + (z - mapOffset.y) * mapZoom * mapScale;
+        return { x: canvasX, y: canvasY };
+    }
+
+    function drawMap() {
+        if (!mapCanvas || !mapCtx) {
+            console.log('Canvas not initialized yet');
+            return;
+        }
+
+        // Clear canvas
+        mapCtx.fillStyle = '#1a1a1a';
+        mapCtx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+
+        // Draw world blocks if available
+        if (cachedWorldMap && cachedWorldMap.grid) {
+            const blockSize = 4 * mapZoom; // Block size scales with zoom
+            const grid = cachedWorldMap.grid;
+            
+            for (let row = 0; row < grid.length; row++) {
+                for (let col = 0; col < grid[row].length; col++) {
+                    const canvasX = (col - grid[row].length/2) * blockSize + mapCenterX();
+                    const canvasY = (row - grid.length/2) * blockSize + mapCenterY();
+                    
+                    if (canvasX > -blockSize && canvasX < mapCanvas.width && 
+                        canvasY > -blockSize && canvasY < mapCanvas.height) {
+                        mapCtx.fillStyle = grid[row][col];
+                        mapCtx.fillRect(canvasX, canvasY, blockSize, blockSize);
+                    }
+                }
+            }
+        }
+
+        // Draw grid overlay
+        const gridSpacing = 100 * mapZoom * mapScale;
+        mapCtx.strokeStyle = 'rgba(62, 62, 66, 0.4)';
+        mapCtx.lineWidth = 0.5;
+
+        for (let i = Math.floor(-mapCenterX() / gridSpacing) * gridSpacing; i < mapCanvas.width + gridSpacing; i += gridSpacing) {
+            mapCtx.beginPath();
+            mapCtx.moveTo(i, 0);
+            mapCtx.lineTo(i, mapCanvas.height);
+            mapCtx.stroke();
+        }
+
+        for (let i = Math.floor(-mapCenterY() / gridSpacing) * gridSpacing; i < mapCanvas.height + gridSpacing; i += gridSpacing) {
+            mapCtx.beginPath();
+            mapCtx.moveTo(0, i);
+            mapCtx.lineTo(mapCanvas.width, i);
+            mapCtx.stroke();
+        }
+
+        // Draw axis labels
+        mapCtx.fillStyle = '#969696';
+        mapCtx.font = '11px monospace';
+        mapCtx.textAlign = 'center';
+        mapCtx.fillText('X →', mapCanvas.width - 30, 15);
+        mapCtx.save();
+        mapCtx.translate(15, mapCanvas.height / 2);
+        mapCtx.rotate(-Math.PI / 2);
+        mapCtx.fillText('← Z', 0, 0);
+        mapCtx.restore();
+
+        // Draw players
+        if (mapPlayers.length === 0) {
+            console.log('No players to draw');
+            return;
+        }
+
+        mapPlayers.forEach(p => {
+            try {
+                const pos = worldToCanvas(p.x, p.z);
+
+                // Draw rank-colored marker circle
+                const rankColor = (p.rank && p.rank.color) ? p.rank.color : '#0e639c';
+                mapCtx.fillStyle = rankColor;
+                mapCtx.beginPath();
+                mapCtx.arc(pos.x, pos.y, 12, 0, Math.PI * 2);
+                mapCtx.fill();
+
+                // Try to load and draw player head
+                const headKey = p.name;
+                if (!playerHeadCache[headKey]) {
+                    playerHeadCache[headKey] = new Image();
+                    playerHeadCache[headKey].src = `https://mc-heads.net/avatar/${p.name}/32`;
+                }
+
+                const img = playerHeadCache[headKey];
+                if (img.complete && img.naturalHeight > 0) {
+                    const size = 20 * mapZoom;
+                    mapCtx.drawImage(img, pos.x - size/2, pos.y - size/2, size, size);
+                } else {
+                    // Fallback: draw initial
+                    mapCtx.fillStyle = '#e0e0e0';
+                    mapCtx.font = 'bold ' + Math.max(9, 12 * mapZoom) + 'px monospace';
+                    mapCtx.textAlign = 'center';
+                    mapCtx.textBaseline = 'middle';
+                    mapCtx.fillText(p.name.charAt(0).toUpperCase(), pos.x, pos.y);
+                }
+
+                // Draw player name
+                mapCtx.fillStyle = '#4ec9b0';
+                mapCtx.font = Math.max(10, 11 * mapZoom) + 'px monospace';
+                mapCtx.textAlign = 'center';
+                mapCtx.textBaseline = 'top';
+                mapCtx.fillText(p.name, pos.x, pos.y + 16 * mapZoom);
+            } catch (e) {
+                console.log('Error drawing player', p.name, e);
+            }
+        });
+
+        // Draw active event effects on top
+        drawActiveEventEffects();
+    }
+
+    function drawActiveEventEffects() {
+        if (!mapCanvas || !mapCtx) return;
+
+        for (const [eventName, isActive] of Object.entries(activeEffects)) {
+            if (!isActive) continue;
+
+            if (eventName === 'christmas') {
+                drawSnow(mapCtx, mapCanvas, eventName);
+            } else if (eventName === 'halloween') {
+                drawSpiders(mapCtx, mapCanvas, eventName);
+            } else if (eventName === 'newyear') {
+                drawFireworks(mapCtx, mapCanvas, eventName);
+            } else if (eventName === 'valentine') {
+                drawHearts(mapCtx, mapCanvas, eventName);
+            } else if (eventName === 'spring') {
+                drawPetals(mapCtx, mapCanvas, eventName);
+            } else if (eventName === 'summer') {
+                drawSunParticles(mapCtx, mapCanvas, eventName);
+            }
+        }
+    }
+
+    function centerMap() {
+        if (mapPlayers.length > 0) {
+            const avgX = mapPlayers.reduce((a, p) => a + p.x, 0) / mapPlayers.length;
+            const avgZ = mapPlayers.reduce((a, p) => a + p.z, 0) / mapPlayers.length;
+            mapOffset.x = avgX;
+            mapOffset.y = avgZ;
+            updateMap();
+        }
+    }
+
+    function centerOnPlayer(playerName, x, z) {
+        // Ignore click if user was dragging the map
+        if (dragDistance > 5) {
+            dragDistance = 0;
+            return;
+        }
+        mapOffset.x = x;
+        mapOffset.y = z;
+        drawMap();
+    }
+
+    function zoomMap(factor) {
+        mapZoom *= factor;
+        mapZoom = Math.max(0.5, Math.min(4, mapZoom)); // Clamp between 0.5x and 4x
+        document.getElementById('zoom-display').textContent = mapZoom.toFixed(1) + 'x';
+        drawMap();
+    }
+
+    function toggleMapSidebar() {
+        const sidebar = document.getElementById('map-sidebar');
+        const currentTransform = sidebar.style.transform || 'translateX(0)';
+        const isVisible = currentTransform === 'translateX(0)' || currentTransform === '';
+        sidebar.style.transform = isVisible ? 'translateX(100%)' : 'translateX(0)';
+    }
+    
+    setInterval(updateOverview, 30000);
+    setInterval(() => {
+        (async () => {
+            const response = await apiCall('/players');
+            if (response && response.players && response.players.length > 0) {
+                updatePlayerDatalist(response.players.map(p => p.name));
+            }
+        })();
+    }, 5000);
+
+    // --- NEW FEATURES ---
+
+    async function loadPerformance() {
+        const perf = await apiCall('/performance');
+        if (perf) {
+            document.getElementById('stat-tps').textContent = (perf.tps || 20).toFixed(1);
+            document.getElementById('stat-memory').textContent = (perf.memory || 0) + '%';
+            document.getElementById('stat-playercount').textContent = perf.playercount || 0;
+            const hours = Math.floor(perf.uptime / 3600);
+            const mins = Math.floor((perf.uptime % 3600) / 60);
+            document.getElementById('stat-uptime').textContent = hours + 'h ' + mins + 'm';
+            
+            const joinHtml = perf.joinHistory ? perf.joinHistory.map(j => 
+                `<div style="padding: 8px; border-bottom: 1px solid #444;"><strong>${j.player}</strong> joined at ${j.time}</div>`
+            ).join('') : '<div style="color: #999;">No join history</div>';
+            document.getElementById('join-history').innerHTML = joinHtml;
+        }
+    }
+
+    async function loadBlockLog() {
+        const player = document.getElementById('blocklog-player').value;
+        const block = document.getElementById('blocklog-block').value;
+        const logs = await apiCall('/blocklog', 'GET', { player, block });
+        
+        const html = logs && logs.length ? logs.map(l => `
+            <tr>
+                <td>${l.time}</td>
+                <td>${l.player}</td>
+                <td>${l.action}</td>
+                <td>${l.block}</td>
+                <td>[${Math.round(l.x)}, ${Math.round(l.y)}, ${Math.round(l.z)}]</td>
+            </tr>
+        `).join('') : '<tr><td colspan="5">No block changes logged</td></tr>';
+        document.getElementById('blocklog-list').innerHTML = html;
+    }
+
+    async function loadReputation() {
+        const players = await apiCall('/reputation');
+        const html = players && players.length ? players.map(p => `
+            <tr>
+                <td>${p.name}</td>
+                <td><span style="color: ${p.score >= 0 ? '#4ec9b0' : '#d32f2f'};">${p.score}</span></td>
+                <td>${p.warnings || 0}</td>
+                <td>${p.bans || 0}</td>
+                <td>${p.score >= 50 ? '✅ Good' : (p.score <= -50 ? '❌ Bad' : '⚠️ Neutral')}</td>
+                <td><button onclick="viewPlayerReputation('${p.name}')" style="padding: 4px 8px; font-size: 11px;">View</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="6">No reputation data</td></tr>';
+        document.getElementById('reputation-list').innerHTML = html;
+    }
+
+    function searchReputation() {
+        const search = document.getElementById('reputation-search').value.toLowerCase();
+        document.querySelectorAll('#reputation-list tr').forEach(tr => {
+            tr.style.display = tr.textContent.toLowerCase().includes(search) ? '' : 'none';
+        });
+    }
+
+    async function loadPermissions() {
+        const groups = await apiCall('/groups');
+        const html = groups && groups.length ? groups.map(g => `
+            <tr>
+                <td>${g.name}</td>
+                <td>${g.members || 0}</td>
+                <td>${g.permissions ? g.permissions.join(', ') : 'None'}</td>
+                <td><button onclick="editGroup('${g.name}')" style="padding: 4px 8px; font-size: 11px;">Edit</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="4">No groups created</td></tr>';
+        document.getElementById('groups-list').innerHTML = html;
+        
+        // Load group select
+        if (groups && groups.length > 0) {
+            const selectHtml = groups.map(g => `<option value="${g.name}">${g.name}</option>`).join('');
+            document.getElementById('group-select').innerHTML = '<option value="">Select Group</option>' + selectHtml;
+        }
+    }
+
+    async function createGroup() {
+        const name = document.getElementById('group-name').value;
+        if (!name) return alert('Enter group name');
+        await apiCall('/group/create', 'POST', { name });
+        document.getElementById('group-name').value = '';
+        alert('Group created!');
+        loadPermissions();
+    }
+
+    async function assignPlayerToGroup() {
+        const player = document.getElementById('player-group-assign').value;
+        const group = document.getElementById('group-select').value;
+        if (!player || !group) return alert('Select player and group');
+        await apiCall('/group/assign', 'POST', { player, group });
+        alert('Player assigned!');
+        loadPermissions();
+    }
+
+    async function loadPunishments() {
+        const punishments = await apiCall('/punishments');
+        const html = punishments && punishments.length ? punishments.map(p => `
+            <tr>
+                <td>${p.player}</td>
+                <td>${p.duration} min</td>
+                <td>${p.reason}</td>
+                <td>${p.endsAt}</td>
+                <td><button onclick="removePunishment('${p.player}')" style="padding: 4px 8px; font-size: 11px; background: #d32f2f;">Remove</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="5">No active punishments</td></tr>';
+        document.getElementById('active-punishments').innerHTML = html;
+    }
+
+    async function createCustomPunishment() {
+        const player = document.getElementById('punish-player').value;
+        const duration = document.getElementById('punish-duration').value;
+        const reason = document.getElementById('punish-reason').value;
+        if (!player || !duration) return alert('Fill in all fields');
+        await apiCall('/punishments/create', 'POST', { player, duration, reason });
+        document.getElementById('punish-player').value = '';
+        document.getElementById('punish-duration').value = '30';
+        document.getElementById('punish-reason').value = '';
+        alert('Punishment created!');
+        loadPunishments();
+    }
+
+    async function removePunishment(player) {
+        if (!confirm('Remove this punishment?')) return;
+        await apiCall('/punishments/remove', 'POST', { player });
+        loadPunishments();
+    }
+
+    async function loadAFKPlayers() {
+        const players = await apiCall('/afk');
+        const html = players && players.length ? players.map(p => `
+            <tr>
+                <td>${p.name}</td>
+                <td>${p.idleTime} min</td>
+                <td>${p.lastAction}</td>
+                <td><button onclick="kickAFKPlayer('${p.name}')" style="padding: 4px 8px; font-size: 11px; background: #ff9800;">Kick</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="4">No AFK players</td></tr>';
+        document.getElementById('afk-list').innerHTML = html;
+    }
+
+    async function kickAFKPlayer(player) {
+        if (!confirm('Kick ' + player + '?')) return;
+        await apiCall('/actions/kick', 'POST', { player, reason: 'AFK' });
+        alert('Player kicked!');
+        loadAFKPlayers();
+    }
+
+    async function saveAFKSettings() {
+        const timeout = document.getElementById('afk-timeout').value;
+        await apiCall('/afk/settings', 'POST', { timeout });
+        alert('AFK settings saved!');
+    }
+
+    async function executeAdvancedSearch() {
+        const params = {
+            name: document.getElementById('search-name').value,
+            playtimeMin: document.getElementById('search-playtime-min').value || 0,
+            playtimeMax: document.getElementById('search-playtime-max').value || 999999,
+            warnings: document.getElementById('search-warnings').value || 0,
+            banned: document.getElementById('search-banned').value || ''
+        };
+        
+        const results = await apiCall('/search', 'GET', params);
+        const html = results && results.length ? results.map(p => `
+            <tr>
+                <td>${p.name}</td>
+                <td>${(p.playtime || 0).toFixed(1)}h</td>
+                <td>${p.warnings || 0}</td>
+                <td>${p.reputation || 0}</td>
+                <td>${p.banned ? '🚫 Banned' : '✅ OK'}</td>
+            </tr>
+        `).join('') : '<tr><td colspan="5">No results found</td></tr>';
+        document.getElementById('search-results').innerHTML = html;
+    }
+
+    async function loadDiscordSettings() {
+        const settings = await apiCall('/discord');
+        if (settings) {
+            // Webhooks
+            document.getElementById('discord-webhook').value = settings.webhook || '';
+            document.getElementById('webhook-ban').value = settings.webhook_ban || '';
+            document.getElementById('webhook-warn').value = settings.webhook_warn || '';
+            document.getElementById('webhook-report').value = settings.webhook_report || '';
+            
+            // Event toggles
+            document.getElementById('discord-bans').checked = settings.bans !== false;
+            document.getElementById('discord-warns').checked = settings.warns !== false;
+            document.getElementById('discord-reports').checked = settings.reports !== false;
+            document.getElementById('discord-joins').checked = settings.joins !== false;
+            document.getElementById('discord-leaves').checked = settings.leaves !== false;
+            
+            // New features
+            document.getElementById('discord-deaths').checked = settings.deaths === true;
+            document.getElementById('discord-block_logging').checked = settings.block_logging === true;
+            document.getElementById('discord-container_logging').checked = settings.container_logging === true;
+            document.getElementById('discord-command_logging').checked = settings.command_logging === true;
+            document.getElementById('discord-milestone_alerts').checked = settings.milestone_alerts === true;
+            document.getElementById('discord-performance_alerts').checked = settings.performance_alerts === true;
+            document.getElementById('discord-health_check').checked = settings.health_check === true;
+            document.getElementById('discord-daily_summary').checked = settings.daily_summary === true;
+            
+            // Statistics
+            document.getElementById('stat-webhooks-sent').textContent = settings.webhooks_sent || 0;
+            document.getElementById('stat-webhooks-failed').textContent = settings.webhooks_failed || 0;
+            document.getElementById('stat-joins-today').textContent = settings.joins_today || 0;
+            document.getElementById('stat-leaves-today').textContent = settings.leaves_today || 0;
+            document.getElementById('stat-bans-today').textContent = settings.bans_today || 0;
+            document.getElementById('stat-warns-today').textContent = settings.warns_today || 0;
+            document.getElementById('stat-reports-today').textContent = settings.reports_today || 0;
+        }
+    }
+
+    async function saveDiscordSettings() {
+        const params = new URLSearchParams({
+            webhook_ban: document.getElementById('webhook-ban').value,
+            webhook_warn: document.getElementById('webhook-warn').value,
+            webhook_report: document.getElementById('webhook-report').value,
+            bans: document.getElementById('discord-bans').checked,
+            warns: document.getElementById('discord-warns').checked,
+            reports: document.getElementById('discord-reports').checked,
+            joins: document.getElementById('discord-joins').checked,
+            leaves: document.getElementById('discord-leaves').checked,
+            deaths: document.getElementById('discord-deaths').checked,
+            block_logging: document.getElementById('discord-block_logging').checked,
+            container_logging: document.getElementById('discord-container_logging').checked,
+            command_logging: document.getElementById('discord-command_logging').checked,
+            milestone_alerts: document.getElementById('discord-milestone_alerts').checked,
+            performance_alerts: document.getElementById('discord-performance_alerts').checked,
+            health_check: document.getElementById('discord-health_check').checked,
+            daily_summary: document.getElementById('discord-daily_summary').checked
+        });
+        
+        const response = await fetch('/api/discord?Authorization=Bearer ' + API_KEY + '&' + params.toString(), {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API_KEY }
+        });
+        
+        if (response.ok) {
+            document.getElementById('discord-status').innerHTML = '<span style="color: #4ec9b0;">✅ All settings saved successfully!</span>';
+            setTimeout(() => loadDiscordSettings(), 500);
+        } else {
+            document.getElementById('discord-status').innerHTML = '<span style="color: #d32f2f;">❌ Failed to save settings</span>';
+        }
+    }
+
+    async function testDiscordWebhook() {
+        const webhook = document.getElementById('discord-webhook').value;
+        if (!webhook) return alert('Enter webhook URL');
+        const result = await apiCall('/discord/test', 'POST', { webhook });
+        if (result.success) {
+            document.getElementById('discord-status').innerHTML = '<span style="color: #4ec9b0;">✅ Webhook working! Check Discord.</span>';
+        } else {
+            document.getElementById('discord-status').innerHTML = '<span style="color: #d32f2f;">❌ Webhook test failed: ' + (result.error || 'Unknown error') + '</span>';
+        }
+    }
+
+    async function viewPlayerReputation(player) {
+        const rep = await apiCall('/reputation', 'GET', { player });
+        if (rep) {
+            alert(`${player} Reputation\nScore: ${rep.score}\nWarnings: ${rep.warnings}\nBans: ${rep.bans}`);
+        }
+    }
+
+    async function editGroup(name) {
+        const newPerms = prompt('Permissions (comma-separated):', '');
+        if (newPerms !== null) {
+            await apiCall('/group/update', 'POST', { name, permissions: newPerms });
+            loadPermissions();
+        }
+    }
+
+    // RANKS FUNCTIONS
+    async function loadRanks() {
+        console.log('Loading ranks...');
+        const ranks = await apiCall('/ranks');
+        const players = await apiCall('/allplayers');
+        
+        console.log('Ranks response:', ranks);
+        console.log('All players response:', players);
+        
+        if (ranks && ranks.ranks && players && players.players) {
+            // Update datalist with all player names
+            updatePlayerDatalist(players.players.map(p => p.name));
+            
+            // Load ranks list
+            let ranksHtml = '';
+            for (let rank of (ranks.ranks || [])) {
+                const memberCount = (players.players || []).filter(p => p.rank === rank.name).length;
+                ranksHtml += `
+                    <tr>
+                        <td><span style="background: ${rank.color}; padding: 4px 8px; border-radius: 3px; color: white; font-weight: bold;">${rank.name}</span></td>
+                        <td>${rank.level}</td>
+                        <td><div style="background: ${rank.color}; width: 40px; height: 25px; border-radius: 3px; display: inline-block;"></div></td>
+                        <td>${memberCount}</td>
+                        <td>${rank.description || '-'}</td>
+                        <td>
+                            <button onclick="editRank('${rank.name}')" class="btn-small" style="padding: 5px 10px; font-size: 11px;">Edit</button>
+                            <button onclick="deleteRank('${rank.name}')" class="btn-danger" style="padding: 5px 10px; font-size: 11px; background: #d32f2f;">Delete</button>
+                        </td>
+                    </tr>
+                `;
+            }
+            document.getElementById('ranks-list').innerHTML = ranksHtml || '<tr><td colspan="6" style="text-align: center; padding: 20px;">No ranks created yet</td></tr>';
+            
+            // Load player ranks
+            let playerRanksHtml = '';
+            const playersList = (players && players.players) ? players.players : [];
+            for (let player of playersList) {
+                if (player.rank) {
+                    const rank = (ranks.ranks || []).find(r => r.name === player.rank);
+                    playerRanksHtml += `
+                        <tr>
+                            <td>${player.name}</td>
+                            <td><span style="background: ${rank ? rank.color : '#888'}; padding: 4px 8px; border-radius: 3px; color: white; font-weight: bold;">${player.rank}</span></td>
+                            <td>${rank ? rank.level : '-'}</td>
+                            <td>${player.promotedBy || '-'}</td>
+                            <td>${player.promotionDate ? new Date(player.promotionDate).toLocaleDateString() : '-'}</td>
+                            <td>
+                                <button onclick="demotePlayerFromTable('${player.name}')" class="btn-danger" style="padding: 5px 10px; font-size: 11px;">Remove Rank</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+            }
+            document.getElementById('player-ranks-list').innerHTML = playerRanksHtml || '<tr><td colspan="6" style="text-align: center; padding: 20px;">No players assigned to ranks</td></tr>';
+            
+            // Populate rank select dropdowns
+            let selectHtml = '<option value="">Select Rank</option>';
+            for (let rank of (ranks.ranks || []).sort((a, b) => b.level - a.level)) {
+                selectHtml += `<option value="${rank.name}">${rank.name} (Level ${rank.level})</option>`;
+            }
+            document.getElementById('new-rank-select').innerHTML = selectHtml;
+        } else {
+            console.error('Failed to load ranks:', { ranks, players });
+            document.getElementById('ranks-list').innerHTML = '<tr><td colspan="6" style="text-align: center; color: #d32f2f; padding: 20px;">Failed to load ranks. Check console.</td></tr>';
+        }
+    }
+
+    async function createRank() {
+        const name = document.getElementById('rank-name').value;
+        const color = document.getElementById('rank-color').value;
+        const level = document.getElementById('rank-level').value;
+        const description = document.getElementById('rank-description').value;
+        
+        if (!name) return alert('Rank name is required');
+        
+        console.log('Creating rank:', { name, color, level, description });
+        const result = await apiCall('/ranks/create', 'POST', {
+            name, color, level, description
+        });
+        
+        console.log('Create rank response:', result);
+        if (result && result.status) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #4ec9b0;">✅ Rank created successfully!</span>';
+            document.getElementById('rank-name').value = '';
+            document.getElementById('rank-color').value = '#4ec9b0';
+            document.getElementById('rank-level').value = '1';
+            document.getElementById('rank-description').value = '';
+            await loadRanks();
+        } else {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Failed to create rank. Check console.</span>';
+        }
+    }
+
+    async function editRank(rankName) {
+        const newDescription = prompt('Edit rank description:', '');
+        if (newDescription !== null) {
+            const result = await apiCall('/ranks/update', 'POST', { name: rankName, description: newDescription });
+            console.log('Edit rank response:', result);
+            if (result && result.status) {
+                loadRanks();
+            }
+        }
+    }
+
+    async function deleteRank(rankName) {
+        if (!confirm(`Delete rank "${rankName}"? This will remove the rank from all players.`)) return;
+        const result = await apiCall('/ranks/delete', 'POST', { name: rankName });
+        console.log('Delete rank response:', result);
+        if (result && result.status) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #4ec9b0;">✅ Rank deleted!</span>';
+            loadRanks();
+        }
+    }
+
+    async function promotePlayer() {
+        let playerName = document.getElementById('player-rank-input').value.trim();
+        const rankName = document.getElementById('new-rank-select').value;
+        const reason = document.getElementById('promotion-reason').value;
+        
+        if (!playerName || !rankName) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Please select both player and rank</span>';
+            return;
+        }
+        
+        // Validate player exists
+        const players = await apiCall('/allplayers');
+        const playerExists = players && players.players && players.players.some(p => p.name.toLowerCase() === playerName.toLowerCase());
+        
+        if (!playerExists) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Player not found: ' + playerName + '</span>';
+            return;
+        }
+        
+        // Use exact case from player list
+        if (players && players.players) {
+            const exactPlayer = players.players.find(p => p.name.toLowerCase() === playerName.toLowerCase());
+            if (exactPlayer) playerName = exactPlayer.name;
+        }
+        
+        console.log('Promoting player:', { playerName, rankName, reason });
+        const result = await apiCall('/ranks/promote', 'POST', {
+            player: playerName,
+            rank: rankName,
+            reason: reason || 'Promotion granted'
+        });
+        
+        console.log('Promote response:', result);
+        if (result && result.status) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #4ec9b0;">✅ Player ' + playerName + ' promoted to ' + rankName + '!</span>';
+            document.getElementById('player-rank-input').value = '';
+            document.getElementById('promotion-reason').value = '';
+            await loadRanks();
+        } else {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Failed to promote player.</span>';
+        }
+    }
+
+    async function demotePlayer() {
+        let playerName = document.getElementById('player-rank-input').value.trim();
+        if (!playerName) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Please select a player</span>';
+            return;
+        }
+        
+        // Validate player exists
+        const players = await apiCall('/allplayers');
+        const playerExists = players && players.players && players.players.some(p => p.name.toLowerCase() === playerName.toLowerCase());
+        
+        if (!playerExists) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Player not found: ' + playerName + '</span>';
+            return;
+        }
+        
+        // Use exact case from player list
+        if (players && players.players) {
+            const exactPlayer = players.players.find(p => p.name.toLowerCase() === playerName.toLowerCase());
+            if (exactPlayer) playerName = exactPlayer.name;
+        }
+        
+        console.log('Demoting player:', playerName);
+        const result = await apiCall('/ranks/demote', 'POST', { player: playerName });
+        console.log('Demote response:', result);
+        
+        if (result && result.status) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #4ec9b0;">✅ Player ' + playerName + ' rank removed!</span>';
+            document.getElementById('player-rank-input').value = '';
+            await loadRanks();
+        } else {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #d32f2f;">❌ Failed to demote player.</span>';
+        }
+    }
+
+    async function demotePlayerFromTable(playerName) {
+        if (!confirm(`Remove rank from ${playerName}?`)) return;
+        const result = await apiCall('/ranks/demote', 'POST', { player: playerName });
+        console.log('Demote response:', result);
+        if (result && result.status) {
+            document.getElementById('ranks-status').innerHTML = '<span style="color: #4ec9b0;">✅ Rank removed!</span>';
+            await loadRanks();
+        }
+    }
+
+    function filterPlayerRanks() {
+        const filter = document.getElementById('search-player-rank').value.toLowerCase();
+        const rows = document.querySelectorAll('#player-ranks-list tr');
+        rows.forEach(row => {
+            const playerName = row.cells[0].textContent.toLowerCase();
+            row.style.display = playerName.includes(filter) ? '' : 'none';
+        });
+    }
+
+    // ===== NEW FEATURES STUB FUNCTIONS =====
+
+    async function loadPlayerAnalytics() {
+        try {
+            const response = await apiCall('/analytics/players');
+            const analytics = response && response.analytics ? response.analytics : [];
+            const html = analytics.length ? analytics.map(p => `
+                <tr>
+                    <td>${p.player}</td>
+                    <td>${p.playtimeHours}h</td>
+                    <td>${p.sessions}</td>
+                    <td>${p.lastSeen ? new Date(p.lastSeen).toLocaleDateString() : 'Never'}</td>
+                </tr>
+            `).join('') : '<tr><td colspan="4">No analytics data yet</td></tr>';
+            document.getElementById('analytics-table').innerHTML = html;
+            
+            if (analytics.length > 0) {
+                const avgPlaytime = (analytics.reduce((sum, p) => sum + p.playtimeHours, 0) / analytics.length).toFixed(1);
+                const mostActive = analytics[0];
+                document.getElementById('analytics-total-players').textContent = analytics.length;
+                document.getElementById('analytics-avg-session').textContent = avgPlaytime + 'h';
+                document.getElementById('analytics-most-active').textContent = mostActive.player;
+            }
+        } catch (e) {
+            console.error('Error loading analytics:', e);
+            document.getElementById('analytics-status').innerHTML = '<span style="color: #d32f2f;">Error loading analytics</span>';
+        }
+    }
+
+    async function loadLeaderboards() {
+        try {
+            const response = await apiCall('/leaderboards');
+            const playtimeLeaders = response && response.playtime ? response.playtime : [];
+           const sessionLeaders = response && response.sessions ? response.sessions : [];
+            
+            const playtimeHtml = playtimeLeaders.map((p, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td>${p.player}</td>
+                    <td>${p.value}h</td>
+                </tr>
+            `).join('') || '<tr><td colspan="3">No data</td></tr>';
+            
+            const sessionHtml = sessionLeaders.map((p, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td>${p.player}</td>
+                    <td>${p.value}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="3">No data</td></tr>';
+            
+            document.getElementById('leaderboard-playtime').innerHTML = playtimeHtml;
+            document.getElementById('leaderboard-sessions').innerHTML = sessionHtml;
+        } catch (e) {
+            console.error('Error loading leaderboards:', e);
+        }
+    }
+
+    async function loadEconomy() {
+        console.log('Loading economy...');
+        // TODO: Fetch economy data and populate economy-table
+    }
+
+    async function loadWarnings() {
+        try {
+            const response = await apiCall('/warnings');
+            const warnings = response && response.warnings ? response.warnings : [];
+            const html = warnings.length ? warnings.map(w => `
+                <tr>
+                    <td>${w.warningNumber || 'N/A'}</td>
+                    <td>${w.reason}</td>
+                    <td>${w.issuedBy}</td>
+                    <td>${w.date ? new Date(w.date).toLocaleDateString() : 'Unknown'}</td>
+                </tr>
+            `).join('') : '<tr><td colspan="4">No warnings</td></tr>';
+            document.getElementById('warnings-table').innerHTML = html;
+        } catch (e) {
+            console.error('Error loading warnings:', e);
+        }
+    }
+
+    async function issueWarning() {
+        const player = document.getElementById('warn-player').value;
+        const reason = document.getElementById('warn-reason').value;
+        if (!player || !reason) {
+            alert('Please fill in all fields');
+            return;
+        }
+        try {
+            const response = await apiCall('/warnings', 'POST', { player, reason, issuedBy: API_KEY });
+            if (response && response.status) {
+                document.getElementById('warn-player').value = '';
+                document.getElementById('warn-reason').value = '';
+                await loadWarnings();
+                alert('Warning issued!');
+            }
+        } catch (e) {
+            console.error('Error issuing warning:', e);
+            alert('Failed to issue warning');
+        }
+    }
+
+    async function loadAuditLog() {
+        try {
+            const adminFilter = document.getElementById('audit-admin-filter') ? document.getElementById('audit-admin-filter').value : '';
+            const actionFilter = document.getElementById('audit-action-filter') ? document.getElementById('audit-action-filter').value : '';
+            const response = await apiCall('/audit?admin=' + encodeURIComponent(adminFilter) + '&action=' + encodeURIComponent(actionFilter));
+            const logs = response && response.logs ? response.logs : [];
+            const html = logs.length ? logs.map(l => `
+                <tr>
+                    <td>${l.admin}</td>
+                    <td>${l.action}</td>
+                    <td>${l.target}</td>
+                    <td>${l.reason}</td>
+                    <td>${l.date ? new Date(l.date).toLocaleString() : 'Unknown'}</td>
+                </tr>
+            `).join('') : '<tr><td colspan="5">No audit logs</td></tr>';
+            document.getElementById('auditlog-table').innerHTML = html;
+        } catch (e) {
+            console.error('Error loading audit log:', e);
+        }
+    }
+
+    function filterEconomyTable() {
+        const search = document.getElementById('economy-search').value.toLowerCase();
+        document.querySelectorAll('#economy-table tr').forEach(tr => {
+            tr.style.display = tr.textContent.toLowerCase().includes(search) ? '' : 'none';
+        });
+    }
+
+
+
+    function filterAuditLog() {
+        const adminFilter = document.getElementById('audit-admin-filter').value.toLowerCase();
+        const actionFilter = document.getElementById('audit-action-filter').value.toLowerCase();
+        document.querySelectorAll('#auditlog-table tr').forEach(tr => {
+            const admin = tr.cells[0].textContent.toLowerCase();
+            const action = tr.cells[1].textContent.toLowerCase();
+            tr.style.display = (admin.includes(adminFilter) && action.includes(actionFilter)) ? '' : 'none';
+        });
+    }
+
+    async function executeBulkAction() {
+        const actionType = document.getElementById('bulk-action-type').value;
+        const reason = document.getElementById('bulk-action-reason').value;
+        if (!actionType) {
+            alert('Select an action');
+            return;
+        }
+        if (actionType === 'ban' && !reason) {
+            alert('Reason required for ban');
+            return;
+        }
+        console.log('Executing bulk', actionType, reason);
+        // TODO: POST /api/bulk-actions with {action, reason}
+    }
+
+    async function loadBulkActionsHistory() {
+        console.log('Loading bulk actions history...');
+        // TODO: Fetch /api/bulk-actions/history
+    }
+
+    async function loadServerLogs() {
+        console.log('Loading server logs...');
+        // TODO: Fetch /api/logs and display in logs-viewer
+        document.getElementById('logs-viewer').innerHTML = '<span style="color: #969696;">Loading logs...</span>';
+    }
+
+    function filterLogs() {
+        const search = document.getElementById('logs-search').value.toLowerCase();
+        const level = document.getElementById('logs-level-filter').value;
+        const logs = document.getElementById('logs-viewer').innerText;
+        // TODO: Filter logs on client side
+    }
+
+    function clearLogs() {
+        if (confirm('Clear all server logs?')) {
+            console.log('Clearing logs...');
+            // TODO: POST /api/logs/clear
+        }
+    }
+
+    async function loadAppeals() {
+        console.log('Loading appeals...');
+        // TODO: Fetch /api/appeals and populate appeals-table
+    }
+
+    function approveAppeal(playerName) {
+        if (confirm(`Approve appeal for ${playerName}?`)) {
+            console.log('Approving appeal for', playerName);
+            // TODO: POST /api/appeals/approve
+        }
+    }
+
+    function denyAppeal(playerName) {
+        if (confirm(`Deny appeal for ${playerName}?`)) {
+            console.log('Denying appeal for', playerName);
+            // TODO: POST /api/appeals/deny
+        }
+    }
+
+    async function loadAnnouncements() {
+        console.log('Loading announcements...');
+        // TODO: Fetch /api/announcements
+    }
+
+    async function scheduleAnnouncement() {
+        const msg = document.getElementById('announce-msg').value;
+        const time = document.getElementById('announce-time').value;
+        if (!msg || !time) {
+            alert('Please fill in all fields');
+            return;
+        }
+        console.log('Scheduling announcement', msg, time);
+        // TODO: POST /api/announcements/schedule
+    }
+
+    async function loadBackups() {
+        console.log('Loading backups...');
+        // TODO: Fetch /api/backups
+    }
+
+    async function createBackup() {
+        if (confirm('Create full server backup?')) {
+            console.log('Creating backup...');
+            // TODO: POST /api/backups/create
+        }
+    }
+
+    async function loadScheduledCommands() {
+        console.log('Loading scheduled commands...');
+        // TODO: Fetch /api/scheduler
+    }
+
+    async function scheduleCommand() {
+        const cmd = document.getElementById('scheduler-cmd').value;
+        const time = document.getElementById('scheduler-time').value;
+        if (!cmd || !time) {
+            alert('Please fill in all fields');
+            return;
+        }
+        console.log('Scheduling command', cmd, time);
+        // TODO: POST /api/scheduler/schedule
+    }
+
+    async function loadMaintenanceMode() {
+        console.log('Loading maintenance mode...');
+        // TODO: Fetch /api/maintenance/status
+    }
+
+    async function setMaintenance() {
+        const status = document.getElementById('maintenance-status').value;
+        const msg = document.getElementById('maintenance-msg').value;
+        const endTime = document.getElementById('maintenance-end').value;
+        console.log('Setting maintenance', status, msg, endTime);
+        // TODO: POST /api/maintenance/set
+    }
+
+    async function addMaintenanceWhitelist() {
+        const player = document.getElementById('maintenance-whitelist-player').value;
+        if (!player) return;
+        console.log('Adding to whitelist', player);
+        // TODO: POST /api/maintenance/whitelist/add
+    }
+
+    async function createPermissionGroup() {
+        const name = document.getElementById('perm-group-name').value;
+        const color = document.getElementById('perm-group-color').value;
+        if (!name) return;
+        console.log('Creating permission group', name, color);
+        // TODO: POST /api/permissions/groups/create
+    }
+
+    async function loadLandClaims() {
+        console.log('Loading land claims...');
+        // TODO: Fetch /api/claims
+    }
+
+    function filterClaimsTable() {
+        const search = document.getElementById('claims-search').value.toLowerCase();
+        document.querySelectorAll('#claims-table tr').forEach(tr => {
+            tr.style.display = tr.textContent.toLowerCase().includes(search) ? '' : 'none';
+        });
+    }
+
+    async function createRoleplayCommand() {
+        const name = document.getElementById('rp-cmd-name').value;
+        const trigger = document.getElementById('rp-cmd-trigger').value;
+        const response = document.getElementById('rp-cmd-response').value;
+        if (!name || !trigger || !response) return;
+        console.log('Creating roleplay command', name, trigger);
+        // TODO: POST /api/roleplay/commands/create
+    }
+
+    async function loadRoleplayCommands() {
+        console.log('Loading roleplay commands...');
+        // TODO: Fetch /api/roleplay/commands
+    }
+
+    async function loadVoteRewards() {
+        console.log('Loading vote rewards...');
+        // TODO: Fetch /api/votes/rewards
+    }
+
+    async function setVoteReward() {
+        const cmd = document.getElementById('vote-reward-cmd').value;
+        const amount = document.getElementById('vote-reward-amount').value;
+        if (!cmd || !amount) return;
+        console.log('Setting vote reward', cmd, amount);
+        // TODO: POST /api/votes/rewards/set
+    }
+
+    // --- EVENTS SYSTEM ---
+    let activeEffects = {};
+    let eventParticles = [];
+
+    async function loadActiveEvents() {
+        const response = await apiCall('/events/active');
+        const events = response && response.events ? response.events : [];
+        
+        const html = events.length ? events.map(e => `
+            <tr>
+                <td>🎄 ${e.name}</td>
+                <td>active</td>
+                <td>${e.startTime || '-'}</td>
+                <td>${e.playersOnline || 0}</td>
+                <td><button onclick="stopEvent('${e.name}')" class="btn-danger" style="padding: 4px 8px; font-size: 11px;">Stop Event</button></td>
+            </tr>
+        `).join('') : '<tr><td colspan="5" style="text-align: center; color: #999;">No active events</td></tr>';
+        
+        document.getElementById('active-events-table').innerHTML = html;
+    }
+
+    async function startEvent(eventName) {
+        console.log('startEvent called with:', eventName);
+        try {
+            const response = await apiCall('/events/start', 'POST', { event: eventName });
+            console.log('API Response:', response);
+            
+            if (response && response.status === 'success') {
+                console.log('Event started successfully');
+                alert(`${eventName} event started!`);
+                activeEffects[eventName] = true;
+                console.log('activeEffects updated:', activeEffects);
+                loadActiveEvents();
+                startEventVisualEffect(eventName);
+            } else {
+                console.log('API response was not successful:', response);
+                alert('Failed to start event: ' + (response?.error || 'Unknown error'));
+            }
+        } catch (e) {
+            console.error('Error in startEvent:', e);
+            alert('Error: ' + e.message);
+        }
+    }
+
+    async function stopEvent(eventName) {
+        if (!confirm(`Stop ${eventName} event?`)) return;
+        const response = await apiCall('/events/stop', 'POST', { event: eventName });
+        if (response && response.status === 'success') {
+            alert(`${eventName} event stopped!`);
+            activeEffects[eventName] = false;
+            loadActiveEvents();
+        } else {
+            alert('Failed to stop event');
+        }
+    }
+
+    async function loadEventHistory() {
+        const response = await apiCall('/events/history');
+        const history = response && response.history ? response.history : [];
+        
+        const html = history.length ? history.map(h => `
+            <tr>
+                <td>${h.event}</td>
+                <td>${h.admin || 'System'}</td>
+                <td>${h.startTime || '-'}</td>
+                <td>${h.duration || '-'}</td>
+                <td><span style="color: #4ec9b0;">Completed</span></td>
+            </tr>
+        `).join('') : '<tr><td colspan="5">No event history</td></tr>';
+        
+        document.getElementById('event-history-table').innerHTML = html;
+    }
+
+    function startEventVisualEffect(eventName) {
+        // Get canvas dimensions (use defaults if not available yet)
+        const canvas = document.getElementById('map-canvas');
+        const canvasWidth = canvas ? canvas.width : 800;
+        const canvasHeight = canvas ? canvas.height : 600;
+        
+        // Initialize event particles if not already done
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            
+            // Create initial particles based on event type
+            switch(eventName) {
+                case 'christmas':
+                    for (let i = 0; i < 100; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: Math.random() * canvasHeight * 0.8,
+                            speedX: (Math.random() - 0.5) * 2,
+                            speedY: 1 + Math.random() * 2,
+                            size: 2 + Math.random() * 4,
+                            opacity: 0.3 + Math.random() * 0.7
+                        });
+                    }
+                    break;
+                case 'valentine':
+                    for (let i = 0; i < 50; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: Math.random() * canvasHeight,
+                            speedX: (Math.random() - 0.5) * 1,
+                            speedY: -1 - Math.random() * 1,
+                            rotation: Math.random() * Math.PI * 2,
+                            size: 8 + Math.random() * 4,
+                            opacity: 0.5 + Math.random() * 0.5
+                        });
+                    }
+                    break;
+                case 'halloween':
+                    for (let i = 0; i < 30; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: Math.random() * canvasHeight,
+                            speedX: (Math.random() - 0.5) * 1.5,
+                            speedY: (Math.random() - 0.5) * 1,
+                            size: 12 + Math.random() * 8,
+                            opacity: 0.6
+                        });
+                    }
+                    break;
+                case 'newyear':
+                    for (let i = 0; i < 40; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: Math.random() * canvasHeight * 0.5,
+                            speedX: (Math.random() - 0.5) * 3,
+                            speedY: 2 + Math.random() * 3,
+                            size: 3 + Math.random() * 4,
+                            opacity: 0.8,
+                            color: ['#ff0000', '#00ff00', '#0000ff', '#ffff00'][Math.floor(Math.random() * 4)]
+                        });
+                    }
+                    break;
+                case 'spring':
+                    for (let i = 0; i < 80; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: -10,
+                            speedX: (Math.random() - 0.5) * 1.5,
+                            speedY: 1 + Math.random() * 1.5,
+                            rotation: Math.random() * Math.PI * 2,
+                            rotationSpeed: (Math.random() - 0.5) * 0.1,
+                            size: 6 + Math.random() * 4,
+                            opacity: 0.7
+                        });
+                    }
+                    break;
+                case 'summer':
+                    for (let i = 0; i < 40; i++) {
+                        eventParticles[eventName].push({
+                            x: Math.random() * canvasWidth,
+                            y: 10 + Math.random() * 100,
+                            speedX: (Math.random() - 0.5) * 0.5,
+                            speedY: (Math.random() - 0.5) * 0.5,
+                            size: 2 + Math.random() * 3,
+                            opacity: 0.6
+                        });
+                    }
+                    break;
+            }
+        }
+        
+        // Particles are now drawn in the main map loop
+        console.log('Event effect initialized for:', eventName);
+    }
+
+    function drawSnow(ctx, canvas, eventName) {
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            for (let i = 0; i < 100; i++) {
+                eventParticles[eventName].push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height * 0.8,
+                    speedX: (Math.random() - 0.5) * 2,
+                    speedY: 1 + Math.random() * 2,
+                    size: 2 + Math.random() * 4,
+                    opacity: 0.3 + Math.random() * 0.7
+                });
+            }
+        }
+
+        const particles = eventParticles[eventName];
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach((p, i) => {
+            ctx.fillStyle = `rgba(255, 255, 255, ${p.opacity})`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+
+            p.x += p.speedX;
+            p.y += p.speedY;
+
+            if (p.y > canvas.height) {
+                p.y = -10;
+                p.x = Math.random() * canvas.width;
+            }
+        });
+    }
+
+    function drawHearts(ctx, canvas, eventName) {
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            for (let i = 0; i < 50; i++) {
+                eventParticles[eventName].push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    speedX: (Math.random() - 0.5) * 1,
+                    speedY: -1 - Math.random() * 1,
+                    rotation: Math.random() * Math.PI * 2,
+                    size: 8 + Math.random() * 4,
+                    opacity: 0.5 + Math.random() * 0.5
+                });
+            }
+        }
+
+        const particles = eventParticles[eventName];
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach((p) => {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rotation);
+            ctx.fillStyle = `rgba(244, 67, 54, ${p.opacity})`;
+            ctx.font = `${p.size}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('♥', 0, 0);
+            ctx.restore();
+
+            p.x += p.speedX;
+            p.y += p.speedY;
+            p.rotation += 0.02;
+            p.opacity -= 0.01;
+
+            if (p.y < -20 || p.opacity <= 0) {
+                p.y = canvas.height + 20;
+                p.x = Math.random() * canvas.width;
+                p.opacity = 0.7;
+            }
+        });
+    }
+
+    function drawFireworks(ctx, canvas, eventName) {
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+        }
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Add new fireworks occasionally
+        if (Math.random() < 0.05) {
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            for (let i = 0; i < 30; i++) {
+                const angle = (Math.PI * 2 * i) / 30;
+                eventParticles[eventName].push({
+                    x: canvas.width / 2 + Math.random() * 200 - 100,
+                    y: canvas.height / 2 + Math.random() * 100 - 50,
+                    vx: Math.cos(angle) * (3 + Math.random() * 2),
+                    vy: Math.sin(angle) * (3 + Math.random() * 2),
+                    color: color,
+                    life: 100
+                });
+            }
+        }
+
+        eventParticles[eventName] = eventParticles[eventName].filter(p => {
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.1;
+            p.life--;
+
+            return p.life > 0;
+        });
+    }
+
+    function drawPetals(ctx, canvas, eventName) {
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            for (let i = 0; i < 80; i++) {
+                eventParticles[eventName].push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height * 0.8,
+                    speedX: (Math.random() - 0.5) * 1.5,
+                    speedY: 0.5 + Math.random() * 1,
+                    rotation: Math.random() * Math.PI * 2,
+                    rotationSpeed: (Math.random() - 0.5) * 0.1,
+                    size: 4 + Math.random() * 3,
+                    opacity: 0.4 + Math.random() * 0.6
+                });
+            }
+        }
+
+        const particles = eventParticles[eventName];
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach((p) => {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rotation);
+            ctx.fillStyle = `rgba(255, 182, 193, ${p.opacity})`;
+            ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
+            ctx.restore();
+
+            p.x += p.speedX;
+            p.y += p.speedY;
+            p.rotation += p.rotationSpeed;
+
+            if (p.y > canvas.height) {
+                p.y = -10;
+                p.x = Math.random() * canvas.width;
+            }
+        });
+    }
+
+    function drawSpiders(ctx, canvas, eventName) {
+        ctx.fillStyle = 'rgba(20, 20, 30, 0.3)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw spiders (simplified as small dots with legs)
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            for (let i = 0; i < 30; i++) {
+                eventParticles[eventName].push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    speedX: (Math.random() - 0.5) * 0.5,
+                    speedY: (Math.random() - 0.5) * 0.5
+                });
+            }
+        }
+
+        eventParticles[eventName].forEach((p) => {
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#222';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            p.x += p.speedX;
+            p.y += p.speedY;
+
+            if (p.x < 0 || p.x > canvas.width) p.speedX *= -1;
+            if (p.y < 0 || p.y > canvas.height) p.speedY *= -1;
+        });
+    }
+
+    function drawSunParticles(ctx, canvas, eventName) {
+        ctx.fillStyle = 'rgba(255, 223, 0, 0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw sun
+        ctx.fillStyle = 'rgba(255, 200, 0, 0.4)';
+        ctx.beginPath();
+        ctx.arc(canvas.width - 100, 80, 80, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (!eventParticles[eventName]) {
+            eventParticles[eventName] = [];
+            for (let i = 0; i < 40; i++) {
+                eventParticles[eventName].push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    speedX: (Math.random() - 0.5) * 0.5,
+                    speedY: (Math.random() - 0.5) * 0.5,
+                    size: 2 + Math.random() * 4
+                });
+            }
+        }
+
+        eventParticles[eventName].forEach((p) => {
+            ctx.fillStyle = 'rgba(255, 200, 100, 0.6)';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+
+            p.x += p.speedX;
+            p.y += p.speedY;
+
+            if (p.x < 0 || p.x > canvas.width) p.speedX *= -1;
+            if (p.y < 0 || p.y > canvas.height) p.speedY *= -1;
+        });
+    }
+
+    // Load events on page load
+    (async () => {
+        await loadActiveEvents();
+        await loadEventHistory();
+    })();</script>
 </body>
 </html>

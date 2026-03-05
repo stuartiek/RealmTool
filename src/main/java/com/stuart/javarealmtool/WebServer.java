@@ -303,10 +303,28 @@ public class WebServer {
             }
 
             String action = ctx.pathParam("action");
-            String targetName = ctx.queryParam("player");
+                String targetNameParam = ctx.queryParam("player");
             String reasonParam = ctx.queryParam("reason");
+            
+            // Try to get params from JSON body if not in query params
+                if (targetNameParam == null || reasonParam == null) {
+                try {
+                    String body = ctx.body();
+                    if (body != null && !body.isEmpty()) {
+                        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                        java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                            if (targetNameParam == null) targetNameParam = (String) bodyMap.get("player");
+                        if (reasonParam == null) reasonParam = (String) bodyMap.get("reason");
+                    }
+                } catch (Exception e) {
+                    // Continue with null params
+                }
+            }
+            
             if (reasonParam == null) reasonParam = ctx.queryParam("value");
             if (reasonParam == null) reasonParam = ctx.queryParam("message");
+            
+                final String targetName = targetNameParam;
             final String val = reasonParam;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -540,12 +558,31 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            String player = ctx.queryParam("player");
-            String reason = ctx.queryParam("reason");
+            
+                String playerParam = ctx.queryParam("player");
+                String reasonParam = ctx.queryParam("reason");
+            
+            // Try to get params from JSON body if not in query params
+                if (playerParam == null || reasonParam == null) {
+                try {
+                    String body = ctx.body();
+                    if (body != null && !body.isEmpty()) {
+                        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                        java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                            if (playerParam == null) playerParam = (String) bodyMap.get("player");
+                            if (reasonParam == null) reasonParam = (String) bodyMap.get("reason");
+                    }
+                } catch (Exception e) {
+                    // Continue with null params
+                }
+            }
+            
+                final String targetPlayer = playerParam;
+                final String finalReason = reasonParam;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                plugin.mutePlayer(uuid, reason != null ? reason : "No reason");
-                plugin.logAction("WebAdmin", "muted", player);
+                UUID uuid = Bukkit.getOfflinePlayer(targetPlayer).getUniqueId();
+                plugin.mutePlayer(uuid, finalReason != null ? finalReason : "No reason");
+                plugin.logAction("WebAdmin", "muted", targetPlayer);
             });
             ctx.result("OK");
         });
@@ -555,11 +592,28 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            String player = ctx.queryParam("player");
+            
+                String playerParam = ctx.queryParam("player");
+            
+            // Try to get player from JSON body if not in query params
+                if (playerParam == null) {
+                try {
+                    String body = ctx.body();
+                    if (body != null && !body.isEmpty()) {
+                        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                        java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                            playerParam = (String) bodyMap.get("player");
+                    }
+                } catch (Exception e) {
+                    // Continue with null params
+                }
+            }
+            
+            final String targetPlayer = playerParam;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                UUID uuid = Bukkit.getOfflinePlayer(targetPlayer).getUniqueId();
                 plugin.unmutePlayer(uuid);
-                plugin.logAction("WebAdmin", "unmuted", player);
+                plugin.logAction("WebAdmin", "unmuted", targetPlayer);
             });
             ctx.result("OK");
         });
