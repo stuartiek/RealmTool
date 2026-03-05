@@ -347,6 +347,7 @@ public class WebServer {
                         if (p != null) p.kickPlayer(ChatColor.RED + "You have been banned: " + banReason);
                         plugin.addChatLog("System", "[BAN] " + targetName + ": " + banReason);
                         plugin.logAction("WebAdmin", "banned", targetName);
+                        plugin.fireDiscordEvent("bans", "Player Banned", "**" + targetName + "** was banned.\nReason: " + banReason, 0xe74c3c, targetName);
                     }
                     else if (action.equals("unban")) {
                         Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(targetName);
@@ -358,6 +359,7 @@ public class WebServer {
                         if (p != null) p.sendMessage(ChatColor.YELLOW + "You have been warned: " + warnReason);
                         plugin.addChatLog("System", "[WARNING] " + targetName + ": " + warnReason);
                         plugin.logAction("WebAdmin", "warned", targetName);
+                        plugin.fireDiscordEvent("warns", "Player Warned", "**" + targetName + "** was warned.\nReason: " + warnReason, 0xf1c40f, targetName);
                     }
                     else if (action.equals("heal") && p != null) {
                         p.setHealth(20);
@@ -891,6 +893,118 @@ public class WebServer {
             ctx.result("OK");
         });
 
+        // --- DISCORD INTEGRATION ---
+        app.get("/api/discord", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> res = new HashMap<>();
+                res.put("webhook", plugin.getDataConfig().getString("discord.webhook", ""));
+                res.put("webhook_ban", plugin.getDataConfig().getString("discord.webhook_ban", ""));
+                res.put("webhook_warn", plugin.getDataConfig().getString("discord.webhook_warn", ""));
+                res.put("webhook_report", plugin.getDataConfig().getString("discord.webhook_report", ""));
+                res.put("bans", plugin.getDataConfig().getBoolean("discord.bans", true));
+                res.put("warns", plugin.getDataConfig().getBoolean("discord.warns", true));
+                res.put("reports", plugin.getDataConfig().getBoolean("discord.reports", true));
+                res.put("joins", plugin.getDataConfig().getBoolean("discord.joins", true));
+                res.put("leaves", plugin.getDataConfig().getBoolean("discord.leaves", true));
+                res.put("deaths", plugin.getDataConfig().getBoolean("discord.deaths", false));
+                res.put("block_logging", plugin.getDataConfig().getBoolean("discord.block_logging", false));
+                res.put("container_logging", plugin.getDataConfig().getBoolean("discord.container_logging", false));
+                res.put("command_logging", plugin.getDataConfig().getBoolean("discord.command_logging", false));
+                res.put("milestone_alerts", plugin.getDataConfig().getBoolean("discord.milestone_alerts", false));
+                res.put("performance_alerts", plugin.getDataConfig().getBoolean("discord.performance_alerts", false));
+                res.put("health_check", plugin.getDataConfig().getBoolean("discord.health_check", false));
+                res.put("daily_summary", plugin.getDataConfig().getBoolean("discord.daily_summary", false));
+                res.put("webhooks_sent", plugin.getDataConfig().getInt("discord.webhooks_sent", 0));
+                res.put("webhooks_failed", plugin.getDataConfig().getInt("discord.webhooks_failed", 0));
+                return res;
+            });
+            ctx.json(future.get());
+        });
+
+        app.post("/api/discord", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            // Parse from JSON body
+            String webhook = null;
+            java.util.Map<String, Object> bodyMap = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    bodyMap = mapper.readValue(body, java.util.Map.class);
+                    webhook = (String) bodyMap.get("webhook");
+                }
+            } catch (Exception e) { /* ignore */ }
+
+            // Fallback to query params
+            if (webhook == null) webhook = ctx.queryParam("webhook");
+
+            final String fWebhook = webhook;
+            final java.util.Map<String, Object> fBody = bodyMap;
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (fWebhook != null) plugin.getDataConfig().set("discord.webhook", fWebhook);
+
+                // Helper to get boolean from body map or query param
+                String[] boolKeys = {"bans", "warns", "reports", "joins", "leaves", "deaths",
+                    "block_logging", "container_logging", "command_logging",
+                    "milestone_alerts", "performance_alerts", "health_check", "daily_summary"};
+                String[] webhookKeys = {"webhook_ban", "webhook_warn", "webhook_report"};
+
+                for (String key : webhookKeys) {
+                    String val = null;
+                    if (fBody != null && fBody.containsKey(key)) val = (String) fBody.get(key);
+                    if (val == null) val = ctx.queryParam(key);
+                    if (val != null) plugin.getDataConfig().set("discord." + key, val);
+                }
+
+                for (String key : boolKeys) {
+                    Object val = null;
+                    if (fBody != null && fBody.containsKey(key)) val = fBody.get(key);
+                    if (val != null) {
+                        boolean b = val instanceof Boolean ? (Boolean) val : "true".equalsIgnoreCase(val.toString());
+                        plugin.getDataConfig().set("discord." + key, b);
+                    } else {
+                        String qp = ctx.queryParam(key);
+                        if (qp != null) plugin.getDataConfig().set("discord." + key, "true".equalsIgnoreCase(qp));
+                    }
+                }
+
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", "updated", "discord settings");
+            });
+            ctx.result("OK");
+        });
+
+        app.post("/api/discord/test", ctx -> {
+            String auth = ctx.header("Authorization");
+            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
+            String key2 = "Bearer " + plugin.getApiKey();
+            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+
+            String webhook = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    webhook = (String) bodyMap.get("webhook");
+                }
+            } catch (Exception e) { /* ignore */ }
+            if (webhook == null) webhook = ctx.queryParam("webhook");
+            if (webhook == null || webhook.isEmpty()) { ctx.json(Map.of("success", false, "error", "No webhook URL")); return; }
+
+            boolean success = plugin.sendDiscordWebhook(webhook, "Drowsy Management Tool", "✅ **Webhook test successful!**\nYour Discord integration is working.", 0x4ec9b0);
+            ctx.json(Map.of("success", success, "error", success ? "" : "Failed to connect to webhook"));
+        });
+
         // --- REPORTS ---
         app.post("/api/report", ctx -> {
             String auth = ctx.header("Authorization");
@@ -907,6 +1021,7 @@ public class WebServer {
                 reports.add(ts + " | " + reporter + " reported " + reported + " for: " + reason);
                 plugin.getDataConfig().set("reports", reports);
                 plugin.saveDataFile();
+                plugin.fireDiscordEvent("reports", "New Report", "**" + reporter + "** reported **" + reported + "**\nReason: " + reason, 0xe67e22, reported);
             });
             ctx.result("OK");
         });

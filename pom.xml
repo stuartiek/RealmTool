@@ -6,7 +6,7 @@
 
     <groupId>com.stuart</groupId>
     <artifactId>DrowsyManagementTool</artifactId>
-    <version>9.8</version>
+    <version>10.0</version>
     <packaging>jar</packaging>
 
     <name>Drowsy Management Tool</name>

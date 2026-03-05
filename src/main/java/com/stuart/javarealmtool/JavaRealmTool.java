@@ -141,6 +141,93 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         try { dataConfig.save(dataFile); } catch (IOException ignored) {}
     }
 
+    public boolean sendDiscordWebhook(String webhookUrl, String title, String description, int color) {
+        return sendDiscordWebhook(webhookUrl, title, description, color, null);
+    }
+
+    public boolean sendDiscordWebhook(String webhookUrl, String title, String description, int color, String playerName) {
+        try {
+            java.net.URL url = new java.net.URL(webhookUrl);
+            String host = url.getHost();
+            if (host == null || (!host.equals("discord.com") && !host.equals("discordapp.com") && !host.endsWith(".discord.com"))) {
+                getLogger().warning("Blocked non-Discord webhook URL: " + host);
+                return false;
+            }
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+
+            String thumbnailPart = "";
+            if (playerName != null && !playerName.isEmpty()) {
+                thumbnailPart = ",\"thumbnail\":{\"url\":\"https://mc-heads.net/avatar/" + playerName + "/64\"}";
+            }
+
+            String json = "{\"embeds\":[{\"title\":" + escapeJson(title)
+                + ",\"description\":" + escapeJson(description)
+                + ",\"color\":" + color + thumbnailPart + "}]}";
+
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            if (code >= 200 && code < 300) {
+                int sent = dataConfig.getInt("discord.webhooks_sent", 0);
+                dataConfig.set("discord.webhooks_sent", sent + 1);
+                saveDataFile();
+                return true;
+            } else {
+                int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+                dataConfig.set("discord.webhooks_failed", failed + 1);
+                saveDataFile();
+                getLogger().warning("Discord webhook returned " + code);
+                return false;
+            }
+        } catch (Exception e) {
+            int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+            dataConfig.set("discord.webhooks_failed", failed + 1);
+            saveDataFile();
+            getLogger().warning("Discord webhook failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "null";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
+
+    public void fireDiscordEvent(String eventType, String title, String description, int color) {
+        fireDiscordEvent(eventType, title, description, color, null);
+    }
+
+    public void fireDiscordEvent(String eventType, String title, String description, int color, String playerName) {
+        if (!dataConfig.getBoolean("discord." + eventType, false)) return;
+
+        // Check for event-specific webhook first, then fall back to primary
+        String specificKey = null;
+        switch (eventType) {
+            case "bans": specificKey = "webhook_ban"; break;
+            case "warns": specificKey = "webhook_warn"; break;
+            case "reports": specificKey = "webhook_report"; break;
+        }
+        String webhook = null;
+        if (specificKey != null) {
+            webhook = dataConfig.getString("discord." + specificKey, "");
+            if (webhook == null || webhook.isEmpty()) webhook = null;
+        }
+        if (webhook == null) {
+            webhook = dataConfig.getString("discord.webhook", "");
+        }
+        if (webhook == null || webhook.isEmpty()) return;
+
+        final String url = webhook;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> sendDiscordWebhook(url, title, description, color, playerName));
+    }
+
     private void setupPunishTeam() {
         scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
         punishTeam = scoreboard.getTeam("DrowsyPunish");
@@ -1830,12 +1917,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             tool.setItemMeta(m);
             e.getPlayer().getInventory().addItem(tool);
         }
+
+        fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         this.trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
         this.logAction("System", "player_left", e.getPlayer().getName());
+        fireDiscordEvent("leaves", "Player Left", "**" + e.getPlayer().getName() + "** left the server.", 0xe74c3c, e.getPlayer().getName());
     }
 
     @EventHandler
