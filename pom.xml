@@ -6,7 +6,7 @@
 
     <groupId>com.stuart</groupId>
     <artifactId>DrowsyManagementTool</artifactId>
-    <version>6.0</version>
+    <version>7.0</version>
     <packaging>jar</packaging>
 
     <name>Drowsy Management Tool</name>
@@ -43,6 +43,9 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <!-- This is a Bukkit plugin, not a standalone JAR, so no mainClass -->
+                            </transformers>
                             <relocations>
                                 <relocation>
                                     <pattern>io.javalin</pattern>
@@ -80,7 +83,7 @@
                 </includes>
             </resource>
             <resource>
-                <directory>src/main/webapp</directory>
+                <directory>src/main/resources/webapp</directory>
                 <filtering>false</filtering>
                 <includes>
                     <include>**</include>
@@ -101,7 +104,8 @@
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
-            <version>1.21.1-R0.1-SNAPSHOT</version> <scope>provided</scope>
+            <version>1.21.1-R0.1-SNAPSHOT</version>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
