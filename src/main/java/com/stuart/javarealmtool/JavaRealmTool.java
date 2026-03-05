@@ -29,6 +29,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
+    
+    // pending world creation/chat actions are handled via pendingActions and a new enum value
+
     private final Map<UUID, UUID> tpaRequests = new HashMap<>();
     private final Map<UUID, String> pendingWarpDelete = new HashMap<>();
     private final Map<UUID, String> pendingClaimAction = new HashMap<>();
@@ -58,8 +61,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_UNCLAIM_CONFIRM = ChatColor.YELLOW + "Confirm Unclaim";
     private final String GUI_TRUST_PLAYER = ChatColor.BLUE + "Trust Player";
     private final String GUI_UNTRUST_PLAYER = ChatColor.BLUE + "Remove Trusted";
+    private final String GUI_WORLD_UTILITIES = ChatColor.AQUA + "World Utilities";
+    private final String GUI_WORLD_LIST = ChatColor.GREEN + "Worlds";
+    private final String GUI_WORLD_OPTIONS = ChatColor.YELLOW + "World: ";
+    private final String GUI_CREATE_TYPE = ChatColor.GOLD + "Create World - Select Type";
+    private final String GUI_DELETE_CONFIRM = ChatColor.RED + "Delete World: ";
 
-    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP }
+    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
     private static class PunishmentContext {
         String targetName;
         ActionType type;
@@ -98,8 +106,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     public FileConfiguration getDataConfig() { return dataConfig; }
     public String fetchApiKey() { return apiKey; }
-    
-    public void saveDataConfig() { saveDataFile(); }
 
     public boolean isPunished(UUID u) {
         if (!dataConfig.contains("punishments." + u)) return false;
@@ -208,6 +214,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                         ex.printStackTrace();
                     }
                     break;
+
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
             }
@@ -319,13 +326,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     break;
                 case SET_WARP:
                     dataConfig.set("warps." + reason + ".x", p.getLocation().getX());
-                    dataConfig.set("warps." + reason + ".y", p.getLocation().getY());
-                    dataConfig.set("warps." + reason + ".z", p.getLocation().getZ());
-                    dataConfig.set("warps." + reason + ".world", p.getWorld().getName());
-                    dataConfig.set("warps." + reason + ".yaw", p.getLocation().getYaw());
-                    dataConfig.set("warps." + reason + ".pitch", p.getLocation().getPitch());
-                    saveDataFile();
-                    p.sendMessage(ChatColor.GREEN + "Warp '" + reason + "' created!");
+                    break;
+                case WORLD_CREATE_NAME:
+                    String type = ctx.targetName;
+                    String worldName = reason.replaceAll("[^A-Za-z0-9_\\-]", "");
+                    if (worldName.isEmpty()) {
+                        p.sendMessage(ChatColor.RED + "Invalid world name.");
+                        break;
+                    }
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        WorldCreator wc = new WorldCreator(worldName);
+                        if ("flat".equals(type)) wc.type(WorldType.FLAT);
+                        else if ("void".equals(type)) {
+                            wc.type(WorldType.FLAT);
+                            wc.generatorSettings("2;0;1;");
+                            wc.generateStructures(false);
+                        }
+                        World created = Bukkit.createWorld(wc);
+                        if (created != null) {
+                            p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' created (" + type + ").");
+                        } else {
+                            p.sendMessage(ChatColor.RED + "Failed to create world.");
+                        }
+                    });
                     break;
                 case WARN: if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); break;
                 case KICK: if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); break;
@@ -530,6 +553,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         gui.setItem(28, createGuiItem(Material.BLAZE_ROD, INSPECTOR_NAME));
         gui.setItem(29, createGuiItem(Material.WRITABLE_BOOK, ChatColor.GOLD + "Broadcast Message"));
         gui.setItem(30, createGuiItem(Material.PAPER, ChatColor.GOLD + "View Tickets"));
+        gui.setItem(31, createGuiItem(Material.COMPASS, ChatColor.BLUE + "World Utilities"));
         
         // Row 4 (43): Close button
         gui.setItem(43, createGuiItem(Material.REDSTONE, ChatColor.RED + "Close Menu"));
@@ -622,6 +646,87 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Main Menu"));
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
+        p.openInventory(gui);
+    }
+
+    // world utility menus
+    private void openWorldUtilitiesMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_WORLD_UTILITIES);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        int slot;
+        ItemStack item;
+        // View Worlds
+        slot = getNextGridSlot();
+        if (slot >= 0 && slot < gui.getSize()) {
+            item = createGuiItem(Material.GRASS_BLOCK, ChatColor.GREEN + "View Worlds");
+            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
+        }
+        // Create World
+        slot = getNextGridSlot();
+        if (slot >= 0 && slot < gui.getSize()) {
+            item = createGuiItem(Material.NETHER_STAR, ChatColor.AQUA + "Create World");
+            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
+        }
+        // Delete World
+        slot = getNextGridSlot();
+        if (slot >= 0 && slot < gui.getSize()) {
+            item = createGuiItem(Material.TNT, ChatColor.RED + "Delete World");
+            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
+        }
+        // Back button
+        item = createGuiItem(Material.BARRIER, ChatColor.RED + "Back to Main Menu");
+        if (item != null && item.getItemMeta() != null) gui.setItem(26, item);
+        p.openInventory(gui);
+    }
+
+    private void openWorldListMenu(Player p) {
+        openWorldListMenu(p, 0);
+    }
+
+    private void openWorldListMenu(Player p, int page) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_WORLD_LIST);
+        resetGridSlots();
+        List<World> worlds = Bukkit.getWorlds();
+        int perPage = 28;
+        int start = page * perPage;
+        int end = Math.min(start + perPage, worlds.size());
+        for (int i = start; i < end; i++) {
+            World w = worlds.get(i);
+            gui.setItem(getNextGridSlot(), createGuiItem(Material.GRASS_BLOCK, ChatColor.AQUA + w.getName()));
+        }
+        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Utilities"));
+        if (end < worlds.size()) gui.setItem(52, createGuiItem(Material.ARROW, ChatColor.GREEN + "Next Page"));
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        menuPages.put(p.getUniqueId(), page);
+        p.openInventory(gui);
+    }
+
+    private void openWorldOptionsMenu(Player p, String worldName) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_WORLD_OPTIONS + worldName);
+        gui.setItem(10, createGuiItem(Material.ENDER_PEARL, ChatColor.AQUA + "Teleport"));
+        boolean locked = dataConfig.getBoolean("worldlocks." + worldName, false);
+        gui.setItem(11, createGuiItem(Material.IRON_DOOR, ChatColor.YELLOW + (locked ? "Unlock" : "Lock")));
+        gui.setItem(12, createGuiItem(Material.REDSTONE_BLOCK, ChatColor.RED + "Delete"));
+        gui.setItem(26, createGuiItem(Material.BARRIER, ChatColor.RED + "Back"));
+        p.openInventory(gui);
+    }
+
+    private void openCreateWorldTypeMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 9, GUI_CREATE_TYPE);
+        gui.setItem(2, createGuiItem(Material.GRASS_BLOCK, ChatColor.GREEN + "Normal"));
+        gui.setItem(4, createGuiItem(Material.PUMPKIN, ChatColor.AQUA + "Flat"));
+        gui.setItem(6, createGuiItem(Material.GLASS, ChatColor.DARK_GRAY + "Void"));
+        gui.setItem(8, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
+        p.openInventory(gui);
+    }
+
+    private void openWorldDeleteConfirmation(Player p, String worldName) {
+        Inventory gui = Bukkit.createInventory(null, 9, GUI_DELETE_CONFIRM + worldName);
+        gui.setItem(2, createGuiItem(Material.EMERALD_BLOCK, ChatColor.GREEN + "Confirm Delete"));
+        gui.setItem(4, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
         p.openInventory(gui);
     }
 
@@ -1050,7 +1155,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             && !title.startsWith(ChatColor.YELLOW + "Note:") && !title.equals(GUI_MENU_SELECTOR) && !title.equals(GUI_PLAYER_MENU)
             && !title.equals(GUI_PLAYER_LIST_TPA) && !title.equals(ChatColor.BLUE + "Warps") && !title.startsWith(GUI_WARP_MANAGEMENT)
             && !title.startsWith(ChatColor.RED + "Delete:") && !title.equals(GUI_CLAIMS) && !title.equals(GUI_CLAIM_CONFIRM)
-            && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)) return;
+            && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)
+            && !title.equals(GUI_WORLD_UTILITIES) && !title.equals(GUI_WORLD_LIST)
+            && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)) return;
 
         e.setCancelled(true);
         if (e.getCurrentItem() == null) return;
@@ -1058,6 +1165,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         Material type = e.getCurrentItem().getType();
         String itemName = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName());
 
+        // Debug: Main menu click
+        if (title.equals(GUI_MAIN)) {
+            Player p = (Player) e.getWhoClicked();
+            int slot = e.getRawSlot();
+            p.sendMessage(ChatColor.YELLOW + "[DEBUG] Clicked slot: " + slot);
+            if (slot == 31) {
+                p.sendMessage(ChatColor.YELLOW + "[DEBUG] Opening World Utilities menu");
+            }
+        }
         // Menu Selector
         if (title.equals(GUI_MENU_SELECTOR)) {
             if (type == Material.EMERALD_BLOCK) {
@@ -1178,6 +1294,89 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             return;
         }
 
+        // World Utilities Menu
+        if (title.equals(GUI_WORLD_UTILITIES)) {
+            if (type == Material.GRASS_BLOCK || type == Material.TNT || type == Material.NETHER_STAR) {
+                p.closeInventory();
+                if (type == Material.GRASS_BLOCK) openWorldListMenu(p);
+                else if (type == Material.NETHER_STAR) openCreateWorldTypeMenu(p);
+                else if (type == Material.TNT) openWorldListMenu(p);
+            } else if (type == Material.BARRIER) {
+                openMainMenu(p);
+            }
+            return;
+        }
+
+        if (title.equals(GUI_WORLD_LIST)) {
+            if (type == Material.BARRIER) {
+                openWorldUtilitiesMenu(p);
+            } else if (type == Material.ARROW) {
+                int current = menuPages.getOrDefault(p.getUniqueId(), 0);
+                openWorldListMenu(p, current + 1);
+            } else if (type == Material.GRASS_BLOCK) {
+                p.closeInventory();
+                openWorldOptionsMenu(p, itemName);
+            }
+            return;
+        }
+
+        if (title.startsWith(GUI_WORLD_OPTIONS)) {
+            String worldName = title.replace(GUI_WORLD_OPTIONS, "");
+            if (type == Material.BARRIER) {
+                openWorldListMenu(p);
+            } else if (type == Material.ENDER_PEARL) {
+                World w = Bukkit.getWorld(worldName);
+                if (w != null) {
+                    p.closeInventory();
+                    p.teleport(w.getSpawnLocation());
+                    p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
+                } else p.sendMessage(ChatColor.RED + "World not found.");
+            } else if (type == Material.IRON_DOOR) {
+                boolean locked = dataConfig.getBoolean("worldlocks." + worldName, false);
+                dataConfig.set("worldlocks." + worldName, !locked);
+                saveDataFile();
+                p.sendMessage(ChatColor.AQUA + "World " + worldName + " " + (locked ? "unlocked" : "locked"));
+                openWorldOptionsMenu(p, worldName);
+            } else if (type == Material.REDSTONE_BLOCK) {
+                p.closeInventory();
+                openWorldDeleteConfirmation(p, worldName);
+            }
+            return;
+        }
+
+        if (title.equals(GUI_CREATE_TYPE)) {
+            if (type == Material.BARRIER) {
+                openWorldUtilitiesMenu(p);
+            } else {
+                String worldType;
+                if (type == Material.GRASS_BLOCK) worldType = "normal";
+                else if (type == Material.PUMPKIN) worldType = "flat";
+                else if (type == Material.GLASS) worldType = "void";
+                else { return; }
+                p.closeInventory();
+                pendingActions.put(p.getUniqueId(), new PunishmentContext(worldType, ActionType.WORLD_CREATE_NAME));
+                p.sendMessage(ChatColor.GOLD + "Enter name for new " + worldType + " world:");
+            }
+            return;
+        }
+
+        if (title.startsWith(GUI_DELETE_CONFIRM)) {
+            String worldName = title.replace(GUI_DELETE_CONFIRM, "");
+            if (type == Material.BARRIER) {
+                openWorldOptionsMenu(p, worldName);
+            } else if (type == Material.EMERALD_BLOCK) {
+                p.closeInventory();
+                World w = Bukkit.getWorld(worldName);
+                if (w != null) {
+                    Bukkit.unloadWorld(w, false);
+                    deleteWorldFolder(new File(w.getWorldFolder().getPath()));
+                }
+                dataConfig.set("worldlocks." + worldName, null);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "World " + worldName + " deleted.");
+            }
+            return;
+        }
         // Claims Menu
         if (title.equals(GUI_CLAIMS)) {
             if (type == Material.GRASS_BLOCK) {
@@ -1312,6 +1511,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.ANNOUNCE));
                     p.sendMessage(ChatColor.GOLD + "Enter broadcast message:"); break;
                 case 30: openTicketListMenu(p); break;
+                case 31: openWorldUtilitiesMenu(p); break;
                 case 16: openPunishedPlayersMenu(p); break;
                 case 43: p.closeInventory(); break;
             }
@@ -1437,58 +1637,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
     @EventHandler
     public void onPlayerPortal(PlayerPortalEvent e) {
-        Location to = e.getTo();
-        if (to == null) return;
-        World.Environment env = to.getWorld().getEnvironment();
-        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
-            e.setCancelled(true);
-            e.getPlayer().sendMessage(ChatColor.RED + "Nether access is currently locked.");
-            return;
-        }
-        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
-            e.setCancelled(true);
-            e.getPlayer().sendMessage(ChatColor.RED + "The End access is currently locked.");
-        }
-    }
-
-    @EventHandler
-    public void onPlayerTeleport(PlayerTeleportEvent e) {
-        PlayerTeleportEvent.TeleportCause c = e.getCause();
-        if (c == PlayerTeleportEvent.TeleportCause.NETHER_PORTAL || c == PlayerTeleportEvent.TeleportCause.END_PORTAL || c == PlayerTeleportEvent.TeleportCause.END_GATEWAY) {
-            Location to = e.getTo();
-            if (to == null) return;
-            World.Environment env = to.getWorld().getEnvironment();
-            if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
-                e.setCancelled(true);
-                e.getPlayer().sendMessage(ChatColor.RED + "Nether access is currently locked.");
-            }
-            if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
-                e.setCancelled(true);
-                e.getPlayer().sendMessage(ChatColor.RED + "The End access is currently locked.");
-            }
-        }
-    }
-
-    @EventHandler
-    public void onPlayerChangedWorld(PlayerChangedWorldEvent e) {
-        World.Environment env = e.getPlayer().getWorld().getEnvironment();
-        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
-            // Move player back to their previous world's spawn
-            Player p = e.getPlayer();
-            World overworld = Bukkit.getWorlds().get(0);
-            Bukkit.getScheduler().runTask(this, () -> {
-                p.teleport(overworld.getSpawnLocation());
-                p.sendMessage(ChatColor.RED + "Nether access is locked. You have been returned.");
-            });
-        }
-        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
-            Player p = e.getPlayer();
-            World overworld = Bukkit.getWorlds().get(0);
-            Bukkit.getScheduler().runTask(this, () -> {
-                p.teleport(overworld.getSpawnLocation());
-                p.sendMessage(ChatColor.RED + "The End access is locked. You have been returned.");
-            });
-        }
+        // ...existing code...
     }
 
     @EventHandler
@@ -2181,12 +2330,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     private long parseDuration(String duration) {
         if (duration == null || duration.isEmpty()) return -1;
-        
         try {
             String lower = duration.toLowerCase();
             double value = 0;
             long multiplier = 0;
-            
             if (lower.endsWith("s")) {
                 value = Double.parseDouble(lower.substring(0, lower.length() - 1));
                 multiplier = 1000; // seconds to milliseconds
@@ -2199,11 +2346,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             } else {
                 return -1;
             }
-            
             return (long) (value * multiplier);
         } catch (NumberFormatException e) {
             return -1;
         }
+    }
+
+    // recursive delete for world folders
+    private void deleteWorldFolder(File path) {
+        if (path.isDirectory()) {
+            for (File file : path.listFiles()) {
+                deleteWorldFolder(file);
+            }
+        }
+        path.delete();
     }
 
 }

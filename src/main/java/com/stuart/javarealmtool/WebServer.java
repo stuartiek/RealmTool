@@ -175,7 +175,7 @@ public class WebServer {
                 if (notes != null && index >= 0 && index < notes.size()) {
                     notes.set(index, newText);
                     plugin.getDataConfig().set("notes." + uuid, notes);
-                    plugin.saveDataConfig();
+                    plugin.saveDataFile();
                     plugin.logAction("WebAdmin", "edited note for", player);
                 }
             });
@@ -200,7 +200,7 @@ public class WebServer {
                 if (notes != null && index >= 0 && index < notes.size()) {
                     notes.remove(index);
                     plugin.getDataConfig().set("notes." + uuid, notes);
-                    plugin.saveDataConfig();
+                    plugin.saveDataFile();
                     plugin.logAction("WebAdmin", "deleted note for", player);
                 }
             });
@@ -351,13 +351,13 @@ public class WebServer {
                         if ("3h".equals(val)) duration = 10800000L;
                         if ("24h".equals(val)) duration = 86400000L;
                         plugin.getDataConfig().set("punishments." + uuid, System.currentTimeMillis() + duration);
-                        plugin.saveDataConfig();
+                        plugin.saveDataFile();
                         if (p != null) p.sendMessage(ChatColor.RED + "You have been punished for " + val);
                         plugin.logAction("WebAdmin", "punished (" + val + ")", targetName);
                     }
                     else if (action.equals("unpunish")) {
                         plugin.getDataConfig().set("punishments." + uuid, null);
-                        plugin.saveDataConfig();
+                        plugin.saveDataFile();
                         if (p != null) p.sendMessage(ChatColor.GREEN + "Your punishment has been lifted.");
                         plugin.logAction("WebAdmin", "unpunished", targetName);
                     }
@@ -368,7 +368,7 @@ public class WebServer {
                         List<String> notes = plugin.getDataConfig().getStringList("notes." + uuid);
                         notes.add(val != null ? val : "Note added via web");
                         plugin.getDataConfig().set("notes." + uuid, notes);
-                        plugin.saveDataConfig();
+                        plugin.saveDataFile();
                         plugin.logAction("WebAdmin", "added note for", targetName);
                     }
                     else if (action.equals("runcmd")) {
@@ -392,7 +392,7 @@ public class WebServer {
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("tickets." + id + ".status", "closed");
-                plugin.saveDataConfig();
+                plugin.saveDataFile();
                 plugin.logAction("WebAdmin", "closed ticket", id);
             });
             ctx.result("OK");
@@ -788,7 +788,7 @@ public class WebServer {
                 String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
                 reports.add(ts + " | " + reporter + " reported " + reported + " for: " + reason);
                 plugin.getDataConfig().set("reports", reports);
-                plugin.saveDataConfig();
+                plugin.saveDataFile();
             });
             ctx.result("OK");
         });
