@@ -346,7 +346,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                         ex.printStackTrace();
                     }
                     break;
-
+                case "tp":
+                    if (args.length >= 3 && args[1].equalsIgnoreCase("world")) {
+                        String worldName = args[2];
+                        World w = Bukkit.getWorld(worldName);
+                        if (w == null) {
+                            p.sendMessage(ChatColor.RED + "World '" + worldName + "' not found.");
+                        } else {
+                            // respect world lock
+                            if (dataConfig.getBoolean("worldlocks." + worldName, false)) {
+                                p.sendMessage(ChatColor.RED + "That world is locked.");
+                            } else {
+                                p.teleport(w.getSpawnLocation());
+                                p.sendMessage(ChatColor.GREEN + "Teleported to world '" + worldName + "'.");
+                            }
+                        }
+                    } else {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt tp world <name>");
+                    }
+                    break;
+                case "sethub":
+                    saveLoc("hub_location", p.getLocation());
+                    p.sendMessage(ChatColor.GREEN + "Hub location set to your current position.");
+                    break;
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
             }
@@ -355,6 +377,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         if (cmd.getName().equalsIgnoreCase("kit")) {
             openKitListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("hub")) {
+            Location hubLoc = getLoc("hub_location");
+            if (hubLoc == null) {
+                p.sendMessage(ChatColor.RED + "Hub location not set.");
+                return true;
+            }
+            p.teleport(hubLoc);
+            p.sendMessage(ChatColor.AQUA + "Teleported to hub.");
             return true;
         }
 
@@ -744,6 +777,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set punishment location");
             p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
             p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail");
+            p.sendMessage(ChatColor.AQUA + "/dmt tp world <name>" + ChatColor.WHITE + " - Teleport to another world");
+            p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
+            p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
         }
     }
 
@@ -776,7 +812,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     }
                     break;
                 case SET_WARP:
-                    dataConfig.set("warps." + reason + ".x", p.getLocation().getX());
+                    // sanitize warp name similar to world creation rules
+                    String warpName = reason.replaceAll("[^A-Za-z0-9_\\-]", "");
+                    if (warpName.isEmpty()) {
+                        p.sendMessage(ChatColor.RED + "Invalid warp name.");
+                        break;
+                    }
+                    dataConfig.set("warps." + warpName + ".x", p.getLocation().getX());
+                    dataConfig.set("warps." + warpName + ".y", p.getLocation().getY());
+                    dataConfig.set("warps." + warpName + ".z", p.getLocation().getZ());
+                    dataConfig.set("warps." + warpName + ".world", p.getWorld().getName());
+                    dataConfig.set("warps." + warpName + ".yaw", p.getLocation().getYaw());
+                    dataConfig.set("warps." + warpName + ".pitch", p.getLocation().getPitch());
+                    saveDataFile();
+                    p.sendMessage(ChatColor.GREEN + "Warp '" + warpName + "' set!");
                     break;
                 case WORLD_CREATE_NAME:
                     String type = ctx.targetName;
@@ -1282,17 +1331,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             item = createGuiItem(Material.NETHER_STAR, ChatColor.AQUA + "Create World");
             if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
         }
-        // Delete World
-        slot = getNextGridSlot();
-        if (slot >= 0 && slot < gui.getSize()) {
-            item = createGuiItem(Material.TNT, ChatColor.RED + "Delete World");
-            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
-        }
+        // (no top‑level delete button – deletion happens per‑world in options menu)
         // Back button
         item = createGuiItem(Material.BARRIER, ChatColor.RED + "Back to Main Menu");
         if (item != null && item.getItemMeta() != null) gui.setItem(26, item);
         p.openInventory(gui);
     }
+
 
     private void openWorldListMenu(Player p) {
         openWorldListMenu(p, 0);
@@ -1457,7 +1502,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 double x = dataConfig.getDouble("warps." + warpName + ".x");
                 double y = dataConfig.getDouble("warps." + warpName + ".y");
                 double z = dataConfig.getDouble("warps." + warpName + ".z");
+                String worldName = dataConfig.getString("warps." + warpName + ".world");
                 wMeta.setLore(Arrays.asList(
+                    ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName,
                     ChatColor.GRAY + "X: " + ChatColor.WHITE + String.format("%.1f", x),
                     ChatColor.GRAY + "Y: " + ChatColor.WHITE + String.format("%.1f", y),
                     ChatColor.GRAY + "Z: " + ChatColor.WHITE + String.format("%.1f", z)
@@ -1763,33 +1810,52 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     @EventHandler
     public void onGuiClick(InventoryClickEvent e) {
         String title = e.getView().getTitle();
-        if (!title.equals(GUI_MAIN) && !title.equals(GUI_PLAYER_LIST) && !title.equals(GUI_TICKET_LIST) 
-            && !title.startsWith(GUI_PLAYER_ACTION) && !title.startsWith(GUI_NOTES_VIEW) && !title.equals(ChatColor.RED + "Punished Players")
-            && !title.startsWith(ChatColor.YELLOW + "Note:") && !title.equals(GUI_MENU_SELECTOR) && !title.equals(GUI_PLAYER_MENU)
-            && !title.equals(GUI_PLAYER_LIST_TPA) && !title.equals(ChatColor.BLUE + "Warps") && !title.startsWith(GUI_WARP_MANAGEMENT)
-            && !title.startsWith(ChatColor.RED + "Delete:") && !title.equals(GUI_CLAIMS) && !title.equals(GUI_CLAIM_CONFIRM)
-            && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)
-            && !title.equals(GUI_WORLD_UTILITIES) && !title.equals(GUI_WORLD_LIST)
-            && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)
-            && !title.equals(GUI_KIT_LIST) && !title.startsWith(GUI_KIT_PREVIEW) && !title.startsWith(GUI_KIT_CONFIRM)
-            && !title.equals(GUI_CRATE_LIST) && !title.equals(GUI_BOUNTY_LIST)
-            && !title.equals(GUI_SHOP_LIST) && !title.equals(GUI_QUEST_LIST)
-            && !title.equals(GUI_AUCTION_HOUSE) && !title.equals(GUI_PWARP_LIST) && !title.equals(GUI_ACHIEVEMENTS)) return;
+        boolean relevant = title.equals(GUI_MAIN)
+            || title.equals(GUI_PLAYER_LIST)
+            || title.equals(GUI_TICKET_LIST)
+            || title.startsWith(GUI_PLAYER_ACTION)
+            || title.startsWith(GUI_NOTES_VIEW)
+            || title.equals(ChatColor.RED + "Punished Players")
+            || title.startsWith(ChatColor.YELLOW + "Note:")
+            || title.equals(GUI_MENU_SELECTOR)
+            || title.equals(GUI_PLAYER_MENU)
+            || title.equals(GUI_PLAYER_LIST_TPA)
+            || title.equals(ChatColor.BLUE + "Warps")
+            || title.startsWith(GUI_WARP_MANAGEMENT)
+            || title.startsWith(ChatColor.RED + "Delete:")
+            || title.equals(GUI_CLAIMS)
+            || title.equals(GUI_CLAIM_CONFIRM)
+            || title.equals(GUI_UNCLAIM_CONFIRM)
+            || title.equals(GUI_TRUST_PLAYER)
+            || title.equals(GUI_UNTRUST_PLAYER)
+            || title.equals(GUI_WORLD_UTILITIES)
+            || title.equals(GUI_WORLD_LIST)
+            || title.startsWith(GUI_WORLD_OPTIONS)
+            || title.equals(GUI_CREATE_TYPE)
+            || title.startsWith(GUI_DELETE_CONFIRM)
+            || title.equals(GUI_KIT_LIST)
+            || title.startsWith(GUI_KIT_PREVIEW)
+            || title.startsWith(GUI_KIT_CONFIRM)
+            || title.equals(GUI_CRATE_LIST)
+            || title.equals(GUI_BOUNTY_LIST)
+            || title.equals(GUI_SHOP_LIST)
+            || title.equals(GUI_QUEST_LIST)
+            || title.equals(GUI_AUCTION_HOUSE)
+            || title.equals(GUI_PWARP_LIST)
+            || title.equals(GUI_ACHIEVEMENTS);
+        if (!relevant) return;
 
         e.setCancelled(true);
-        if (e.getCurrentItem() == null) return;
+        ItemStack clicked = e.getCurrentItem();
+        if (clicked == null) return;
         Player p = (Player) e.getWhoClicked();
-        Material type = e.getCurrentItem().getType();
-        String itemName = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName());
+        Material type = clicked.getType();
+        ItemMeta clickedMeta = clicked.getItemMeta();
+        String itemName = "";
+        if (clickedMeta != null && clickedMeta.hasDisplayName()) itemName = ChatColor.stripColor(clickedMeta.getDisplayName());
 
-        // Debug: Main menu click
-        if (title.equals(GUI_MAIN)) {
-            int slot = e.getRawSlot();
-            p.sendMessage(ChatColor.YELLOW + "[DEBUG] Clicked slot: " + slot);
-            if (slot == 31) {
-                p.sendMessage(ChatColor.YELLOW + "[DEBUG] Opening World Utilities menu");
-            }
-        }
+        // wrap handler in try/catch to log unexpected errors
+        try {
         // Menu Selector
         if (title.equals(GUI_MENU_SELECTOR)) {
             if (type == Material.EMERALD_BLOCK) {
@@ -2077,13 +2143,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             return;
         }
 
+
+
+
         // World Utilities Menu
         if (title.equals(GUI_WORLD_UTILITIES)) {
-            if (type == Material.GRASS_BLOCK || type == Material.TNT || type == Material.NETHER_STAR) {
+            p.sendMessage(ChatColor.YELLOW + "[DEBUG] world utilities menu click type=" + type + " name=" + itemName);
+            if (type == Material.GRASS_BLOCK || type == Material.NETHER_STAR) {
                 p.closeInventory();
-                if (type == Material.GRASS_BLOCK) openWorldListMenu(p);
-                else if (type == Material.NETHER_STAR) openCreateWorldTypeMenu(p);
-                else if (type == Material.TNT) openWorldListMenu(p);
+                if (type == Material.GRASS_BLOCK) {
+                    try { openWorldListMenu(p); }
+                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world list"); ex.printStackTrace(); }
+                }
+                else if (type == Material.NETHER_STAR) {
+                    try { openCreateWorldTypeMenu(p); }
+                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world type chooser"); ex.printStackTrace(); }
+                }
             } else if (type == Material.BARRIER) {
                 openMainMenu(p);
             }
@@ -2110,9 +2185,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             } else if (type == Material.ENDER_PEARL) {
                 World w = Bukkit.getWorld(worldName);
                 if (w != null) {
-                    p.closeInventory();
-                    p.teleport(w.getSpawnLocation());
-                    p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
+                    // check lock
+                    if (dataConfig.getBoolean("worldlocks." + worldName, false)) {
+                        p.sendMessage(ChatColor.RED + "That world is locked.");
+                    } else {
+                        p.closeInventory();
+                        p.teleport(w.getSpawnLocation());
+                        p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
+                    }
                 } else p.sendMessage(ChatColor.RED + "World not found.");
             } else if (type == Material.IRON_DOOR) {
                 boolean locked = dataConfig.getBoolean("worldlocks." + worldName, false);
@@ -2259,7 +2339,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         if (title.equals(GUI_MAIN)) {
 
-            int slot = e.getSlot();
+            int slot = e.getRawSlot();
             switch(slot) {
                 case 11: p.getWorld().setStorm(false); break;
                 case 12: p.getWorld().setThundering(false); p.getWorld().setStorm(true); break;
@@ -2294,7 +2374,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.ANNOUNCE));
                     p.sendMessage(ChatColor.GOLD + "Enter broadcast message:"); break;
                 case 30: openTicketListMenu(p); break;
-                case 31: openWorldUtilitiesMenu(p); break;
+                case 31: 
+                    p.sendMessage(ChatColor.YELLOW + "[DEBUG] main menu world utilities clicked slot=" + slot);
+                    try { openWorldUtilitiesMenu(p); } catch (Exception ex) {
+                        p.sendMessage(ChatColor.RED + "Error opening world utilities menu");
+                        ex.printStackTrace();
+                    }
+                    break;
                 case 16: openPunishedPlayersMenu(p); break;
                 case 43: p.closeInventory(); break;
             }
@@ -2408,6 +2494,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName); break;
             }
         }
+        } catch (Exception ex) {
+            getLogger().severe("Error handling GUI click (" + title + "): " + ex.getMessage());
+            ex.printStackTrace();
+        }
     }
 
 
@@ -2420,7 +2510,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
     @EventHandler
     public void onPlayerPortal(PlayerPortalEvent e) {
-        // ...existing code...
+        // prevent players from using portals when locks are enabled
+        Player p = e.getPlayer();
+        if (e.getTo() == null) return;
+        World.Environment env = e.getTo().getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "Nether access is locked.");
+        } else if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "The End access is locked.");
+        }
     }
 
     @EventHandler
@@ -2437,6 +2537,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             e.getPlayer().sendMessage(ChatColor.RED + "The End access is locked. Respawning in overworld.");
         }
     }
+    @EventHandler
+    public void onPlayerTeleport(PlayerTeleportEvent e) {
+        // catch teleport commands / plugins
+        if (e.getTo() == null) return;
+        World.Environment env = e.getTo().getWorld().getEnvironment();
+        Player p = e.getPlayer();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "Nether access is locked.");
+        }
+        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "The End access is locked.");
+        }
+    }
+
     @EventHandler
     public void onPunishDamage(EntityDamageEvent e) {
         if (e.getEntity() instanceof Player p && isPunished(p.getUniqueId())) e.setCancelled(true);
@@ -3037,13 +3153,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
 
     private void fillGUIBorders(Inventory gui) {
-        for (int i = 0; i < 9; i++) {
+        int size = gui.getSize();
+        // top row
+        for (int i = 0; i < 9 && i < size; i++) {
             if (gui.getItem(i) == null) gui.setItem(i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(45 + i) == null) gui.setItem(45 + i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
         }
-        for (int i = 1; i < 5; i++) {
-            if (gui.getItem(i * 9) == null) gui.setItem(i * 9, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(i * 9 + 8) == null) gui.setItem(i * 9 + 8, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+        // bottom row (last 9 slots)
+        int bottomStart = size - 9;
+        for (int i = 0; i < 9; i++) {
+            int slot = bottomStart + i;
+            if (slot >= 0 && slot < size && gui.getItem(slot) == null) {
+                gui.setItem(slot, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            }
+        }
+        // left/right borders for middle rows
+        int rows = size / 9;
+        for (int r = 1; r < rows - 1; r++) {
+            int left = r * 9;
+            int right = r * 9 + 8;
+            if (left < size && gui.getItem(left) == null)
+                gui.setItem(left, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            if (right < size && gui.getItem(right) == null)
+                gui.setItem(right, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
         }
     }
 

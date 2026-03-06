@@ -19,6 +19,9 @@ commands:
   bounty:
     description: Set or view bounties
     usage: /bounty [set <player> <amount>]
+  hub:
+    description: Teleport to the hub location
+    usage: /hub
   shop:
     description: Player shop system
     usage: /shop [sell <item> <amount> <price>]
