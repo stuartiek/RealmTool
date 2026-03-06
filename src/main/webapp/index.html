@@ -367,11 +367,31 @@
         <!-- NOTES -->
         <div id="notes" class="tab">
             <h2>📝 Player Notes</h2>
-            <input type="text" id="note-player" placeholder="Player name..." list="players-datalist" style="width: 48%; margin-right: 2%;">
-            <input type="text" id="note-text" placeholder="Note content..." style="width: 48%; margin: 0;">
-            <button onclick="addNote()" class="full-width">Add Note</button>
-            <h3 style="margin-top: 20px; color: #4ec9b0;">View Notes</h3>
-            <input type="text" id="note-search-player" placeholder="Search player notes..." list="players-datalist" class="full-width" oninput="searchNotes()">
+            
+            <!-- Add Note Section -->
+            <div style="background: #252526; padding: 15px; border-radius: 6px; margin-bottom: 20px; border-left: 3px solid #4ec9b0;">
+                <h3 style="color: #4ec9b0; margin-bottom: 10px;">Add New Note</h3>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <input type="text" id="note-player" placeholder="Player name..." list="players-datalist" style="flex: 1; min-width: 150px;">
+                    <select id="note-category" style="width: 140px; background: #2d2d30; color: #e0e0e0; border: 1px solid #3e3e42; border-radius: 4px; padding: 8px;">
+                        <option value="info">ℹ️ Info</option>
+                        <option value="warning">⚠️ Warning</option>
+                        <option value="important">❗ Important</option>
+                        <option value="positive">✅ Positive</option>
+                    </select>
+                </div>
+                <textarea id="note-text" placeholder="Write your note here..." style="width: 100%; height: 80px; margin-top: 10px; resize: vertical;"></textarea>
+                <button onclick="addNote()" class="full-width btn-success" style="margin-top: 8px;">Add Note</button>
+            </div>
+            
+            <!-- Search / Filter -->
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                <input type="text" id="note-search-player" placeholder="🔍 Search player notes..." list="players-datalist" style="flex: 1;" oninput="searchNotes()">
+                <button onclick="loadAllNotes()" style="white-space: nowrap;">Show All Players</button>
+            </div>
+            
+            <!-- Notes Display -->
+            <div id="notes-summary" style="display: none;"></div>
             <div id="notes-display"></div>
         </div>
 
@@ -668,19 +688,20 @@
         <div id="auditlog" class="tab">
             <h2>📋 Admin Audit Log</h2>
             <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
-                <input type="text" id="audit-admin" placeholder="Filter by admin..." style="width: 30%; padding: 6px;">
-                <select id="audit-action" style="width: 30%; padding: 6px;">
+                <input type="text" id="audit-admin-filter" placeholder="Filter by admin..." style="width: 30%; padding: 6px;">
+                <select id="audit-action-filter" style="width: 30%; padding: 6px;">
                     <option value="">All Actions</option>
                     <option value="ban">Ban</option>
                     <option value="warn">Warn</option>
                     <option value="kick">Kick</option>
                     <option value="mute">Mute</option>
+                    <option value="afk_kick">AFK Kick</option>
                 </select>
                 <button onclick="loadAuditLog()" style="padding: 6px 12px;">Search</button>
             </div>
             <table>
                 <tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Reason</th></tr>
-                <tbody id="audit-list"></tbody>
+                <tbody id="auditlog-table"></tbody>
             </table>
         </div>
 
@@ -2280,50 +2301,106 @@
     async function addNote() {
         const player = document.getElementById('note-player').value;
         const text = document.getElementById('note-text').value;
-        if (!player || !text) return alert('Fill in all fields');
-        await apiCall('/actions/addnote', 'POST', { player, note: text });
-        document.getElementById('note-player').value = '';
+        const category = document.getElementById('note-category').value;
+        if (!player || !text) return alert('Fill in player name and note content');
+        await apiCall('/actions/addnote', 'POST', { player, note: text, category });
         document.getElementById('note-text').value = '';
         alert('Note added!');
+        const searchPlayer = document.getElementById('note-search-player').value;
+        if (searchPlayer && searchPlayer.toLowerCase() === player.toLowerCase()) searchNotes();
+    }
+
+    async function loadAllNotes() {
+        const players = await apiCall('/notes');
+        if (!players || !players.length) {
+            document.getElementById('notes-summary').style.display = 'none';
+            document.getElementById('notes-display').innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No player notes found</p>';
+            return;
+        }
+        const summaryHtml = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px;">
+                ${players.map(p => `
+                    <div onclick="document.getElementById('note-search-player').value='${p.player}';searchNotes();" 
+                         style="background: #2d2d30; padding: 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s; border-left: 3px solid #4ec9b0; display: flex; align-items: center; gap: 10px;"
+                         onmouseover="this.style.background='#3a3a40';this.style.transform='translateY(-2px)'" 
+                         onmouseout="this.style.background='#2d2d30';this.style.transform='none'">
+                        <img src="https://mc-heads.net/avatar/${encodeURIComponent(p.player)}/32" style="width:32px;height:32px;border-radius:4px;" onerror="this.style.display='none'">
+                        <div>
+                            <div style="color: #4ec9b0; font-weight: bold;">${p.player}</div>
+                            <div style="color: #999; font-size: 11px;">${p.count} note${p.count !== 1 ? 's' : ''} · ${p.lastUpdated}</div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>`;
+        document.getElementById('notes-summary').style.display = 'block';
+        document.getElementById('notes-summary').innerHTML = summaryHtml;
+        document.getElementById('notes-display').innerHTML = '';
+    }
+
+    function getCategoryStyle(cat) {
+        const c = (cat || 'INFO').toUpperCase();
+        if (c === 'WARNING') return { color: '#ff9800', bg: '#3d2e00', icon: '⚠️', border: '#ff9800' };
+        if (c === 'IMPORTANT') return { color: '#f44336', bg: '#3d0000', icon: '❗', border: '#f44336' };
+        if (c === 'POSITIVE') return { color: '#4caf50', bg: '#003d00', icon: '✅', border: '#4caf50' };
+        return { color: '#4ec9b0', bg: '#002d26', icon: 'ℹ️', border: '#4ec9b0' };
     }
 
     async function searchNotes() {
         const player = document.getElementById('note-search-player').value;
-        if (!player) return;
+        if (!player) { document.getElementById('notes-display').innerHTML = ''; return; }
+        document.getElementById('notes-summary').style.display = 'none';
         const notes = await apiCall('/notes', 'GET', { player });
         
-        const html = notes && notes.length > 0 ? notes.map(n => `
-            <div class="note-card" data-player="${player}" data-index="${n.index}" style="background: #2d2d30; padding: 15px; margin: 8px 0; border-radius: 4px; border-left: 4px solid #4ec9b0; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#3a3a40'" onmouseout="this.style.background='#2d2d30';">
-                <p style="margin: 0; color: #4ec9b0; font-weight: bold;">Note #${n.index + 1}</p>
-                <p style="margin: 5px 0 0 0; color: #ccc;">${n.text}</p>
-                <p style="margin: 8px 0 0 0; color: #999; font-size: 12px;">Click to edit or delete</p>
-            </div>
-        `).join('') : '<p style="color: #999;">No notes found</p>';
-        document.getElementById('notes-display').innerHTML = html;
+        if (!notes || !notes.length) {
+            document.getElementById('notes-display').innerHTML = `
+                <div style="text-align: center; padding: 40px; color: #999;">
+                    <img src="https://mc-heads.net/avatar/${encodeURIComponent(player)}/48" style="width:48px;height:48px;border-radius:6px;margin-bottom:10px;" onerror="this.style.display='none'">
+                    <p>No notes found for <strong style="color: #4ec9b0;">${player}</strong></p>
+                </div>`;
+            return;
+        }
         
-        // Add click handlers to note cards
-        document.querySelectorAll('.note-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const player = card.getAttribute('data-player');
-                const index = parseInt(card.getAttribute('data-index'));
-                openNoteModal(player, index);
-            });
-        });
+        const html = `
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 15px; padding: 10px; background: #252526; border-radius: 6px;">
+                <img src="https://mc-heads.net/avatar/${encodeURIComponent(player)}/40" style="width:40px;height:40px;border-radius:6px;" onerror="this.style.display='none'">
+                <div>
+                    <div style="color: #4ec9b0; font-weight: bold; font-size: 16px;">${player}</div>
+                    <div style="color: #999; font-size: 12px;">${notes.length} note${notes.length !== 1 ? 's' : ''}</div>
+                </div>
+            </div>
+            ${notes.map(n => {
+                const s = getCategoryStyle(n.category);
+                return `
+                <div class="note-card" data-player="${player}" data-index="${n.index}" 
+                     style="background: ${s.bg}; padding: 14px; margin: 8px 0; border-radius: 6px; border-left: 4px solid ${s.border}; transition: all 0.2s;"
+                     onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="color: ${s.color}; font-weight: bold; font-size: 12px;">${s.icon} ${n.category || 'INFO'}</span>
+                        <span style="color: #777; font-size: 11px;">${n.timestamp || ''}</span>
+                    </div>
+                    <p style="margin: 0; color: #ddd; line-height: 1.5;">${n.text}</p>
+                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                        <span style="color: #999; font-size: 11px; cursor: pointer; text-decoration: underline;" onclick="openNoteModal('${player}', ${n.index})">Edit</span>
+                        <span style="color: #d32f2f; font-size: 11px; cursor: pointer; text-decoration: underline;" onclick="quickDeleteNote('${player}', ${n.index})">Delete</span>
+                    </div>
+                </div>`;
+            }).join('')}`;
+        document.getElementById('notes-display').innerHTML = html;
+    }
+
+    async function quickDeleteNote(player, index) {
+        if (!confirm('Delete this note?')) return;
+        await apiCall(`/note/${player}/${index}`, 'DELETE');
+        searchNotes();
     }
 
     async function openNoteModal(player, index) {
         document.getElementById('modal-note-player').textContent = player;
-        
-        // Fetch the current note data
         const notes = await apiCall('/notes', 'GET', { player });
         if (!notes || !notes[index]) return alert('Note not found');
-        
-        const noteText = notes[index].text;
-        document.getElementById('modal-note-text').value = noteText;
-        
+        document.getElementById('modal-note-text').value = notes[index].text;
         window.currentNotePlayer = player;
         window.currentNoteIndex = index;
-        
         document.getElementById('note-modal').style.display = 'block';
     }
 
@@ -2331,9 +2408,7 @@
         const player = window.currentNotePlayer;
         const index = window.currentNoteIndex;
         const newText = document.getElementById('modal-note-text').value;
-        
         if (!newText) return alert('Note cannot be empty');
-        
         const params = new URLSearchParams({ text: newText });
         await apiCall(`/note/${player}/${index}?${params}`, 'PATCH');
         document.getElementById('note-modal').style.display = 'none';
@@ -2343,9 +2418,7 @@
     async function deleteNoteFromModal() {
         const player = window.currentNotePlayer;
         const index = window.currentNoteIndex;
-        
         if (!confirm('Are you sure you want to delete this note?')) return;
-        
         await apiCall(`/note/${player}/${index}`, 'DELETE');
         document.getElementById('note-modal').style.display = 'none';
         searchNotes();
@@ -2364,9 +2437,24 @@
         document.getElementById('history-list').innerHTML = html;
     }
 
+    function getChatAvatar(player) {
+        const name = (player || '').toLowerCase();
+        if (name === 'system') return '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#d32f2f;border-radius:4px;font-size:14px;vertical-align:middle;margin-right:6px;">⚙️</span>';
+        if (name === 'webapp' || name === 'web') return '<span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#0e639c;border-radius:4px;font-size:14px;vertical-align:middle;margin-right:6px;">🌐</span>';
+        return `<img src="https://mc-heads.net/avatar/${encodeURIComponent(player)}/24" style="width:24px;height:24px;border-radius:4px;vertical-align:middle;margin-right:6px;" onerror="this.style.display='none'">`;
+    }
+
     async function refreshChat() {
         const chat = await apiCall('/chat');
-        const html = (chat || []).map(c => `<div style="padding: 8px; border-bottom: 1px solid #444;"><span style="color: #999; font-size: 11px;">${c.timestamp || ''}</span> <strong style="color: #4ec9b0;">${c.player || 'Unknown'}:</strong> <span style="color: #ccc;">${c.message || ''}</span></div>`).join('');
+        const html = (chat || []).map(c => {
+            const avatar = getChatAvatar(c.player);
+            return `<div style="padding: 8px; border-bottom: 1px solid #444; display: flex; align-items: center;">
+                ${avatar}
+                <span style="color: #999; font-size: 11px; margin-right: 8px; white-space: nowrap;">${c.timestamp || ''}</span>
+                <strong style="color: #4ec9b0; margin-right: 6px; white-space: nowrap;">${c.player || 'Unknown'}:</strong>
+                <span style="color: #ccc;">${c.message || ''}</span>
+            </div>`;
+        }).join('');
         const chatDisplay = document.getElementById('chat-display');
         chatDisplay.innerHTML = html || '<div style="padding: 8px; color: #999;">No chat messages yet</div>';
         chatDisplay.scrollTop = chatDisplay.scrollHeight;
@@ -3744,11 +3832,11 @@
             const logs = response && response.logs ? response.logs : [];
             const html = logs.length ? logs.map(l => `
                 <tr>
+                    <td>${l.date || 'Unknown'}</td>
                     <td>${l.admin}</td>
                     <td>${l.action}</td>
                     <td>${l.target}</td>
-                    <td>${l.reason}</td>
-                    <td>${l.date ? new Date(l.date).toLocaleString() : 'Unknown'}</td>
+                    <td>${l.reason || '-'}</td>
                 </tr>
             `).join('') : '<tr><td colspan="5">No audit logs</td></tr>';
             document.getElementById('auditlog-table').innerHTML = html;

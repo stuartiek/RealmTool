@@ -40,6 +40,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final Map<UUID, Integer> menuPages = new HashMap<>();
     private final Map<UUID, String> currentChunk = new HashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
+    private final Map<UUID, Long> lastActivity = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
 
@@ -139,6 +140,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         // Start scheduled announcements (every 60 seconds = 1200 ticks)
         startScheduledAnnouncements();
+
+        // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
+        startAfkChecker();
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
@@ -2506,6 +2510,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     public void onPunishMove(PlayerMoveEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) {
             if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) e.setCancelled(true);
+        } else {
+            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         }
     }
     @EventHandler
@@ -2679,6 +2685,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         UUID uuid = e.getPlayer().getUniqueId();
+        lastActivity.put(uuid, System.currentTimeMillis());
         
         if (isPunished(uuid)) {
             punishTeam.addEntry(e.getPlayer().getName());
@@ -2803,6 +2810,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
+        lastActivity.remove(e.getPlayer().getUniqueId());
         this.trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
         this.logAction("System", "player_left", e.getPlayer().getName());
         fireDiscordEvent("leaves", "Player Left", "**" + e.getPlayer().getName() + "** left the server.", 0xe74c3c, e.getPlayer().getName());
@@ -2810,6 +2818,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isMuted(e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
             e.getPlayer().sendMessage(ChatColor.RED + "You are muted and cannot chat.");
@@ -3031,6 +3040,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         } catch (Exception e) {
             return 0L;
         }
+    }
+
+    public Map<UUID, Long> getLastActivity() { return lastActivity; }
+
+    public int getAfkTimeoutMinutes() {
+        return dataConfig.getInt("afk_timeout_minutes", 30);
+    }
+
+    public void setAfkTimeoutMinutes(int minutes) {
+        dataConfig.set("afk_timeout_minutes", minutes);
+        saveDataFile();
     }
 
     public void logAction(String actor, String action, String target) {
@@ -3389,6 +3409,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 }
             }
         }, 20L, 20L); // Run every 1 second
+    }
+
+    private void startAfkChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (!dataConfig.getBoolean("afk_autokick_enabled", true)) return;
+            int timeoutMinutes = getAfkTimeoutMinutes();
+            long now = System.currentTimeMillis();
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                if (p.hasPermission("dmt.afk.exempt")) continue;
+                Long lastAct = lastActivity.get(p.getUniqueId());
+                if (lastAct == null) {
+                    lastActivity.put(p.getUniqueId(), now);
+                    continue;
+                }
+                long idleMs = now - lastAct;
+                long idleMinutes = idleMs / 60000;
+                if (idleMinutes >= timeoutMinutes) {
+                    p.kickPlayer(ChatColor.RED + "You were kicked for being AFK.\n"
+                        + ChatColor.YELLOW + "You were idle for " + idleMinutes + " minute" + (idleMinutes != 1 ? "s" : "") + ".\n"
+                        + ChatColor.GRAY + "The server auto-kick threshold is " + timeoutMinutes + " minute" + (timeoutMinutes != 1 ? "s" : "") + ".");
+                    logAction("System", "afk_kick", p.getName() + " (idle " + idleMinutes + "m)");
+                    lastActivity.remove(p.getUniqueId());
+                }
+            }
+        }, 600L, 600L); // Run every 30 seconds
     }
 
     private long parseDuration(String duration) {

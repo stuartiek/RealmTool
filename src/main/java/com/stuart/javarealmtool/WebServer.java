@@ -138,15 +138,42 @@ public class WebServer {
         });
 
         app.get("/api/notes", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
+            if (!auth(ctx)) return;
+            String player = ctx.queryParam("player");
+            
+            // If no player specified, return all players that have notes
+            if (player == null || player.isEmpty()) {
+                Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                    List<Map<String, Object>> result = new ArrayList<>();
+                    var data = plugin.getDataConfig();
+                    if (data.getConfigurationSection("notes") != null) {
+                        for (String key : data.getConfigurationSection("notes").getKeys(false)) {
+                            try {
+                                UUID uuid = UUID.fromString(key);
+                                List<String> notes = data.getStringList("notes." + key);
+                                if (notes.isEmpty()) continue;
+                                String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
+                                Map<String, Object> entry = new HashMap<>();
+                                entry.put("player", name != null ? name : key);
+                                entry.put("uuid", key);
+                                entry.put("count", notes.size());
+                                // Get latest note timestamp
+                                String latest = notes.get(notes.size() - 1);
+                                if (latest.contains(" | ")) {
+                                    entry.put("lastUpdated", latest.split(" \\| ", 2)[0].trim());
+                                } else {
+                                    entry.put("lastUpdated", "Unknown");
+                                }
+                                result.add(entry);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    result.sort((a, b) -> String.valueOf(b.get("lastUpdated")).compareTo(String.valueOf(a.get("lastUpdated"))));
+                    return result;
+                });
+                ctx.json(future.get());
                 return;
             }
-            String player = ctx.queryParam("player");
-            if (player == null) { ctx.result("[]"); return; }
             
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
@@ -156,7 +183,31 @@ public class WebServer {
                     for (int i = 0; i < notesList.size(); i++) {
                         Map<String, Object> note = new HashMap<>();
                         note.put("index", i);
-                        note.put("text", notesList.get(i));
+                        String raw = notesList.get(i);
+                        // Parse timestamp and category from format: "yyyy-MM-dd HH:mm:ss | [CATEGORY] text"
+                        if (raw.contains(" | ")) {
+                            String[] parts = raw.split(" \\| ", 2);
+                            note.put("timestamp", parts[0].trim());
+                            String text = parts[1].trim();
+                            // Extract category if present
+                            if (text.startsWith("[")) {
+                                int endBracket = text.indexOf(']');
+                                if (endBracket > 0) {
+                                    note.put("category", text.substring(1, endBracket));
+                                    note.put("text", text.substring(endBracket + 1).trim());
+                                } else {
+                                    note.put("category", "INFO");
+                                    note.put("text", text);
+                                }
+                            } else {
+                                note.put("category", "INFO");
+                                note.put("text", text);
+                            }
+                        } else {
+                            note.put("timestamp", "");
+                            note.put("category", "INFO");
+                            note.put("text", raw);
+                        }
                         result.add(note);
                     }
                 }
@@ -265,25 +316,25 @@ public class WebServer {
             Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> chat = plugin.getDataConfig().getStringList("chat_history");
                 List<Map<String, String>> messages = new ArrayList<>();
-                List<String> recent = new ArrayList<>(chat);
-                Collections.reverse(recent);
-                recent.stream().limit(30).forEach(msg -> {
-                    Map<String, String> msgMap = new HashMap<>();
-                    int spaceIdx = msg.indexOf(' ');
-                    if (spaceIdx > 0) {
-                        String timestamp = msg.substring(0, spaceIdx).trim();
-                        String rest = msg.substring(spaceIdx + 1).trim();
+                // Take last 50 messages in chronological order (oldest first, newest last)
+                int start = Math.max(0, chat.size() - 50);
+                for (int i = start; i < chat.size(); i++) {
+                    String msg = chat.get(i);
+                    // Format: "HH:mm:ss | Player: message"
+                    String[] parts = msg.split(" \\| ", 2);
+                    if (parts.length == 2) {
+                        String timestamp = parts[0].trim();
+                        String rest = parts[1].trim();
                         int colonIdx = rest.indexOf(':');
                         if (colonIdx > 0) {
-                            String player = rest.substring(0, colonIdx).trim();
-                            String message = rest.substring(colonIdx + 1).trim();
+                            Map<String, String> msgMap = new HashMap<>();
                             msgMap.put("timestamp", timestamp);
-                            msgMap.put("player", player);
-                            msgMap.put("message", message);
+                            msgMap.put("player", rest.substring(0, colonIdx).trim());
+                            msgMap.put("message", rest.substring(colonIdx + 1).trim());
                             messages.add(msgMap);
                         }
                     }
-                });
+                }
                 return messages;
             });
             ctx.json(future.get());
@@ -395,7 +446,24 @@ public class WebServer {
                             plugin.getDataConfig().set("notes." + uuid, new ArrayList<>());
                         }
                         List<String> notes = plugin.getDataConfig().getStringList("notes." + uuid);
-                        notes.add(val != null ? val : "Note added via web");
+                        String noteText = val;
+                        // Also check for 'note' field from JSON body
+                        if (noteText == null) {
+                            try {
+                                String bodyStr = ctx.body();
+                                if (bodyStr != null && !bodyStr.isEmpty()) {
+                                    com.fasterxml.jackson.databind.ObjectMapper m2 = new com.fasterxml.jackson.databind.ObjectMapper();
+                                    java.util.Map<String, Object> bm = m2.readValue(bodyStr, java.util.Map.class);
+                                    if (bm.containsKey("note")) noteText = bm.get("note").toString();
+                                    if (bm.containsKey("category")) {
+                                        String cat = bm.get("category").toString();
+                                        noteText = "[" + cat.toUpperCase() + "] " + noteText;
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+                        notes.add(ts + " | " + (noteText != null ? noteText : "Note added via web"));
                         plugin.getDataConfig().set("notes." + uuid, notes);
                         plugin.saveDataFile();
                         plugin.logAction("WebAdmin", "added note for", targetName);
@@ -1020,9 +1088,11 @@ public class WebServer {
             String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
             String key2 = "Bearer " + plugin.getApiKey();
             if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            String reporter = ctx.queryParam("reporter");
-            String reported = ctx.queryParam("reported");
-            String reason = ctx.queryParam("reason");
+            var body = ctx.bodyAsClass(Map.class);
+            String reporter = body.get("reporter") != null ? body.get("reporter").toString() : null;
+            String reported = body.get("reported") != null ? body.get("reported").toString() : null;
+            String reason = body.get("reason") != null ? body.get("reason").toString() : null;
+            if (reporter == null || reported == null || reason == null) { ctx.status(400).result("Missing fields"); return; }
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if (!plugin.getDataConfig().contains("reports")) plugin.getDataConfig().set("reports", new ArrayList<>());
                 List<String> reports = plugin.getDataConfig().getStringList("reports");
@@ -2219,6 +2289,189 @@ public class WebServer {
             if (body.containsKey("messages")) data.set("announcements.messages", body.get("messages"));
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
+        });
+
+        // ========== PLAYER REPUTATION ==========
+        app.get("/api/reputation", ctx -> {
+            if (!auth(ctx)) return;
+            String playerParam = ctx.queryParam("player");
+            var data = plugin.getDataConfig();
+
+            // If a specific player is requested, return their details
+            if (playerParam != null && !playerParam.isEmpty()) {
+                Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                    UUID uuid = Bukkit.getOfflinePlayer(playerParam).getUniqueId();
+                    int warnings = data.getStringList("warnings." + uuid).size();
+                    boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(playerParam);
+                    int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
+                    long playtime = plugin.getPlaytimeHours(uuid);
+                    int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
+                    Map<String, Object> rep = new HashMap<>();
+                    rep.put("name", playerParam);
+                    rep.put("score", score);
+                    rep.put("warnings", warnings);
+                    rep.put("bans", bans);
+                    rep.put("playtime", playtime);
+                    return rep;
+                });
+                ctx.json(future.get());
+                return;
+            }
+
+            // Return reputation for all known players
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> players = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+
+                // Online players
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    UUID uuid = p.getUniqueId();
+                    String name = p.getName();
+                    if (seen.contains(name)) continue;
+                    seen.add(name);
+                    int warnings = data.getStringList("warnings." + uuid).size();
+                    boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
+                    int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
+                    long playtime = plugin.getPlaytimeHours(uuid);
+                    int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("name", name);
+                    m.put("score", score);
+                    m.put("warnings", warnings);
+                    m.put("bans", bans);
+                    players.add(m);
+                }
+
+                // Offline players with warnings
+                if (data.getConfigurationSection("warnings") != null) {
+                    for (String key : data.getConfigurationSection("warnings").getKeys(false)) {
+                        try {
+                            UUID uuid = UUID.fromString(key);
+                            String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
+                            if (name == null || seen.contains(name)) continue;
+                            seen.add(name);
+                            int warnings = data.getStringList("warnings." + uuid).size();
+                            boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
+                            int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
+                            long playtime = plugin.getPlaytimeHours(uuid);
+                            int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
+                            Map<String, Object> m = new HashMap<>();
+                            m.put("name", name);
+                            m.put("score", score);
+                            m.put("warnings", warnings);
+                            m.put("bans", bans);
+                            players.add(m);
+                        } catch (Exception ignored) {}
+                    }
+                }
+
+                // Offline players with playtime but no warnings
+                if (data.getConfigurationSection("playtime") != null) {
+                    for (String key : data.getConfigurationSection("playtime").getKeys(false)) {
+                        try {
+                            UUID uuid = UUID.fromString(key);
+                            String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
+                            if (name == null || seen.contains(name)) continue;
+                            seen.add(name);
+                            int warnings = data.getStringList("warnings." + uuid).size();
+                            boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
+                            int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
+                            long playtime = plugin.getPlaytimeHours(uuid);
+                            int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
+                            Map<String, Object> m = new HashMap<>();
+                            m.put("name", name);
+                            m.put("score", score);
+                            m.put("warnings", warnings);
+                            m.put("bans", bans);
+                            players.add(m);
+                        } catch (Exception ignored) {}
+                    }
+                }
+
+                players.sort((a, b) -> Integer.compare((int) b.get("score"), (int) a.get("score")));
+                return players;
+            });
+            ctx.json(future.get());
+        });
+
+        // ========== AFK MANAGER ==========
+        app.get("/api/afk", ctx -> {
+            if (!auth(ctx)) return;
+            Future<List<Map<String, Object>>> future2 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> afkPlayers = new ArrayList<>();
+                long now = System.currentTimeMillis();
+                int timeoutMinutes = plugin.getAfkTimeoutMinutes();
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    Long lastAct = plugin.getLastActivity().get(p.getUniqueId());
+                    if (lastAct == null) lastAct = now;
+                    long idleMs = now - lastAct;
+                    long idleMinutes = idleMs / 60000;
+                    if (idleMinutes >= 1) {
+                        Map<String, Object> m = new HashMap<>();
+                        m.put("name", p.getName());
+                        m.put("idleTime", idleMinutes);
+                        long lastActTime = lastAct;
+                        m.put("lastAction", new SimpleDateFormat("HH:mm:ss").format(new Date(lastActTime)));
+                        afkPlayers.add(m);
+                    }
+                }
+                afkPlayers.sort((a, b) -> Long.compare((long) b.get("idleTime"), (long) a.get("idleTime")));
+                return afkPlayers;
+            });
+            ctx.json(future2.get());
+        });
+
+        app.post("/api/afk/settings", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            if (body.containsKey("timeout")) {
+                int timeout = Integer.parseInt(body.get("timeout").toString());
+                plugin.setAfkTimeoutMinutes(timeout);
+            }
+            ctx.json(Map.of("success", true));
+        });
+
+        // ========== AUDIT LOG ==========
+        app.get("/api/audit", ctx -> {
+            if (!auth(ctx)) return;
+            String adminFilter = ctx.queryParam("admin");
+            String actionFilter = ctx.queryParam("action");
+            Future<Map<String, Object>> future3 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<String> history = plugin.getDataConfig().getStringList("action_history");
+                List<Map<String, Object>> logs = new ArrayList<>();
+                for (int i = history.size() - 1; i >= 0; i--) {
+                    String entry = history.get(i);
+                    // Format: "2026-03-06 01:42:45 | Actor action Target"
+                    String[] parts = entry.split(" \\| ", 2);
+                    if (parts.length < 2) continue;
+                    String date = parts[0].trim();
+                    String rest = parts[1].trim();
+                    // Split rest into: admin, action, target (+ optional reason)
+                    String[] tokens = rest.split(" ", 3);
+                    String admin = tokens.length > 0 ? tokens[0] : "Unknown";
+                    String action = tokens.length > 1 ? tokens[1] : "unknown";
+                    String target = tokens.length > 2 ? tokens[2] : "";
+                    String reason = "";
+                    // Extract reason if target contains parentheses
+                    if (target.contains("(") && target.contains(")")) {
+                        int start = target.indexOf('(');
+                        reason = target.substring(start + 1, target.lastIndexOf(')'));
+                        target = target.substring(0, start).trim();
+                    }
+                    if (adminFilter != null && !adminFilter.isEmpty() && !admin.toLowerCase().contains(adminFilter.toLowerCase())) continue;
+                    if (actionFilter != null && !actionFilter.isEmpty() && !action.toLowerCase().contains(actionFilter.toLowerCase())) continue;
+                    Map<String, Object> log = new HashMap<>();
+                    log.put("date", date);
+                    log.put("admin", admin);
+                    log.put("action", action);
+                    log.put("target", target);
+                    log.put("reason", reason);
+                    logs.add(log);
+                    if (logs.size() >= 100) break;
+                }
+                return Map.of("logs", (Object) logs);
+            });
+            ctx.json(future3.get());
         });
     }
 
