@@ -13,6 +13,48 @@ commands:
   tpa:
     description: Teleport request system
     usage: /tpa accept|deny <player>
+  kit:
+    description: Browse and claim kits
+    usage: /kit
+  bounty:
+    description: Set or view bounties
+    usage: /bounty [set <player> <amount>]
+  hub:
+    description: Teleport to the hub location
+    usage: /hub
+  shop:
+    description: Player shop system
+    usage: /shop [sell <item> <amount> <price>]
+  quest:
+    description: View and claim quests
+    usage: /quest
+  apply:
+    description: Submit a staff application
+    usage: /apply <message>
+  vote:
+    description: Vote on server polls
+    usage: /vote <pollId> <option#>
+  crate:
+    description: Open crate menu
+    usage: /crate
+  nick:
+    description: Set or reset your nickname
+    usage: /nick [name]
+  rules:
+    description: View server rules
+    usage: /rules
+  duel:
+    description: Challenge a player to a duel
+    usage: /duel <player> [wager]
+  pwarp:
+    description: Player warp system
+    usage: /pwarp [set|delete <name>]
+  achievements:
+    description: View your achievements
+    usage: /achievements
+  stats:
+    description: View PvP stats
+    usage: /stats [player]
 permissions:
   dmt.admin:
     description: Allows use of admin tools

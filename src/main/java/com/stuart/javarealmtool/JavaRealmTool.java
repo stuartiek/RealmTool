@@ -10,6 +10,7 @@ import org.bukkit.event.block.*;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
+import org.bukkit.event.server.ServerListPingEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.*;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -39,6 +40,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final Map<UUID, Integer> menuPages = new HashMap<>();
     private final Map<UUID, String> currentChunk = new HashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
+    private final Map<UUID, Long> lastActivity = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
 
@@ -66,6 +68,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_WORLD_OPTIONS = ChatColor.YELLOW + "World: ";
     private final String GUI_CREATE_TYPE = ChatColor.GOLD + "Create World - Select Type";
     private final String GUI_DELETE_CONFIRM = ChatColor.RED + "Delete World: ";
+    private final String GUI_KIT_LIST = ChatColor.GOLD + "Kits";
+    private final String GUI_KIT_PREVIEW = ChatColor.GOLD + "Kit: ";
+    private final String GUI_KIT_CONFIRM = ChatColor.GREEN + "Purchase Kit: ";
+    private final String GUI_CRATE_LIST = ChatColor.LIGHT_PURPLE + "Crates";
+    private final String GUI_CRATE_PREVIEW = ChatColor.LIGHT_PURPLE + "Crate: ";
+    private final String GUI_BOUNTY_LIST = ChatColor.RED + "Bounties";
+    private final String GUI_SHOP_LIST = ChatColor.GREEN + "Player Shops";
+    private final String GUI_QUEST_LIST = ChatColor.GOLD + "Quests";
+    private final String GUI_AUCTION_HOUSE = ChatColor.GOLD + "Auction House";
+    private final String GUI_DUEL_CONFIRM = ChatColor.RED + "Duel Request: ";
+    private final String GUI_PWARP_LIST = ChatColor.AQUA + "Player Warps";
+    private final String GUI_ACHIEVEMENTS = ChatColor.GOLD + "Achievements";
+    private final Map<UUID, Long> kitCooldowns = new HashMap<>();
+    private final Map<UUID, String> pendingShopAction = new HashMap<>();
+    private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
+    private final List<String> chatFilterWords = new ArrayList<>();
+    private final Map<UUID, Integer> spamCounter = new HashMap<>();
+    private final Map<UUID, Long> lastChatTime = new HashMap<>();
+    private final Map<UUID, UUID> duelRequests = new HashMap<>();
+    final Map<UUID, Integer> duelWagers = new HashMap<>();
+    final Map<UUID, UUID> activeDuels = new HashMap<>();
+    private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
 
     private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
     private static class PunishmentContext {
@@ -85,6 +109,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (getCommand("dmt") != null) getCommand("dmt").setExecutor(this);
         if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
+        if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
+        if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
+        if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
+        if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
+        if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
+        if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
+        if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
+        if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
+        if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
+        if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
+        if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
+        if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
+        if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -94,6 +131,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         
         // Start punishment expiry checker (every 1 second = 20 ticks)
         startPunishmentChecker();
+
+        // Load auto-mod filter words
+        loadChatFilter();
+
+        // Start playtime rewards checker (every 5 min = 6000 ticks)
+        startPlaytimeRewardsChecker();
+
+        // Start scheduled announcements (every 60 seconds = 1200 ticks)
+        startScheduledAnnouncements();
+
+        // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
+        startAfkChecker();
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
@@ -141,6 +190,93 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         try { dataConfig.save(dataFile); } catch (IOException ignored) {}
     }
 
+    public boolean sendDiscordWebhook(String webhookUrl, String title, String description, int color) {
+        return sendDiscordWebhook(webhookUrl, title, description, color, null);
+    }
+
+    public boolean sendDiscordWebhook(String webhookUrl, String title, String description, int color, String playerName) {
+        try {
+            java.net.URL url = new java.net.URL(webhookUrl);
+            String host = url.getHost();
+            if (host == null || (!host.equals("discord.com") && !host.equals("discordapp.com") && !host.endsWith(".discord.com"))) {
+                getLogger().warning("Blocked non-Discord webhook URL: " + host);
+                return false;
+            }
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+
+            String thumbnailPart = "";
+            if (playerName != null && !playerName.isEmpty()) {
+                thumbnailPart = ",\"thumbnail\":{\"url\":\"https://mc-heads.net/avatar/" + playerName + "/64\"}";
+            }
+
+            String json = "{\"embeds\":[{\"title\":" + escapeJson(title)
+                + ",\"description\":" + escapeJson(description)
+                + ",\"color\":" + color + thumbnailPart + "}]}";
+
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            if (code >= 200 && code < 300) {
+                int sent = dataConfig.getInt("discord.webhooks_sent", 0);
+                dataConfig.set("discord.webhooks_sent", sent + 1);
+                saveDataFile();
+                return true;
+            } else {
+                int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+                dataConfig.set("discord.webhooks_failed", failed + 1);
+                saveDataFile();
+                getLogger().warning("Discord webhook returned " + code);
+                return false;
+            }
+        } catch (Exception e) {
+            int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+            dataConfig.set("discord.webhooks_failed", failed + 1);
+            saveDataFile();
+            getLogger().warning("Discord webhook failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "null";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\"";
+    }
+
+    public void fireDiscordEvent(String eventType, String title, String description, int color) {
+        fireDiscordEvent(eventType, title, description, color, null);
+    }
+
+    public void fireDiscordEvent(String eventType, String title, String description, int color, String playerName) {
+        if (!dataConfig.getBoolean("discord." + eventType, false)) return;
+
+        // Check for event-specific webhook first, then fall back to primary
+        String specificKey = null;
+        switch (eventType) {
+            case "bans": specificKey = "webhook_ban"; break;
+            case "warns": specificKey = "webhook_warn"; break;
+            case "reports": specificKey = "webhook_report"; break;
+        }
+        String webhook = null;
+        if (specificKey != null) {
+            webhook = dataConfig.getString("discord." + specificKey, "");
+            if (webhook == null || webhook.isEmpty()) webhook = null;
+        }
+        if (webhook == null) {
+            webhook = dataConfig.getString("discord.webhook", "");
+        }
+        if (webhook == null || webhook.isEmpty()) return;
+
+        final String url = webhook;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> sendDiscordWebhook(url, title, description, color, playerName));
+    }
+
     private void setupPunishTeam() {
         scoreboard = Bukkit.getScoreboardManager().getMainScoreboard();
         punishTeam = scoreboard.getTeam("DrowsyPunish");
@@ -155,13 +291,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (!(sender instanceof Player p)) return true;
 
         if (cmd.getName().equalsIgnoreCase("dmt")) {
-            if (!p.hasPermission("dmt.admin")) {
-                p.sendMessage(ChatColor.RED + "No permission.");
+            if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
+                sendHelpMessage(p);
                 return true;
             }
 
-            if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
-                sendHelpMessage(p);
+            if (!p.hasPermission("dmt.admin")) {
+                p.sendMessage(ChatColor.RED + "No permission.");
                 return true;
             }
 
@@ -214,10 +350,142 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                         ex.printStackTrace();
                     }
                     break;
-
+                case "tp":
+                    if (args.length >= 3 && args[1].equalsIgnoreCase("world")) {
+                        String worldName = args[2];
+                        World w = Bukkit.getWorld(worldName);
+                        if (w == null) {
+                            p.sendMessage(ChatColor.RED + "World '" + worldName + "' not found.");
+                        } else {
+                            // respect world lock
+                            if (dataConfig.getBoolean("worldlocks." + worldName, false)) {
+                                p.sendMessage(ChatColor.RED + "That world is locked.");
+                            } else {
+                                p.teleport(w.getSpawnLocation());
+                                p.sendMessage(ChatColor.GREEN + "Teleported to world '" + worldName + "'.");
+                            }
+                        }
+                    } else {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt tp world <name>");
+                    }
+                    break;
+                case "sethub":
+                    saveLoc("hub_location", p.getLocation());
+                    p.sendMessage(ChatColor.GREEN + "Hub location set to your current position.");
+                    break;
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
             }
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("kit")) {
+            openKitListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("hub")) {
+            Location hubLoc = getLoc("hub_location");
+            if (hubLoc == null) {
+                p.sendMessage(ChatColor.RED + "Hub location not set.");
+                return true;
+            }
+            p.teleport(hubLoc);
+            p.sendMessage(ChatColor.AQUA + "Teleported to hub.");
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("crate")) {
+            openCrateListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("bounty")) {
+            if (args.length == 0) {
+                openBountyListGUI(p);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("set") && args.length >= 3) {
+                Player target = Bukkit.getPlayer(args[1]);
+                if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+                if (target.getUniqueId().equals(p.getUniqueId())) { p.sendMessage(ChatColor.RED + "Cannot bounty yourself."); return true; }
+                int amount;
+                try { amount = Integer.parseInt(args[2]); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Invalid amount."); return true; }
+                if (amount < 1) { p.sendMessage(ChatColor.RED + "Amount must be at least 1."); return true; }
+                if (p.getLevel() < amount) { p.sendMessage(ChatColor.RED + "Not enough XP levels."); return true; }
+                p.setLevel(p.getLevel() - amount);
+                String bountyId = String.valueOf(System.currentTimeMillis());
+                dataConfig.set("bounties." + bountyId + ".target", target.getUniqueId().toString());
+                dataConfig.set("bounties." + bountyId + ".targetName", target.getName());
+                dataConfig.set("bounties." + bountyId + ".setter", p.getUniqueId().toString());
+                dataConfig.set("bounties." + bountyId + ".setterName", p.getName());
+                dataConfig.set("bounties." + bountyId + ".amount", amount);
+                dataConfig.set("bounties." + bountyId + ".time", System.currentTimeMillis());
+                saveDataFile();
+                Bukkit.broadcastMessage(ChatColor.RED + "☠ BOUNTY: " + ChatColor.YELLOW + p.getName() + ChatColor.RED + " placed a " + ChatColor.GOLD + amount + " XP level" + ChatColor.RED + " bounty on " + ChatColor.YELLOW + target.getName() + ChatColor.RED + "!");
+                logAction(p.getName(), "set_bounty", target.getName() + " for " + amount + " XP");
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Usage: /bounty set <player> <amount> or /bounty");
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("shop")) {
+            openShopListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("quest")) {
+            openQuestListGUI(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("apply")) {
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.GOLD + "--- Staff Application ---");
+                p.sendMessage(ChatColor.YELLOW + "Usage: /apply <your message explaining why you want to be staff>");
+                return true;
+            }
+            String message = String.join(" ", args);
+            String appId = String.valueOf(dataConfig.getInt("applications.next_id", 1));
+            dataConfig.set("applications." + appId + ".player", p.getName());
+            dataConfig.set("applications." + appId + ".uuid", p.getUniqueId().toString());
+            dataConfig.set("applications." + appId + ".message", message);
+            dataConfig.set("applications." + appId + ".status", "pending");
+            dataConfig.set("applications." + appId + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+            dataConfig.set("applications.next_id", Integer.parseInt(appId) + 1);
+            saveDataFile();
+            p.sendMessage(ChatColor.GREEN + "✅ Your staff application #" + appId + " has been submitted! An admin will review it.");
+            logAction(p.getName(), "submitted_application", "#" + appId);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("vote")) {
+            if (args.length == 0) {
+                // Show active polls
+                showActivePolls(p);
+                return true;
+            }
+            if (args.length >= 2) {
+                String pollId = args[0];
+                String choice = args[1];
+                if (!dataConfig.contains("polls." + pollId)) { p.sendMessage(ChatColor.RED + "Poll not found."); return true; }
+                if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) { p.sendMessage(ChatColor.RED + "This poll has ended."); return true; }
+                List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+                if (voters.contains(p.getUniqueId().toString())) { p.sendMessage(ChatColor.RED + "You already voted on this poll."); return true; }
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                int choiceIdx;
+                try { choiceIdx = Integer.parseInt(choice); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Use the option number."); return true; }
+                if (choiceIdx < 1 || choiceIdx > options.size()) { p.sendMessage(ChatColor.RED + "Invalid option."); return true; }
+                voters.add(p.getUniqueId().toString());
+                dataConfig.set("polls." + pollId + ".voters", voters);
+                int current = dataConfig.getInt("polls." + pollId + ".votes." + choiceIdx, 0);
+                dataConfig.set("polls." + pollId + ".votes." + choiceIdx, current + 1);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "✅ Vote recorded for: " + ChatColor.YELLOW + options.get(choiceIdx - 1));
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Usage: /vote <pollId> <option#> or /vote");
             return true;
         }
 
@@ -283,17 +551,240 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             }
             return true;
         }
+
+        // ========== NICKNAME ==========
+        if (cmd.getName().equalsIgnoreCase("nick")) {
+            if (args.length == 0) {
+                // Reset nickname
+                String current = dataConfig.getString("nicknames." + p.getUniqueId(), "");
+                if (!current.isEmpty()) {
+                    dataConfig.set("nicknames." + p.getUniqueId(), null);
+                    saveDataFile();
+                    p.setDisplayName(p.getName());
+                    p.sendMessage(ChatColor.GREEN + "Nickname removed.");
+                } else {
+                    p.sendMessage(ChatColor.YELLOW + "Usage: /nick <name> or /nick to reset");
+                }
+            } else {
+                String nick = String.join(" ", args);
+                String colored = ChatColor.translateAlternateColorCodes('&', nick);
+                dataConfig.set("nicknames." + p.getUniqueId(), nick);
+                saveDataFile();
+                p.setDisplayName(colored);
+                p.sendMessage(ChatColor.GREEN + "Nickname set to: " + colored);
+            }
+            return true;
+        }
+
+        // ========== RULES ==========
+        if (cmd.getName().equalsIgnoreCase("rules")) {
+            List<String> rules = dataConfig.getStringList("server_rules");
+            if (rules.isEmpty()) {
+                p.sendMessage(ChatColor.YELLOW + "No server rules have been set yet.");
+            } else {
+                p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "Server Rules" + ChatColor.GOLD + " =====");
+                for (int i = 0; i < rules.size(); i++) {
+                    p.sendMessage(ChatColor.YELLOW + "" + (i + 1) + ". " + ChatColor.WHITE + ChatColor.translateAlternateColorCodes('&', rules.get(i)));
+                }
+            }
+            return true;
+        }
+
+        // ========== DUEL ==========
+        if (cmd.getName().equalsIgnoreCase("duel")) {
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.RED + "Usage: /duel <player> [wager]  or  /duel accept  or  /duel deny");
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("accept")) {
+                UUID requesterId = null;
+                for (Map.Entry<UUID, UUID> entry : duelRequests.entrySet()) {
+                    if (entry.getValue().equals(p.getUniqueId())) { requesterId = entry.getKey(); break; }
+                }
+                if (requesterId == null) { p.sendMessage(ChatColor.RED + "No pending duel request."); return true; }
+                Player requester = Bukkit.getPlayer(requesterId);
+                if (requester == null) { p.sendMessage(ChatColor.RED + "Requester is offline."); duelRequests.remove(requesterId); return true; }
+                int wager = duelWagers.getOrDefault(requesterId, 0);
+                if (wager > 0) {
+                    if (p.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Not enough XP for wager (" + wager + " levels)."); return true; }
+                    if (requester.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Requester no longer has enough XP."); duelRequests.remove(requesterId); return true; }
+                }
+                // Start duel
+                duelRequests.remove(requesterId);
+                activeDuels.put(requesterId, p.getUniqueId());
+                activeDuels.put(p.getUniqueId(), requesterId);
+                duelReturnLocations.put(requesterId, requester.getLocation());
+                duelReturnLocations.put(p.getUniqueId(), p.getLocation());
+                requester.sendMessage(ChatColor.GREEN + "⚔ Duel started with " + p.getName() + "!" + (wager > 0 ? " Wager: " + wager + " XP" : ""));
+                p.sendMessage(ChatColor.GREEN + "⚔ Duel started with " + requester.getName() + "!" + (wager > 0 ? " Wager: " + wager + " XP" : ""));
+                logAction(p.getName(), "duel_started", requester.getName() + (wager > 0 ? " wager:" + wager : ""));
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("deny")) {
+                UUID requesterId = null;
+                for (Map.Entry<UUID, UUID> entry : duelRequests.entrySet()) {
+                    if (entry.getValue().equals(p.getUniqueId())) { requesterId = entry.getKey(); break; }
+                }
+                if (requesterId != null) {
+                    Player requester = Bukkit.getPlayer(requesterId);
+                    if (requester != null) requester.sendMessage(ChatColor.RED + p.getName() + " denied your duel request.");
+                    duelRequests.remove(requesterId);
+                    duelWagers.remove(requesterId);
+                    p.sendMessage(ChatColor.YELLOW + "Duel request denied.");
+                } else {
+                    p.sendMessage(ChatColor.RED + "No pending duel request.");
+                }
+                return true;
+            }
+            // Send duel request
+            Player target = Bukkit.getPlayer(args[0]);
+            if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+            if (target.equals(p)) { p.sendMessage(ChatColor.RED + "Can't duel yourself."); return true; }
+            int wager = 0;
+            if (args.length > 1) {
+                try { wager = Integer.parseInt(args[1]); } catch (NumberFormatException e) { p.sendMessage(ChatColor.RED + "Invalid wager amount."); return true; }
+                if (wager < 0) wager = 0;
+                if (wager > 0 && p.getLevel() < wager) { p.sendMessage(ChatColor.RED + "Not enough XP for wager."); return true; }
+            }
+            duelRequests.put(p.getUniqueId(), target.getUniqueId());
+            if (wager > 0) duelWagers.put(p.getUniqueId(), wager);
+            p.sendMessage(ChatColor.GREEN + "⚔ Duel request sent to " + target.getName() + (wager > 0 ? " with " + wager + " XP wager" : ""));
+            target.sendMessage(ChatColor.GOLD + "⚔ " + ChatColor.YELLOW + p.getName() + ChatColor.GOLD + " challenged you to a duel!" + (wager > 0 ? " Wager: " + ChatColor.AQUA + wager + " XP" : ""));
+            target.sendMessage(ChatColor.GREEN + "/duel accept" + ChatColor.WHITE + " or " + ChatColor.RED + "/duel deny");
+            return true;
+        }
+
+        // ========== PLAYER WARPS ==========
+        if (cmd.getName().equalsIgnoreCase("pwarp")) {
+            if (args.length == 0) {
+                openPwarpListGUI(p);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("set") && args.length >= 2) {
+                String warpName = args[1];
+                int cost = dataConfig.getInt("pwarp_cost", 5);
+                if (p.getLevel() < cost) { p.sendMessage(ChatColor.RED + "Need " + cost + " XP levels to create a warp."); return true; }
+                // Limit per player
+                int max = dataConfig.getInt("pwarp_max", 3);
+                int count = 0;
+                if (dataConfig.contains("pwarps")) {
+                    for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+                        if (dataConfig.getString("pwarps." + id + ".owner", "").equals(p.getUniqueId().toString())) count++;
+                    }
+                }
+                if (count >= max) { p.sendMessage(ChatColor.RED + "Max " + max + " player warps."); return true; }
+                p.setLevel(p.getLevel() - cost);
+                String id = warpName.toLowerCase().replace(" ", "_");
+                dataConfig.set("pwarps." + id + ".name", warpName);
+                dataConfig.set("pwarps." + id + ".owner", p.getUniqueId().toString());
+                dataConfig.set("pwarps." + id + ".ownerName", p.getName());
+                dataConfig.set("pwarps." + id + ".x", p.getLocation().getX());
+                dataConfig.set("pwarps." + id + ".y", p.getLocation().getY());
+                dataConfig.set("pwarps." + id + ".z", p.getLocation().getZ());
+                dataConfig.set("pwarps." + id + ".world", p.getWorld().getName());
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Player warp '" + warpName + "' created!");
+                logAction(p.getName(), "pwarp_created", warpName);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("delete") && args.length >= 2) {
+                String id = args[1].toLowerCase().replace(" ", "_");
+                String owner = dataConfig.getString("pwarps." + id + ".owner", "");
+                if (!owner.equals(p.getUniqueId().toString()) && !p.hasPermission("dmt.admin")) {
+                    p.sendMessage(ChatColor.RED + "That's not your warp."); return true;
+                }
+                dataConfig.set("pwarps." + id, null);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Player warp deleted.");
+                return true;
+            }
+            // Teleport to warp
+            if (args.length >= 1) {
+                String id = args[0].toLowerCase().replace(" ", "_");
+                if (dataConfig.contains("pwarps." + id)) {
+                    World w = Bukkit.getWorld(dataConfig.getString("pwarps." + id + ".world", "world"));
+                    if (w != null) {
+                        Location loc = new Location(w,
+                            dataConfig.getDouble("pwarps." + id + ".x"),
+                            dataConfig.getDouble("pwarps." + id + ".y"),
+                            dataConfig.getDouble("pwarps." + id + ".z"));
+                        p.teleport(loc);
+                        dataConfig.set("pwarps." + id + ".visits", dataConfig.getInt("pwarps." + id + ".visits", 0) + 1);
+                        saveDataFile();
+                        p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + id + ".name", id));
+                    }
+                } else {
+                    p.sendMessage(ChatColor.RED + "Warp not found. Use /pwarp to browse.");
+                }
+                return true;
+            }
+            return true;
+        }
+
+        // ========== ACHIEVEMENTS ==========
+        if (cmd.getName().equalsIgnoreCase("achievements")) {
+            openAchievementsGUI(p);
+            return true;
+        }
+
+        // ========== STATS (K/D) ==========
+        if (cmd.getName().equalsIgnoreCase("stats")) {
+            Player target = args.length > 0 ? Bukkit.getPlayer(args[0]) : p;
+            if (target == null) { p.sendMessage(ChatColor.RED + "Player not found."); return true; }
+            UUID tid = target.getUniqueId();
+            int kills = dataConfig.getInt("pvpstats." + tid + ".kills", 0);
+            int deaths = dataConfig.getInt("pvpstats." + tid + ".deaths", 0);
+            double kd = deaths > 0 ? Math.round((double) kills / deaths * 100.0) / 100.0 : kills;
+            int streak = dataConfig.getInt("pvpstats." + tid + ".streak", 0);
+            int bestStreak = dataConfig.getInt("pvpstats." + tid + ".best_streak", 0);
+            p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + target.getName() + "'s Stats" + ChatColor.GOLD + " =====");
+            p.sendMessage(ChatColor.GREEN + "Kills: " + ChatColor.WHITE + kills);
+            p.sendMessage(ChatColor.RED + "Deaths: " + ChatColor.WHITE + deaths);
+            p.sendMessage(ChatColor.YELLOW + "K/D Ratio: " + ChatColor.WHITE + kd);
+            p.sendMessage(ChatColor.AQUA + "Current Streak: " + ChatColor.WHITE + streak);
+            p.sendMessage(ChatColor.LIGHT_PURPLE + "Best Streak: " + ChatColor.WHITE + bestStreak);
+            return true;
+        }
+
         return true;
     }
 
     private void sendHelpMessage(Player p) {
-        p.sendMessage(ChatColor.GOLD + "=== " + ChatColor.AQUA + "Drowsy Management Tool" + ChatColor.GOLD + " ===");
-        p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Opens the management GUI");
-        p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set punishment location");
-        p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
-        p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail location");
-        p.sendMessage(ChatColor.AQUA + "/dmt help" + ChatColor.WHITE + " - Show this help message");
-        p.sendMessage(ChatColor.AQUA + "/ticket new <message>" + ChatColor.WHITE + " - Submit a ticket");
+        p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "DrowsyCraft" + ChatColor.GOLD + " =====");
+        p.sendMessage("");
+        p.sendMessage(ChatColor.YELLOW + "" + ChatColor.BOLD + "Player Commands:");
+        p.sendMessage(ChatColor.GREEN + "/kit" + ChatColor.WHITE + " - Browse and claim kits");
+        p.sendMessage(ChatColor.GREEN + "/crate" + ChatColor.WHITE + " - Open the crate menu");
+        p.sendMessage(ChatColor.GREEN + "/bounty" + ChatColor.WHITE + " - View the bounty board");
+        p.sendMessage(ChatColor.GREEN + "/bounty set <player> <amount>" + ChatColor.WHITE + " - Place a bounty");
+        p.sendMessage(ChatColor.GREEN + "/shop" + ChatColor.WHITE + " - Browse player shops");
+        p.sendMessage(ChatColor.GREEN + "/shop sell <item> <amount> <price>" + ChatColor.WHITE + " - Sell an item");
+        p.sendMessage(ChatColor.GREEN + "/quest" + ChatColor.WHITE + " - View quests & claim rewards");
+        p.sendMessage(ChatColor.GREEN + "/vote" + ChatColor.WHITE + " - View active polls");
+        p.sendMessage(ChatColor.GREEN + "/vote <pollId> <option#>" + ChatColor.WHITE + " - Vote on a poll");
+        p.sendMessage(ChatColor.GREEN + "/apply <message>" + ChatColor.WHITE + " - Submit a staff application");
+        p.sendMessage(ChatColor.GREEN + "/ticket new <message>" + ChatColor.WHITE + " - Submit a ticket");
+        p.sendMessage(ChatColor.GREEN + "/tpa accept|deny <player>" + ChatColor.WHITE + " - Teleport requests");
+        p.sendMessage(ChatColor.GREEN + "/nick <name>" + ChatColor.WHITE + " - Set your nickname (& color codes)");
+        p.sendMessage(ChatColor.GREEN + "/rules" + ChatColor.WHITE + " - View server rules");
+        p.sendMessage(ChatColor.GREEN + "/duel <player> [wager]" + ChatColor.WHITE + " - Challenge to a duel");
+        p.sendMessage(ChatColor.GREEN + "/pwarp" + ChatColor.WHITE + " - Browse player warps");
+        p.sendMessage(ChatColor.GREEN + "/pwarp set <name>" + ChatColor.WHITE + " - Create a player warp");
+        p.sendMessage(ChatColor.GREEN + "/achievements" + ChatColor.WHITE + " - View your achievements");
+        p.sendMessage(ChatColor.GREEN + "/stats [player]" + ChatColor.WHITE + " - View PvP stats");
+
+        if (p.hasPermission("dmt.admin")) {
+            p.sendMessage("");
+            p.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "Admin Commands:");
+            p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Opens the management GUI");
+            p.sendMessage(ChatColor.AQUA + "/dmt punish <player> <duration>" + ChatColor.WHITE + " - Punish a player");
+            p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set punishment location");
+            p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
+            p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail");
+            p.sendMessage(ChatColor.AQUA + "/dmt tp world <name>" + ChatColor.WHITE + " - Teleport to another world");
+            p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
+            p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
+        }
     }
 
     // --- CHAT LISTENER (Broadcasts, Notes, Reasons) ---
@@ -325,7 +816,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     }
                     break;
                 case SET_WARP:
-                    dataConfig.set("warps." + reason + ".x", p.getLocation().getX());
+                    // sanitize warp name similar to world creation rules
+                    String warpName = reason.replaceAll("[^A-Za-z0-9_\\-]", "");
+                    if (warpName.isEmpty()) {
+                        p.sendMessage(ChatColor.RED + "Invalid warp name.");
+                        break;
+                    }
+                    dataConfig.set("warps." + warpName + ".x", p.getLocation().getX());
+                    dataConfig.set("warps." + warpName + ".y", p.getLocation().getY());
+                    dataConfig.set("warps." + warpName + ".z", p.getLocation().getZ());
+                    dataConfig.set("warps." + warpName + ".world", p.getWorld().getName());
+                    dataConfig.set("warps." + warpName + ".yaw", p.getLocation().getYaw());
+                    dataConfig.set("warps." + warpName + ".pitch", p.getLocation().getPitch());
+                    saveDataFile();
+                    p.sendMessage(ChatColor.GREEN + "Warp '" + warpName + "' set!");
                     break;
                 case WORLD_CREATE_NAME:
                     String type = ctx.targetName;
@@ -450,6 +954,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         playerList.setItemMeta(plMeta);
         gui.setItem(getNextGridSlot(), playerList);
         
+        // Kits
+        ItemStack kits = new ItemStack(Material.CHEST);
+        ItemMeta kitMeta = kits.getItemMeta();
+        kitMeta.setDisplayName(ChatColor.GOLD + "Kits");
+        kitMeta.setLore(Arrays.asList(ChatColor.GRAY + "Browse and purchase kits"));
+        kits.setItemMeta(kitMeta);
+        gui.setItem(getNextGridSlot(), kits);
+        
         // Back button
         ItemStack back = new ItemStack(Material.BARRIER);
         ItemMeta bMeta = back.getItemMeta();
@@ -458,6 +970,160 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         gui.setItem(53, back);
         
         p.openInventory(gui);
+    }
+
+    private void openKitListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_KIT_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+
+        if (dataConfig.contains("kits")) {
+            for (String kitName : dataConfig.getConfigurationSection("kits").getKeys(false)) {
+                String path = "kits." + kitName;
+                String icon = dataConfig.getString(path + ".icon", "CHEST");
+                int cost = dataConfig.getInt(path + ".cost", 0);
+                int cooldown = dataConfig.getInt(path + ".cooldown", 0);
+                String desc = dataConfig.getString(path + ".description", "");
+
+                Material mat = Material.CHEST;
+                try { mat = Material.valueOf(icon.toUpperCase()); } catch (Exception ignored) {}
+
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName(ChatColor.GOLD + kitName);
+                List<String> lore = new ArrayList<>();
+                if (!desc.isEmpty()) lore.add(ChatColor.GRAY + desc);
+                lore.add("");
+                if (cost > 0) lore.add(ChatColor.GREEN + "Cost: " + cost + " XP Levels");
+                else lore.add(ChatColor.GREEN + "Free");
+                if (cooldown > 0) lore.add(ChatColor.YELLOW + "Cooldown: " + cooldown + "s");
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to preview & purchase");
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+
+        p.openInventory(gui);
+    }
+
+    private void openKitPreviewGUI(Player p, String kitName) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_KIT_PREVIEW + kitName);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+
+        String path = "kits." + kitName;
+        List<String> itemStrings = dataConfig.getStringList(path + ".items");
+        int slot = 10; // Start in the inner area
+        for (String itemStr : itemStrings) {
+            if (slot >= 44) break;
+            // Skip border slots
+            if (slot % 9 == 0 || slot % 9 == 8) { slot++; continue; }
+            try {
+                // Format: MATERIAL:amount or MATERIAL
+                String[] parts = itemStr.split(":");
+                Material mat = Material.valueOf(parts[0].toUpperCase());
+                int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                ItemStack display = new ItemStack(mat, amount);
+                gui.setItem(slot, display);
+            } catch (Exception ignored) {}
+            slot++;
+        }
+
+        // Purchase button
+        int cost = dataConfig.getInt(path + ".cost", 0);
+        ItemStack purchase = new ItemStack(Material.EMERALD_BLOCK);
+        ItemMeta pMeta = purchase.getItemMeta();
+        pMeta.setDisplayName(ChatColor.GREEN + "Purchase Kit");
+        List<String> lore = new ArrayList<>();
+        if (cost > 0) lore.add(ChatColor.YELLOW + "Cost: " + cost + " XP Levels");
+        else lore.add(ChatColor.GREEN + "Free!");
+        pMeta.setLore(lore);
+        purchase.setItemMeta(pMeta);
+        gui.setItem(49, purchase);
+
+        // Back button
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back to Kits");
+        back.setItemMeta(bMeta);
+        gui.setItem(45, back);
+
+        p.openInventory(gui);
+    }
+
+    private boolean claimKit(Player p, String kitName) {
+        String path = "kits." + kitName;
+        if (!dataConfig.contains(path)) {
+            p.sendMessage(ChatColor.RED + "Kit not found.");
+            return false;
+        }
+        int cost = dataConfig.getInt(path + ".cost", 0);
+        int cooldown = dataConfig.getInt(path + ".cooldown", 0);
+        String permission = dataConfig.getString(path + ".permission", "");
+
+        // Permission check
+        if (!permission.isEmpty() && !p.hasPermission(permission)) {
+            p.sendMessage(ChatColor.RED + "You don't have permission for this kit.");
+            return false;
+        }
+
+        // Cooldown check
+        String cooldownKey = "kit_cooldowns." + p.getUniqueId() + "." + kitName;
+        long lastUsed = dataConfig.getLong(cooldownKey, 0);
+        long now = System.currentTimeMillis();
+        if (cooldown > 0 && lastUsed > 0) {
+            long remaining = (lastUsed + (cooldown * 1000L)) - now;
+            if (remaining > 0) {
+                long secs = remaining / 1000;
+                String timeStr = secs >= 3600 ? (secs / 3600) + "h " + ((secs % 3600) / 60) + "m" :
+                                 secs >= 60 ? (secs / 60) + "m " + (secs % 60) + "s" : secs + "s";
+                p.sendMessage(ChatColor.RED + "Kit on cooldown! " + ChatColor.YELLOW + timeStr + " remaining.");
+                return false;
+            }
+        }
+
+        // Cost check (XP levels)
+        if (cost > 0) {
+            if (p.getLevel() < cost) {
+                p.sendMessage(ChatColor.RED + "Not enough XP levels! You need " + ChatColor.YELLOW + cost + ChatColor.RED + " levels. (You have " + p.getLevel() + ")");
+                return false;
+            }
+            p.setLevel(p.getLevel() - cost);
+        }
+
+        // Give items
+        List<String> itemStrings = dataConfig.getStringList(path + ".items");
+        for (String itemStr : itemStrings) {
+            try {
+                String[] parts = itemStr.split(":");
+                Material mat = Material.valueOf(parts[0].toUpperCase());
+                int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                ItemStack item = new ItemStack(mat, amount);
+                HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(item);
+                for (ItemStack drop : overflow.values()) {
+                    p.getWorld().dropItemNaturally(p.getLocation(), drop);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        // Set cooldown
+        if (cooldown > 0) {
+            dataConfig.set(cooldownKey, now);
+            saveDataFile();
+        }
+
+        p.sendMessage(ChatColor.GREEN + "You received the " + ChatColor.GOLD + kitName + ChatColor.GREEN + " kit!");
+        logAction(p.getName(), "claimed_kit", kitName);
+        return true;
     }
 
     private void openPlayerListTPA(Player p) {
@@ -669,17 +1335,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             item = createGuiItem(Material.NETHER_STAR, ChatColor.AQUA + "Create World");
             if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
         }
-        // Delete World
-        slot = getNextGridSlot();
-        if (slot >= 0 && slot < gui.getSize()) {
-            item = createGuiItem(Material.TNT, ChatColor.RED + "Delete World");
-            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
-        }
+        // (no top‑level delete button – deletion happens per‑world in options menu)
         // Back button
         item = createGuiItem(Material.BARRIER, ChatColor.RED + "Back to Main Menu");
         if (item != null && item.getItemMeta() != null) gui.setItem(26, item);
         p.openInventory(gui);
     }
+
 
     private void openWorldListMenu(Player p) {
         openWorldListMenu(p, 0);
@@ -844,7 +1506,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 double x = dataConfig.getDouble("warps." + warpName + ".x");
                 double y = dataConfig.getDouble("warps." + warpName + ".y");
                 double z = dataConfig.getDouble("warps." + warpName + ".z");
+                String worldName = dataConfig.getString("warps." + warpName + ".world");
                 wMeta.setLore(Arrays.asList(
+                    ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName,
                     ChatColor.GRAY + "X: " + ChatColor.WHITE + String.format("%.1f", x),
                     ChatColor.GRAY + "Y: " + ChatColor.WHITE + String.format("%.1f", y),
                     ChatColor.GRAY + "Z: " + ChatColor.WHITE + String.format("%.1f", z)
@@ -1150,29 +1814,52 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     @EventHandler
     public void onGuiClick(InventoryClickEvent e) {
         String title = e.getView().getTitle();
-        if (!title.equals(GUI_MAIN) && !title.equals(GUI_PLAYER_LIST) && !title.equals(GUI_TICKET_LIST) 
-            && !title.startsWith(GUI_PLAYER_ACTION) && !title.startsWith(GUI_NOTES_VIEW) && !title.equals(ChatColor.RED + "Punished Players")
-            && !title.startsWith(ChatColor.YELLOW + "Note:") && !title.equals(GUI_MENU_SELECTOR) && !title.equals(GUI_PLAYER_MENU)
-            && !title.equals(GUI_PLAYER_LIST_TPA) && !title.equals(ChatColor.BLUE + "Warps") && !title.startsWith(GUI_WARP_MANAGEMENT)
-            && !title.startsWith(ChatColor.RED + "Delete:") && !title.equals(GUI_CLAIMS) && !title.equals(GUI_CLAIM_CONFIRM)
-            && !title.equals(GUI_UNCLAIM_CONFIRM) && !title.equals(GUI_TRUST_PLAYER) && !title.equals(GUI_UNTRUST_PLAYER)
-            && !title.equals(GUI_WORLD_UTILITIES) && !title.equals(GUI_WORLD_LIST)
-            && !title.startsWith(GUI_WORLD_OPTIONS) && !title.equals(GUI_CREATE_TYPE) && !title.startsWith(GUI_DELETE_CONFIRM)) return;
+        boolean relevant = title.equals(GUI_MAIN)
+            || title.equals(GUI_PLAYER_LIST)
+            || title.equals(GUI_TICKET_LIST)
+            || title.startsWith(GUI_PLAYER_ACTION)
+            || title.startsWith(GUI_NOTES_VIEW)
+            || title.equals(ChatColor.RED + "Punished Players")
+            || title.startsWith(ChatColor.YELLOW + "Note:")
+            || title.equals(GUI_MENU_SELECTOR)
+            || title.equals(GUI_PLAYER_MENU)
+            || title.equals(GUI_PLAYER_LIST_TPA)
+            || title.equals(ChatColor.BLUE + "Warps")
+            || title.startsWith(GUI_WARP_MANAGEMENT)
+            || title.startsWith(ChatColor.RED + "Delete:")
+            || title.equals(GUI_CLAIMS)
+            || title.equals(GUI_CLAIM_CONFIRM)
+            || title.equals(GUI_UNCLAIM_CONFIRM)
+            || title.equals(GUI_TRUST_PLAYER)
+            || title.equals(GUI_UNTRUST_PLAYER)
+            || title.equals(GUI_WORLD_UTILITIES)
+            || title.equals(GUI_WORLD_LIST)
+            || title.startsWith(GUI_WORLD_OPTIONS)
+            || title.equals(GUI_CREATE_TYPE)
+            || title.startsWith(GUI_DELETE_CONFIRM)
+            || title.equals(GUI_KIT_LIST)
+            || title.startsWith(GUI_KIT_PREVIEW)
+            || title.startsWith(GUI_KIT_CONFIRM)
+            || title.equals(GUI_CRATE_LIST)
+            || title.equals(GUI_BOUNTY_LIST)
+            || title.equals(GUI_SHOP_LIST)
+            || title.equals(GUI_QUEST_LIST)
+            || title.equals(GUI_AUCTION_HOUSE)
+            || title.equals(GUI_PWARP_LIST)
+            || title.equals(GUI_ACHIEVEMENTS);
+        if (!relevant) return;
 
         e.setCancelled(true);
-        if (e.getCurrentItem() == null) return;
+        ItemStack clicked = e.getCurrentItem();
+        if (clicked == null) return;
         Player p = (Player) e.getWhoClicked();
-        Material type = e.getCurrentItem().getType();
-        String itemName = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName());
+        Material type = clicked.getType();
+        ItemMeta clickedMeta = clicked.getItemMeta();
+        String itemName = "";
+        if (clickedMeta != null && clickedMeta.hasDisplayName()) itemName = ChatColor.stripColor(clickedMeta.getDisplayName());
 
-        // Debug: Main menu click
-        if (title.equals(GUI_MAIN)) {
-            int slot = e.getRawSlot();
-            p.sendMessage(ChatColor.YELLOW + "[DEBUG] Clicked slot: " + slot);
-            if (slot == 31) {
-                p.sendMessage(ChatColor.YELLOW + "[DEBUG] Opening World Utilities menu");
-            }
-        }
+        // wrap handler in try/catch to log unexpected errors
+        try {
         // Menu Selector
         if (title.equals(GUI_MENU_SELECTOR)) {
             if (type == Material.EMERALD_BLOCK) {
@@ -1216,9 +1903,176 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 openClaimsMenu(p);
             } else if (itemName.equals("Players (TPA)")) {
                 openPlayerListTPA(p);
+            } else if (itemName.equals("Kits")) {
+                openKitListGUI(p);
             } else if (type == Material.BARRIER) {
                 p.closeInventory();
             }
+            return;
+        }
+
+        // Kit List
+        if (title.equals(GUI_KIT_LIST)) {
+            if (type == Material.BARRIER) {
+                p.closeInventory();
+            } else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                openKitPreviewGUI(p, itemName);
+            }
+            return;
+        }
+
+        // Kit Preview
+        if (title.startsWith(GUI_KIT_PREVIEW)) {
+            String kitName = title.replace(GUI_KIT_PREVIEW, "");
+            if (type == Material.BARRIER) {
+                openKitListGUI(p);
+            } else if (type == Material.EMERALD_BLOCK) {
+                p.closeInventory();
+                claimKit(p, kitName);
+            }
+            return;
+        }
+
+        // Crate List
+        if (title.equals(GUI_CRATE_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                p.closeInventory();
+                openCrateReward(p, itemName);
+            }
+            return;
+        }
+
+        // Bounty List
+        if (title.equals(GUI_BOUNTY_LIST)) {
+            if (type == Material.BARRIER) p.closeInventory();
+            return;
+        }
+
+        // Shop List
+        if (title.equals(GUI_SHOP_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type != Material.GRAY_STAINED_GLASS_PANE && type != Material.BLACK_STAINED_GLASS_PANE) {
+                // Find matching shop listing and purchase
+                if (dataConfig.contains("shops")) {
+                    for (String shopId : dataConfig.getConfigurationSection("shops").getKeys(false)) {
+                        String sItem = dataConfig.getString("shops." + shopId + ".item", "");
+                        int sAmt = dataConfig.getInt("shops." + shopId + ".amount", 1);
+                        String expected = sAmt + "x " + sItem.replace("_", " ");
+                        if (itemName.equalsIgnoreCase(expected)) {
+                            int price = dataConfig.getInt("shops." + shopId + ".price", 0);
+                            if (p.getLevel() < price) {
+                                p.sendMessage(ChatColor.RED + "Not enough XP! Need " + price + " levels.");
+                                return;
+                            }
+                            p.setLevel(p.getLevel() - price);
+                            Material mat = Material.valueOf(sItem.toUpperCase());
+                            ItemStack bought = new ItemStack(mat, sAmt);
+                            HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(bought);
+                            for (ItemStack drop : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+                            p.sendMessage(ChatColor.GREEN + "Purchased " + sAmt + "x " + mat.name().replace("_", " ") + "!");
+                            String owner = dataConfig.getString("shops." + shopId + ".ownerName", "");
+                            p.closeInventory();
+                            // Notify seller if online
+                            Player seller = Bukkit.getPlayer(owner);
+                            if (seller != null) seller.sendMessage(ChatColor.GREEN + p.getName() + " bought " + sAmt + "x " + mat.name().replace("_", " ") + " from your shop!");
+                            // Remove listing
+                            dataConfig.set("shops." + shopId, null);
+                            saveDataFile();
+                            logAction(p.getName(), "shop_purchase", shopId);
+                            return;
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // Quest List
+        if (title.equals(GUI_QUEST_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
+            else if (type == Material.LIME_DYE) {
+                // Already completed
+                p.sendMessage(ChatColor.GREEN + "Already claimed.");
+            } else if (type == Material.YELLOW_DYE) {
+                // Check if ready to claim - look for "Click to claim" in lore
+                ItemMeta meta = e.getCurrentItem().getItemMeta();
+                if (meta != null && meta.hasLore()) {
+                    boolean canClaim = false;
+                    for (String line : meta.getLore()) {
+                        if (ChatColor.stripColor(line).contains("Click to claim")) { canClaim = true; break; }
+                    }
+                    if (canClaim) {
+                        p.closeInventory();
+                        claimQuestReward(p, itemName);
+                    } else {
+                        p.sendMessage(ChatColor.YELLOW + "Quest not yet complete!");
+                    }
+                }
+            }
+            return;
+        }
+
+        // Auction House GUI click
+        if (title.equals(GUI_AUCTION_HOUSE)) {
+            if (type == Material.BARRIER) { p.closeInventory(); return; }
+            ItemMeta meta = e.getCurrentItem().getItemMeta();
+            if (meta != null && meta.hasLore()) {
+                String auctionId = null;
+                for (String line : meta.getLore()) {
+                    String stripped = ChatColor.stripColor(line);
+                    if (stripped.startsWith("ID:")) { auctionId = stripped.substring(3); break; }
+                }
+                if (auctionId != null) {
+                    int currentBid = dataConfig.getInt("auctions." + auctionId + ".currentBid", 0);
+                    int nextBid = currentBid + dataConfig.getInt("auctions." + auctionId + ".bidIncrement", 5);
+                    if (p.getLevel() < nextBid) { p.sendMessage(ChatColor.RED + "Not enough XP to bid (" + nextBid + " levels needed)."); return; }
+                    String seller = dataConfig.getString("auctions." + auctionId + ".seller", "");
+                    if (seller.equals(p.getUniqueId().toString())) { p.sendMessage(ChatColor.RED + "Can't bid on your own auction."); return; }
+                    dataConfig.set("auctions." + auctionId + ".currentBid", nextBid);
+                    dataConfig.set("auctions." + auctionId + ".highBidder", p.getUniqueId().toString());
+                    dataConfig.set("auctions." + auctionId + ".highBidderName", p.getName());
+                    saveDataFile();
+                    p.sendMessage(ChatColor.GREEN + "Bid placed: " + nextBid + " XP levels!");
+                    logAction(p.getName(), "auction_bid", auctionId + " for " + nextBid);
+                    p.closeInventory();
+                    openAuctionHouseGUI(p);
+                }
+            }
+            return;
+        }
+
+        // Player Warp List GUI click
+        if (title.equals(GUI_PWARP_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); return; }
+            ItemMeta meta = e.getCurrentItem().getItemMeta();
+            if (meta != null && meta.hasLore()) {
+                String warpId = null;
+                for (String line : meta.getLore()) {
+                    String stripped = ChatColor.stripColor(line);
+                    if (stripped.startsWith("ID:")) { warpId = stripped.substring(3); break; }
+                }
+                if (warpId != null && dataConfig.contains("pwarps." + warpId)) {
+                    p.closeInventory();
+                    World w = Bukkit.getWorld(dataConfig.getString("pwarps." + warpId + ".world", "world"));
+                    if (w != null) {
+                        Location loc = new Location(w,
+                            dataConfig.getDouble("pwarps." + warpId + ".x"),
+                            dataConfig.getDouble("pwarps." + warpId + ".y"),
+                            dataConfig.getDouble("pwarps." + warpId + ".z"));
+                        p.teleport(loc);
+                        dataConfig.set("pwarps." + warpId + ".visits", dataConfig.getInt("pwarps." + warpId + ".visits", 0) + 1);
+                        saveDataFile();
+                        p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + warpId + ".name", warpId));
+                    }
+                }
+            }
+            return;
+        }
+
+        // Achievements GUI click
+        if (title.equals(GUI_ACHIEVEMENTS)) {
+            if (type == Material.BARRIER) { p.closeInventory(); }
             return;
         }
 
@@ -1293,13 +2147,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             return;
         }
 
+
+
+
         // World Utilities Menu
         if (title.equals(GUI_WORLD_UTILITIES)) {
-            if (type == Material.GRASS_BLOCK || type == Material.TNT || type == Material.NETHER_STAR) {
+            p.sendMessage(ChatColor.YELLOW + "[DEBUG] world utilities menu click type=" + type + " name=" + itemName);
+            if (type == Material.GRASS_BLOCK || type == Material.NETHER_STAR) {
                 p.closeInventory();
-                if (type == Material.GRASS_BLOCK) openWorldListMenu(p);
-                else if (type == Material.NETHER_STAR) openCreateWorldTypeMenu(p);
-                else if (type == Material.TNT) openWorldListMenu(p);
+                if (type == Material.GRASS_BLOCK) {
+                    try { openWorldListMenu(p); }
+                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world list"); ex.printStackTrace(); }
+                }
+                else if (type == Material.NETHER_STAR) {
+                    try { openCreateWorldTypeMenu(p); }
+                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world type chooser"); ex.printStackTrace(); }
+                }
             } else if (type == Material.BARRIER) {
                 openMainMenu(p);
             }
@@ -1326,9 +2189,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             } else if (type == Material.ENDER_PEARL) {
                 World w = Bukkit.getWorld(worldName);
                 if (w != null) {
-                    p.closeInventory();
-                    p.teleport(w.getSpawnLocation());
-                    p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
+                    // check lock
+                    if (dataConfig.getBoolean("worldlocks." + worldName, false)) {
+                        p.sendMessage(ChatColor.RED + "That world is locked.");
+                    } else {
+                        p.closeInventory();
+                        p.teleport(w.getSpawnLocation());
+                        p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
+                    }
                 } else p.sendMessage(ChatColor.RED + "World not found.");
             } else if (type == Material.IRON_DOOR) {
                 boolean locked = dataConfig.getBoolean("worldlocks." + worldName, false);
@@ -1475,7 +2343,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         if (title.equals(GUI_MAIN)) {
 
-            int slot = e.getSlot();
+            int slot = e.getRawSlot();
             switch(slot) {
                 case 11: p.getWorld().setStorm(false); break;
                 case 12: p.getWorld().setThundering(false); p.getWorld().setStorm(true); break;
@@ -1510,7 +2378,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.ANNOUNCE));
                     p.sendMessage(ChatColor.GOLD + "Enter broadcast message:"); break;
                 case 30: openTicketListMenu(p); break;
-                case 31: openWorldUtilitiesMenu(p); break;
+                case 31: 
+                    p.sendMessage(ChatColor.YELLOW + "[DEBUG] main menu world utilities clicked slot=" + slot);
+                    try { openWorldUtilitiesMenu(p); } catch (Exception ex) {
+                        p.sendMessage(ChatColor.RED + "Error opening world utilities menu");
+                        ex.printStackTrace();
+                    }
+                    break;
                 case 16: openPunishedPlayersMenu(p); break;
                 case 43: p.closeInventory(); break;
             }
@@ -1624,6 +2498,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName); break;
             }
         }
+        } catch (Exception ex) {
+            getLogger().severe("Error handling GUI click (" + title + "): " + ex.getMessage());
+            ex.printStackTrace();
+        }
     }
 
 
@@ -1632,11 +2510,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     public void onPunishMove(PlayerMoveEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) {
             if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) e.setCancelled(true);
+        } else {
+            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         }
     }
     @EventHandler
     public void onPlayerPortal(PlayerPortalEvent e) {
-        // ...existing code...
+        // prevent players from using portals when locks are enabled
+        Player p = e.getPlayer();
+        if (e.getTo() == null) return;
+        World.Environment env = e.getTo().getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "Nether access is locked.");
+        } else if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "The End access is locked.");
+        }
     }
 
     @EventHandler
@@ -1653,6 +2543,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             e.getPlayer().sendMessage(ChatColor.RED + "The End access is locked. Respawning in overworld.");
         }
     }
+    @EventHandler
+    public void onPlayerTeleport(PlayerTeleportEvent e) {
+        // catch teleport commands / plugins
+        if (e.getTo() == null) return;
+        World.Environment env = e.getTo().getWorld().getEnvironment();
+        Player p = e.getPlayer();
+        if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "Nether access is locked.");
+        }
+        if (env == World.Environment.THE_END && dataConfig.getBoolean("locks.end", false)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "The End access is locked.");
+        }
+    }
+
     @EventHandler
     public void onPunishDamage(EntityDamageEvent e) {
         if (e.getEntity() instanceof Player p && isPunished(p.getUniqueId())) e.setCancelled(true);
@@ -1683,6 +2589,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 return;
             }
             saveLog(e.getBlock().getLocation(), ChatColor.RED + "Broken by " + e.getPlayer().getName());
+            // Quest tracking
+            trackQuestProgress(e.getPlayer(), "break_blocks", 1);
+            trackQuestProgress(e.getPlayer(), "mine_" + e.getBlock().getType().name().toLowerCase(), 1);
         }
     }
     @EventHandler
@@ -1760,9 +2669,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onLogin(PlayerLoginEvent e) {
+        if (dataConfig.getBoolean("maintenance.enabled", false)) {
+            String name = e.getPlayer().getName();
+            List<String> whitelist = dataConfig.getStringList("maintenance.whitelist");
+            boolean isExempt = whitelist.contains(name);
+            if (!isExempt) {
+                String msg = dataConfig.getString("maintenance.message", "Server is under maintenance...");
+                e.disallow(PlayerLoginEvent.Result.KICK_OTHER, ChatColor.RED + msg);
+            }
+        }
+    }
+
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         UUID uuid = e.getPlayer().getUniqueId();
+        lastActivity.put(uuid, System.currentTimeMillis());
         
         if (isPunished(uuid)) {
             punishTeam.addEntry(e.getPlayer().getName());
@@ -1807,28 +2730,162 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         this.logAction("System", "player_joined", e.getPlayer().getName());
 
         // Give admin tool if missing
-        if (e.getPlayer().hasPermission("dmt.admin")) {
-            boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
-            if (!hasTool) {
-                ItemStack tool = new ItemStack(Material.DIAMOND);
-                ItemMeta m = tool.getItemMeta();
-                m.setDisplayName(TOOL_NAME);
-                m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
-                m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-                tool.setItemMeta(m);
-                e.getPlayer().getInventory().addItem(tool);
+        boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
+        if (!hasTool) {
+            ItemStack tool = new ItemStack(Material.DIAMOND);
+            ItemMeta m = tool.getItemMeta();
+            m.setDisplayName(TOOL_NAME);
+            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            tool.setItemMeta(m);
+            e.getPlayer().getInventory().addItem(tool);
+        }
+
+        fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
+
+        // --- DAILY LOGIN REWARDS ---
+        if (dataConfig.getBoolean("daily_login_enabled", false)) {
+            long lastLogin = dataConfig.getLong("daily_login." + uuid + ".last", 0);
+            long now = System.currentTimeMillis();
+            long dayMs = 86400000L;
+            boolean isNewDay = (now - lastLogin) >= dayMs;
+            if (isNewDay) {
+                int streak = dataConfig.getInt("daily_login." + uuid + ".streak", 0);
+                if ((now - lastLogin) < dayMs * 2) {
+                    streak++;
+                } else {
+                    streak = 1; // reset if missed a day
+                }
+                dataConfig.set("daily_login." + uuid + ".streak", streak);
+                dataConfig.set("daily_login." + uuid + ".last", now);
+                dataConfig.set("daily_login." + uuid + ".total", dataConfig.getInt("daily_login." + uuid + ".total", 0) + 1);
+                saveDataFile();
+                int xpReward = dataConfig.getInt("daily_login_base_xp", 10) + (streak * dataConfig.getInt("daily_login_streak_bonus", 2));
+                e.getPlayer().giveExp(xpReward);
+                e.getPlayer().sendMessage(ChatColor.GOLD + "⭐ Daily Login Reward! " + ChatColor.GREEN + "+" + xpReward + " XP " + ChatColor.YELLOW + "(Streak: " + streak + " days)");
+                logAction("System", "daily_login", e.getPlayer().getName() + " streak:" + streak + " xp:" + xpReward);
             }
         }
+
+        // --- FIRST JOIN WELCOME ---
+        if (!dataConfig.contains("first_join." + uuid)) {
+            dataConfig.set("first_join." + uuid, System.currentTimeMillis());
+            saveDataFile();
+            String welcomeMsg = dataConfig.getString("welcome_message", "&6Welcome to the server, &e{player}&6!");
+            welcomeMsg = welcomeMsg.replace("{player}", e.getPlayer().getName());
+            String finalMsg = ChatColor.translateAlternateColorCodes('&', welcomeMsg);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (e.getPlayer().isOnline()) {
+                    e.getPlayer().sendMessage(finalMsg);
+                    // Give starter items
+                    List<String> starterItems = dataConfig.getStringList("welcome_starter_items");
+                    for (String item : starterItems) {
+                        try {
+                            String[] parts = item.split(":");
+                            Material mat = Material.valueOf(parts[0].toUpperCase());
+                            int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                            e.getPlayer().getInventory().addItem(new ItemStack(mat, amount));
+                        } catch (Exception ignored2) {}
+                    }
+                }
+            }, 20L);
+            // Broadcast to server
+            if (dataConfig.getBoolean("welcome_broadcast", true)) {
+                Bukkit.broadcastMessage(ChatColor.GOLD + "✦ " + ChatColor.YELLOW + e.getPlayer().getName() + ChatColor.GOLD + " joined for the first time! Welcome!");
+            }
+            fireDiscordEvent("joins", "New Player!", "**" + e.getPlayer().getName() + "** joined for the first time! 🎉", 0xf1c40f, e.getPlayer().getName());
+        }
+
+        // --- APPLY NICKNAME ---
+        String nick = dataConfig.getString("nicknames." + uuid);
+        if (nick != null && !nick.isEmpty()) {
+            e.getPlayer().setDisplayName(ChatColor.translateAlternateColorCodes('&', nick));
+        }
+
+        // --- INACTIVE ALERT TRACKING ---
+        dataConfig.set("last_seen." + uuid, System.currentTimeMillis());
+        dataConfig.set("last_seen_name." + uuid, e.getPlayer().getName());
+        saveDataFile();
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
+        lastActivity.remove(e.getPlayer().getUniqueId());
         this.trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
         this.logAction("System", "player_left", e.getPlayer().getName());
+        fireDiscordEvent("leaves", "Player Left", "**" + e.getPlayer().getName() + "** left the server.", 0xe74c3c, e.getPlayer().getName());
     }
 
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        if (isMuted(e.getPlayer().getUniqueId())) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "You are muted and cannot chat.");
+            return;
+        }
+
+        // Auto-moderation
+        if (dataConfig.getBoolean("automod.enabled", false) && !e.getPlayer().hasPermission("dmt.admin")) {
+            String msg = e.getMessage().toLowerCase();
+            // Word filter
+            if (dataConfig.getBoolean("automod.filter_enabled", true)) {
+                for (String word : chatFilterWords) {
+                    if (msg.contains(word.toLowerCase())) {
+                        e.setCancelled(true);
+                        e.getPlayer().sendMessage(ChatColor.RED + "Your message was blocked by the chat filter.");
+                        int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
+                        dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
+                        int maxViolations = dataConfig.getInt("automod.max_violations", 5);
+                        if (violations >= maxViolations) {
+                            Bukkit.getScheduler().runTask(this, () -> {
+                                mutePlayer(e.getPlayer().getUniqueId(), e.getPlayer().getName(), "Auto-muted: chat filter (" + violations + " violations)");
+                                e.getPlayer().sendMessage(ChatColor.RED + "You have been auto-muted for repeated filter violations.");
+                            });
+                        }
+                        Bukkit.getScheduler().runTask(this, this::saveDataFile);
+                        return;
+                    }
+                }
+            }
+            // Spam detection
+            if (dataConfig.getBoolean("automod.antispam_enabled", true)) {
+                long now = System.currentTimeMillis();
+                long lastTime = lastChatTime.getOrDefault(e.getPlayer().getUniqueId(), 0L);
+                int cooldownMs = dataConfig.getInt("automod.spam_cooldown_ms", 1000);
+                if (now - lastTime < cooldownMs) {
+                    int count = spamCounter.getOrDefault(e.getPlayer().getUniqueId(), 0) + 1;
+                    spamCounter.put(e.getPlayer().getUniqueId(), count);
+                    if (count >= dataConfig.getInt("automod.spam_threshold", 4)) {
+                        e.setCancelled(true);
+                        e.getPlayer().sendMessage(ChatColor.RED + "Slow down! You are sending messages too fast.");
+                        spamCounter.put(e.getPlayer().getUniqueId(), 0);
+                        return;
+                    }
+                } else {
+                    spamCounter.put(e.getPlayer().getUniqueId(), 0);
+                }
+                lastChatTime.put(e.getPlayer().getUniqueId(), now);
+            }
+            // Caps filter
+            if (dataConfig.getBoolean("automod.caps_filter", true) && e.getMessage().length() > 6) {
+                long caps = e.getMessage().chars().filter(Character::isUpperCase).count();
+                if (caps > e.getMessage().length() * 0.7) {
+                    e.setMessage(e.getMessage().toLowerCase());
+                    e.getPlayer().sendMessage(ChatColor.YELLOW + "Please don't use excessive caps.");
+                }
+            }
+        }
+
+        // Chat tag + nickname formatting
+        String chatTag = dataConfig.getString("chat_tags." + e.getPlayer().getUniqueId(), "");
+        String displayName = e.getPlayer().getDisplayName();
+        String prefix = "";
+        if (!chatTag.isEmpty()) {
+            prefix = ChatColor.translateAlternateColorCodes('&', chatTag) + " ";
+        }
+        e.setFormat(prefix + displayName + ChatColor.WHITE + ": " + e.getMessage().replace("%", "%%"));
+
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
     }
 
@@ -1985,6 +3042,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
     }
 
+    public Map<UUID, Long> getLastActivity() { return lastActivity; }
+
+    public int getAfkTimeoutMinutes() {
+        return dataConfig.getInt("afk_timeout_minutes", 30);
+    }
+
+    public void setAfkTimeoutMinutes(int minutes) {
+        dataConfig.set("afk_timeout_minutes", minutes);
+        saveDataFile();
+    }
+
     public void logAction(String actor, String action, String target) {
         List<String> history = dataConfig.getStringList("action_history");
         String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + actor + " " + action + " " + target;
@@ -2047,17 +3115,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         saveDataFile();
     }
 
-    public void mutePlayer(UUID u, String reason) {
-        List<String> m = dataConfig.getStringList("muted");
-        String id = u.toString();
-        if (!m.contains(id)) m.add(id);
+    public void mutePlayer(UUID u, String playerName, String reason) {
+        List<String> m = new ArrayList<>(dataConfig.getStringList("muted"));
+        // Remove existing entry for this player
+        m.removeIf(s -> s.startsWith(u.toString() + "|"));
+        m.add(u.toString() + "|" + playerName + "|" + (reason != null ? reason : "No reason"));
         dataConfig.set("muted", m);
         saveDataFile();
     }
 
     public void unmutePlayer(UUID u) {
-        List<String> m = dataConfig.getStringList("muted");
-        m.remove(u.toString());
+        List<String> m = new ArrayList<>(dataConfig.getStringList("muted"));
+        m.removeIf(s -> s.startsWith(u.toString() + "|") || s.equals(u.toString()));
         dataConfig.set("muted", m);
         saveDataFile();
     }
@@ -2104,13 +3173,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
 
     private void fillGUIBorders(Inventory gui) {
-        for (int i = 0; i < 9; i++) {
+        int size = gui.getSize();
+        // top row
+        for (int i = 0; i < 9 && i < size; i++) {
             if (gui.getItem(i) == null) gui.setItem(i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(45 + i) == null) gui.setItem(45 + i, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
         }
-        for (int i = 1; i < 5; i++) {
-            if (gui.getItem(i * 9) == null) gui.setItem(i * 9, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
-            if (gui.getItem(i * 9 + 8) == null) gui.setItem(i * 9 + 8, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+        // bottom row (last 9 slots)
+        int bottomStart = size - 9;
+        for (int i = 0; i < 9; i++) {
+            int slot = bottomStart + i;
+            if (slot >= 0 && slot < size && gui.getItem(slot) == null) {
+                gui.setItem(slot, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            }
+        }
+        // left/right borders for middle rows
+        int rows = size / 9;
+        for (int r = 1; r < rows - 1; r++) {
+            int left = r * 9;
+            int right = r * 9 + 8;
+            if (left < size && gui.getItem(left) == null)
+                gui.setItem(left, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
+            if (right < size && gui.getItem(right) == null)
+                gui.setItem(right, createGuiItem(Material.BLACK_STAINED_GLASS_PANE, " "));
         }
     }
 
@@ -2327,6 +3411,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }, 20L, 20L); // Run every 1 second
     }
 
+    private void startAfkChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (!dataConfig.getBoolean("afk_autokick_enabled", true)) return;
+            int timeoutMinutes = getAfkTimeoutMinutes();
+            long now = System.currentTimeMillis();
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                if (p.hasPermission("dmt.afk.exempt")) continue;
+                Long lastAct = lastActivity.get(p.getUniqueId());
+                if (lastAct == null) {
+                    lastActivity.put(p.getUniqueId(), now);
+                    continue;
+                }
+                long idleMs = now - lastAct;
+                long idleMinutes = idleMs / 60000;
+                if (idleMinutes >= timeoutMinutes) {
+                    p.kickPlayer(ChatColor.RED + "You were kicked for being AFK.\n"
+                        + ChatColor.YELLOW + "You were idle for " + idleMinutes + " minute" + (idleMinutes != 1 ? "s" : "") + ".\n"
+                        + ChatColor.GRAY + "The server auto-kick threshold is " + timeoutMinutes + " minute" + (timeoutMinutes != 1 ? "s" : "") + ".");
+                    logAction("System", "afk_kick", p.getName() + " (idle " + idleMinutes + "m)");
+                    lastActivity.remove(p.getUniqueId());
+                }
+            }
+        }, 600L, 600L); // Run every 30 seconds
+    }
+
     private long parseDuration(String duration) {
         if (duration == null || duration.isEmpty()) return -1;
         try {
@@ -2359,6 +3468,637 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             }
         }
         path.delete();
+    }
+
+    // ========== CRATES SYSTEM ==========
+    private void openCrateListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_CRATE_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("crates")) {
+            for (String crateName : dataConfig.getConfigurationSection("crates").getKeys(false)) {
+                String path = "crates." + crateName;
+                String icon = dataConfig.getString(path + ".icon", "CHEST");
+                Material mat = Material.CHEST;
+                try { mat = Material.valueOf(icon.toUpperCase()); } catch (Exception ignored) {}
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName(ChatColor.LIGHT_PURPLE + crateName);
+                int keyCost = dataConfig.getInt(path + ".key_cost", 0);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + (dataConfig.getString(path + ".description", "")));
+                lore.add("");
+                lore.add(keyCost > 0 ? ChatColor.GREEN + "Key Cost: " + keyCost + " XP Levels" : ChatColor.GREEN + "Free to open");
+                List<String> rewards = dataConfig.getStringList(path + ".rewards");
+                lore.add(ChatColor.YELLOW + "" + rewards.size() + " possible rewards");
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to open!");
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    private void openCrateReward(Player p, String crateName) {
+        String path = "crates." + crateName;
+        if (!dataConfig.contains(path)) { p.sendMessage(ChatColor.RED + "Crate not found."); return; }
+
+        int keyCost = dataConfig.getInt(path + ".key_cost", 0);
+        if (keyCost > 0 && p.getLevel() < keyCost) {
+            p.sendMessage(ChatColor.RED + "Not enough XP! Need " + keyCost + " levels.");
+            return;
+        }
+        if (keyCost > 0) p.setLevel(p.getLevel() - keyCost);
+
+        List<String> rewards = dataConfig.getStringList(path + ".rewards");
+        if (rewards.isEmpty()) { p.sendMessage(ChatColor.RED + "This crate is empty!"); return; }
+
+        // Weighted random: format is MATERIAL:amount:weight (weight is optional, default 100)
+        int totalWeight = 0;
+        List<int[]> weightRanges = new ArrayList<>();
+        for (String r : rewards) {
+            String[] parts = r.split(":");
+            int weight = parts.length > 2 ? Integer.parseInt(parts[2]) : 100;
+            weightRanges.add(new int[]{totalWeight, totalWeight + weight});
+            totalWeight += weight;
+        }
+        int roll = new Random().nextInt(totalWeight);
+        int winIndex = 0;
+        for (int i = 0; i < weightRanges.size(); i++) {
+            if (roll >= weightRanges.get(i)[0] && roll < weightRanges.get(i)[1]) { winIndex = i; break; }
+        }
+        String winReward = rewards.get(winIndex);
+        String[] parts = winReward.split(":");
+        Material mat = Material.valueOf(parts[0].toUpperCase());
+        int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+        ItemStack reward = new ItemStack(mat, amount);
+        HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(reward);
+        for (ItemStack drop : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+
+        p.sendMessage(ChatColor.LIGHT_PURPLE + "✨ You opened " + ChatColor.GOLD + crateName + ChatColor.LIGHT_PURPLE + " and received " + ChatColor.WHITE + amount + "x " + mat.name().replace("_", " ") + ChatColor.LIGHT_PURPLE + "!");
+        Bukkit.broadcastMessage(ChatColor.LIGHT_PURPLE + "✨ " + ChatColor.YELLOW + p.getName() + ChatColor.LIGHT_PURPLE + " opened a " + ChatColor.GOLD + crateName + ChatColor.LIGHT_PURPLE + " crate and got " + ChatColor.WHITE + amount + "x " + mat.name().replace("_", " ") + ChatColor.LIGHT_PURPLE + "!");
+        logAction(p.getName(), "opened_crate", crateName + " -> " + amount + "x " + mat.name());
+    }
+
+    // ========== BOUNTY SYSTEM ==========
+    private void openBountyListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_BOUNTY_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("bounties")) {
+            for (String bountyId : dataConfig.getConfigurationSection("bounties").getKeys(false)) {
+                String bPath = "bounties." + bountyId;
+                String targetName = dataConfig.getString(bPath + ".targetName", "Unknown");
+                String setterName = dataConfig.getString(bPath + ".setterName", "Unknown");
+                int amount = dataConfig.getInt(bPath + ".amount", 0);
+                ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+                SkullMeta sMeta = (SkullMeta) head.getItemMeta();
+                sMeta.setOwningPlayer(Bukkit.getOfflinePlayer(targetName));
+                sMeta.setDisplayName(ChatColor.RED + "☠ " + targetName);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GOLD + "Reward: " + amount + " XP Levels");
+                lore.add(ChatColor.GRAY + "Set by: " + setterName);
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Kill this player to collect!");
+                sMeta.setLore(lore);
+                head.setItemMeta(sMeta);
+                gui.setItem(getNextGridSlot(), head);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
+        Player victim = e.getEntity();
+        Player killer = victim.getKiller();
+        if (killer == null || killer.equals(victim)) return;
+
+        // --- PVP STATS TRACKING ---
+        UUID killerUUID = killer.getUniqueId();
+        UUID victimUUID = victim.getUniqueId();
+        dataConfig.set("pvpstats." + killerUUID + ".kills", dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0) + 1);
+        int killerStreak = dataConfig.getInt("pvpstats." + killerUUID + ".streak", 0) + 1;
+        dataConfig.set("pvpstats." + killerUUID + ".streak", killerStreak);
+        int bestStreak = dataConfig.getInt("pvpstats." + killerUUID + ".best_streak", 0);
+        if (killerStreak > bestStreak) dataConfig.set("pvpstats." + killerUUID + ".best_streak", killerStreak);
+        dataConfig.set("pvpstats." + victimUUID + ".deaths", dataConfig.getInt("pvpstats." + victimUUID + ".deaths", 0) + 1);
+        dataConfig.set("pvpstats." + victimUUID + ".streak", 0);
+
+        // Achievement check: kill milestone
+        int totalKills = dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0);
+        checkAchievement(killer, "kills_10", totalKills >= 10);
+        checkAchievement(killer, "kills_100", totalKills >= 100);
+        checkAchievement(killer, "streak_5", killerStreak >= 5);
+
+        // --- DUEL SYSTEM ---
+        if (activeDuels.containsKey(killerUUID) && activeDuels.get(killerUUID).equals(victimUUID)) {
+            int wager = duelWagers.getOrDefault(killerUUID, duelWagers.getOrDefault(victimUUID, 0));
+            activeDuels.remove(killerUUID);
+            activeDuels.remove(victimUUID);
+            // Return to pre-duel locations
+            Location killerReturn = duelReturnLocations.remove(killerUUID);
+            Location victimReturn = duelReturnLocations.remove(victimUUID);
+            if (wager > 0) {
+                killer.setLevel(killer.getLevel() + wager);
+                victim.setLevel(Math.max(0, victim.getLevel() - wager));
+                killer.sendMessage(ChatColor.GREEN + "⚔ You won the duel! +" + wager + " XP levels!");
+                victim.sendMessage(ChatColor.RED + "⚔ You lost the duel! -" + wager + " XP levels.");
+            } else {
+                killer.sendMessage(ChatColor.GREEN + "⚔ You won the duel against " + victim.getName() + "!");
+                victim.sendMessage(ChatColor.RED + "⚔ You lost the duel against " + killer.getName() + ".");
+            }
+            duelWagers.remove(killerUUID);
+            duelWagers.remove(victimUUID);
+            // Teleport back after delay
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (killer.isOnline() && killerReturn != null) killer.teleport(killerReturn);
+            }, 60L);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (victim.isOnline() && victimReturn != null) victim.teleport(victimReturn);
+            }, 60L);
+            logAction(killer.getName(), "duel_won", "vs " + victim.getName() + (wager > 0 ? " wager:" + wager : ""));
+        }
+
+        // Check for bounties on the victim
+        if (dataConfig.contains("bounties")) {
+            List<String> toRemove = new ArrayList<>();
+            int totalReward = 0;
+            for (String bountyId : dataConfig.getConfigurationSection("bounties").getKeys(false)) {
+                String target = dataConfig.getString("bounties." + bountyId + ".target", "");
+                if (target.equals(victim.getUniqueId().toString())) {
+                    totalReward += dataConfig.getInt("bounties." + bountyId + ".amount", 0);
+                    toRemove.add(bountyId);
+                }
+            }
+            if (totalReward > 0) {
+                for (String id : toRemove) dataConfig.set("bounties." + id, null);
+                killer.setLevel(killer.getLevel() + totalReward);
+                Bukkit.broadcastMessage(ChatColor.RED + "☠ BOUNTY CLAIMED! " + ChatColor.YELLOW + killer.getName() + ChatColor.RED + " collected " + ChatColor.GOLD + totalReward + " XP levels" + ChatColor.RED + " for killing " + ChatColor.YELLOW + victim.getName() + ChatColor.RED + "!");
+                logAction(killer.getName(), "claimed_bounty", victim.getName() + " for " + totalReward + " XP");
+            }
+        }
+        saveDataFile();
+    }
+
+    // ========== PLAYER SHOPS ==========
+    private void openShopListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_SHOP_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("shops")) {
+            for (String shopId : dataConfig.getConfigurationSection("shops").getKeys(false)) {
+                String sPath = "shops." + shopId;
+                String owner = dataConfig.getString(sPath + ".ownerName", "Unknown");
+                String item = dataConfig.getString(sPath + ".item", "DIRT");
+                int amount = dataConfig.getInt(sPath + ".amount", 1);
+                int price = dataConfig.getInt(sPath + ".price", 0);
+
+                Material mat = Material.DIRT;
+                try { mat = Material.valueOf(item.toUpperCase()); } catch (Exception ignored) {}
+                ItemStack display = new ItemStack(mat, amount);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GREEN + "" + amount + "x " + mat.name().replace("_", " "));
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Seller: " + owner);
+                lore.add(ChatColor.GOLD + "Price: " + price + " XP Levels");
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Click to buy!");
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== QUEST SYSTEM ==========
+    private void openQuestListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_QUEST_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("quests")) {
+            for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+                String qPath = "quests." + questId;
+                if (!dataConfig.getBoolean(qPath + ".active", true)) continue;
+                String name = dataConfig.getString(qPath + ".name", questId);
+                String desc = dataConfig.getString(qPath + ".description", "");
+                String type = dataConfig.getString(qPath + ".type", "break_blocks");
+                int goal = dataConfig.getInt(qPath + ".goal", 1);
+                int reward = dataConfig.getInt(qPath + ".reward", 0);
+                String rewardKit = dataConfig.getString(qPath + ".reward_kit", "");
+
+                // Get player progress
+                int progress = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+                boolean completed = dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false);
+
+                Material mat = completed ? Material.LIME_DYE : (progress > 0 ? Material.YELLOW_DYE : Material.GRAY_DYE);
+                ItemStack item = new ItemStack(mat);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName((completed ? ChatColor.GREEN + "✅ " : ChatColor.GOLD) + name);
+                List<String> lore = new ArrayList<>();
+                if (!desc.isEmpty()) lore.add(ChatColor.GRAY + desc);
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Type: " + type.replace("_", " "));
+                lore.add(ChatColor.AQUA + "Progress: " + Math.min(progress, goal) + "/" + goal);
+                if (reward > 0) lore.add(ChatColor.GREEN + "Reward: " + reward + " XP Levels");
+                if (!rewardKit.isEmpty()) lore.add(ChatColor.GREEN + "Reward Kit: " + rewardKit);
+                if (completed) lore.add(ChatColor.GREEN + "" + ChatColor.BOLD + "COMPLETED!");
+                else if (progress >= goal) {
+                    lore.add("");
+                    lore.add(ChatColor.GREEN + "Click to claim reward!");
+                }
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), item);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    @EventHandler
+    public void onEntityKillForQuest(org.bukkit.event.entity.EntityDeathEvent e) {
+        if (e.getEntity().getKiller() != null) {
+            Player killer = e.getEntity().getKiller();
+            trackQuestProgress(killer, "kill_mobs", 1);
+            trackQuestProgress(killer, "kill_" + e.getEntity().getType().name().toLowerCase(), 1);
+        }
+    }
+
+    private void trackQuestProgress(Player p, String type, int amount) {
+        if (!dataConfig.contains("quests")) return;
+        for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+            if (!dataConfig.getBoolean("quests." + questId + ".active", true)) continue;
+            String questType = dataConfig.getString("quests." + questId + ".type", "");
+            if (!questType.equalsIgnoreCase(type)) continue;
+            if (dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false)) continue;
+            int goal = dataConfig.getInt("quests." + questId + ".goal", 1);
+            int current = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+            current += amount;
+            dataConfig.set("quest_progress." + p.getUniqueId() + "." + questId, current);
+            if (current >= goal) {
+                p.sendMessage(ChatColor.GOLD + "🎯 Quest " + ChatColor.YELLOW + dataConfig.getString("quests." + questId + ".name", questId) + ChatColor.GOLD + " complete! Use /quest to claim your reward.");
+            }
+            saveDataFile();
+        }
+    }
+
+    private void claimQuestReward(Player p, String questName) {
+        if (!dataConfig.contains("quests")) return;
+        for (String questId : dataConfig.getConfigurationSection("quests").getKeys(false)) {
+            String name = dataConfig.getString("quests." + questId + ".name", questId);
+            if (!name.equals(questName)) continue;
+            if (dataConfig.getBoolean("quest_completed." + p.getUniqueId() + "." + questId, false)) {
+                p.sendMessage(ChatColor.RED + "Already claimed.");
+                return;
+            }
+            int goal = dataConfig.getInt("quests." + questId + ".goal", 1);
+            int progress = dataConfig.getInt("quest_progress." + p.getUniqueId() + "." + questId, 0);
+            if (progress < goal) { p.sendMessage(ChatColor.RED + "Not completed yet."); return; }
+
+            dataConfig.set("quest_completed." + p.getUniqueId() + "." + questId, true);
+            int reward = dataConfig.getInt("quests." + questId + ".reward", 0);
+            if (reward > 0) p.setLevel(p.getLevel() + reward);
+            String rewardKit = dataConfig.getString("quests." + questId + ".reward_kit", "");
+            if (!rewardKit.isEmpty()) claimKit(p, rewardKit);
+            saveDataFile();
+            p.sendMessage(ChatColor.GREEN + "✅ Quest reward claimed!");
+            logAction(p.getName(), "claimed_quest", questName);
+            return;
+        }
+    }
+
+    // ========== ACTIVE POLLS DISPLAY ==========
+    private void showActivePolls(Player p) {
+        boolean found = false;
+        if (dataConfig.contains("polls")) {
+            for (String pollId : dataConfig.getConfigurationSection("polls").getKeys(false)) {
+                if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) continue;
+                found = true;
+                String question = dataConfig.getString("polls." + pollId + ".question", "");
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                p.sendMessage(ChatColor.GOLD + "--- Poll #" + pollId + " ---");
+                p.sendMessage(ChatColor.YELLOW + question);
+                for (int i = 0; i < options.size(); i++) {
+                    int votes = dataConfig.getInt("polls." + pollId + ".votes." + (i + 1), 0);
+                    p.sendMessage(ChatColor.AQUA + "  " + (i + 1) + ". " + options.get(i) + ChatColor.GRAY + " (" + votes + " votes)");
+                }
+                p.sendMessage(ChatColor.GREEN + "Vote: /vote " + pollId + " <option#>");
+            }
+        }
+        if (!found) p.sendMessage(ChatColor.YELLOW + "No active polls right now.");
+    }
+
+    // ========== AUTO-MOD HELPERS ==========
+    public void loadChatFilter() {
+        chatFilterWords.clear();
+        List<String> words = dataConfig.getStringList("automod.filter_words");
+        chatFilterWords.addAll(words);
+    }
+
+    // ========== PLAYTIME REWARDS ==========
+    private void startPlaytimeRewardsChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (!dataConfig.contains("playtime_rewards")) return;
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                long minutes = dataConfig.getLong("playtime." + p.getUniqueId(), 0);
+                if (dataConfig.contains("playtime_rewards")) {
+                    for (String rewardId : dataConfig.getConfigurationSection("playtime_rewards").getKeys(false)) {
+                        int reqMinutes = dataConfig.getInt("playtime_rewards." + rewardId + ".minutes", 0);
+                        if (minutes >= reqMinutes) {
+                            String claimedKey = "playtime_claimed." + p.getUniqueId() + "." + rewardId;
+                            if (!dataConfig.getBoolean(claimedKey, false)) {
+                                dataConfig.set(claimedKey, true);
+                                int xpReward = dataConfig.getInt("playtime_rewards." + rewardId + ".xp", 0);
+                                String kit = dataConfig.getString("playtime_rewards." + rewardId + ".kit", "");
+                                if (xpReward > 0) p.setLevel(p.getLevel() + xpReward);
+                                if (!kit.isEmpty()) claimKit(p, kit);
+                                String name = dataConfig.getString("playtime_rewards." + rewardId + ".name", "Playtime Reward");
+                                p.sendMessage(ChatColor.GOLD + "🏆 Playtime Reward Unlocked: " + ChatColor.YELLOW + name + ChatColor.GOLD + "!");
+                                logAction("System", "playtime_reward", p.getName() + " -> " + name);
+                                saveDataFile();
+                            }
+                        }
+                    }
+                }
+            }
+        }, 6000L, 6000L); // Every 5 minutes
+    }
+
+    // ========== CUSTOM ENCHANTMENTS ==========
+    @EventHandler
+    public void onBlockBreakEnchant(BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        ItemStack held = p.getInventory().getItemInMainHand();
+        if (held == null || !held.hasItemMeta() || !held.getItemMeta().hasLore()) return;
+
+        List<String> lore = held.getItemMeta().getLore();
+        for (String line : lore) {
+            String stripped = ChatColor.stripColor(line).trim();
+            // Timber enchant - break logs in column
+            if (stripped.equalsIgnoreCase("Timber") && e.getBlock().getType().name().contains("LOG")) {
+                Location loc = e.getBlock().getLocation();
+                for (int y = 1; y <= 20; y++) {
+                    Location above = loc.clone().add(0, y, 0);
+                    if (above.getBlock().getType().name().contains("LOG")) {
+                        above.getBlock().breakNaturally(held);
+                    } else break;
+                }
+            }
+            // Vein Miner enchant - break connected ores
+            if (stripped.equalsIgnoreCase("Vein Miner") && e.getBlock().getType().name().contains("ORE")) {
+                Material oreType = e.getBlock().getType();
+                Set<Location> toBreak = new HashSet<>();
+                findConnectedOres(e.getBlock().getLocation(), oreType, toBreak, 16);
+                for (Location bl : toBreak) {
+                    if (!bl.equals(e.getBlock().getLocation())) bl.getBlock().breakNaturally(held);
+                }
+            }
+            // Smelting Touch - auto-smelt
+            if (stripped.equalsIgnoreCase("Smelting Touch")) {
+                Material blockType = e.getBlock().getType();
+                Material smelted = getSmeltedResult(blockType);
+                if (smelted != null) {
+                    e.setDropItems(false);
+                    e.getBlock().getWorld().dropItemNaturally(e.getBlock().getLocation(), new ItemStack(smelted, 1));
+                }
+            }
+            // Telepathy - drops go to inventory
+            if (stripped.equalsIgnoreCase("Telepathy")) {
+                e.setDropItems(false);
+                for (ItemStack drop : e.getBlock().getDrops(held)) {
+                    HashMap<Integer, ItemStack> overflow = p.getInventory().addItem(drop);
+                    for (ItemStack o : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), o);
+                }
+            }
+        }
+    }
+
+    private void findConnectedOres(Location loc, Material oreType, Set<Location> found, int max) {
+        if (found.size() >= max) return;
+        if (found.contains(loc)) return;
+        if (loc.getBlock().getType() != oreType) return;
+        found.add(loc);
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dz = -1; dz <= 1; dz++)
+                    if (dx != 0 || dy != 0 || dz != 0)
+                        findConnectedOres(loc.clone().add(dx, dy, dz), oreType, found, max);
+    }
+
+    private Material getSmeltedResult(Material block) {
+        switch (block) {
+            case IRON_ORE: case DEEPSLATE_IRON_ORE: return Material.IRON_INGOT;
+            case GOLD_ORE: case DEEPSLATE_GOLD_ORE: return Material.GOLD_INGOT;
+            case COPPER_ORE: case DEEPSLATE_COPPER_ORE: return Material.COPPER_INGOT;
+            case ANCIENT_DEBRIS: return Material.NETHERITE_SCRAP;
+            case SAND: return Material.GLASS;
+            case COBBLESTONE: return Material.STONE;
+            default: return null;
+        }
+    }
+
+    // Apply custom enchantment to item
+    public boolean applyCustomEnchant(ItemStack item, String enchantName) {
+        if (item == null || item.getType() == Material.AIR) return false;
+        ItemMeta meta = item.getItemMeta();
+        List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+        // Check if already has it
+        for (String line : lore) {
+            if (ChatColor.stripColor(line).trim().equalsIgnoreCase(enchantName)) return false;
+        }
+        lore.add(ChatColor.LIGHT_PURPLE + enchantName);
+        meta.setLore(lore);
+        item.setItemMeta(meta);
+        return true;
+    }
+
+    // ========== MOTD HANDLER ==========
+    @EventHandler
+    public void onServerPing(ServerListPingEvent e) {
+        String line1 = dataConfig.getString("motd.line1", "");
+        String line2 = dataConfig.getString("motd.line2", "");
+        if (!line1.isEmpty() || !line2.isEmpty()) {
+            String motd = ChatColor.translateAlternateColorCodes('&', line1);
+            if (!line2.isEmpty()) motd += "\n" + ChatColor.translateAlternateColorCodes('&', line2);
+            e.setMotd(motd);
+        }
+        int maxPlayers = dataConfig.getInt("motd.maxPlayers", 0);
+        if (maxPlayers > 0) e.setMaxPlayers(maxPlayers);
+    }
+
+    // ========== AUCTION HOUSE GUI ==========
+    private void openAuctionHouseGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_AUCTION_HOUSE);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("auctions")) {
+            for (String aId : dataConfig.getConfigurationSection("auctions").getKeys(false)) {
+                String aPath = "auctions." + aId;
+                long endTime = dataConfig.getLong(aPath + ".endTime", 0);
+                if (System.currentTimeMillis() > endTime) continue; // expired
+                String itemName = dataConfig.getString(aPath + ".item", "DIRT");
+                int amount = dataConfig.getInt(aPath + ".amount", 1);
+                String seller = dataConfig.getString(aPath + ".sellerName", "Unknown");
+                int currentBid = dataConfig.getInt(aPath + ".currentBid", 0);
+                String highBidder = dataConfig.getString(aPath + ".highBidderName", "None");
+                long remaining = (endTime - System.currentTimeMillis()) / 60000;
+                Material mat;
+                try { mat = Material.valueOf(itemName.toUpperCase()); } catch (Exception e) { mat = Material.DIRT; }
+                ItemStack display = new ItemStack(mat, amount);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GOLD + "" + amount + "x " + mat.name().replace("_", " "));
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Seller: " + seller);
+                lore.add(ChatColor.YELLOW + "Current Bid: " + currentBid + " XP");
+                lore.add(ChatColor.AQUA + "Highest: " + highBidder);
+                lore.add(ChatColor.GREEN + "Time Left: " + remaining + " min");
+                lore.add("");
+                lore.add(ChatColor.YELLOW + "Click to bid!");
+                lore.add(ChatColor.DARK_GRAY + "ID:" + aId);
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== PLAYER WARP LIST GUI ==========
+    private void openPwarpListGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_PWARP_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("pwarps")) {
+            for (String wId : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+                String wPath = "pwarps." + wId;
+                String name = dataConfig.getString(wPath + ".name", wId);
+                String owner = dataConfig.getString(wPath + ".ownerName", "Unknown");
+                int visits = dataConfig.getInt(wPath + ".visits", 0);
+                ItemStack display = new ItemStack(Material.ENDER_PEARL);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName(ChatColor.GREEN + name);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + "Owner: " + owner);
+                lore.add(ChatColor.YELLOW + "Visits: " + visits);
+                lore.add("");
+                lore.add(ChatColor.AQUA + "Click to warp!");
+                lore.add(ChatColor.DARK_GRAY + "ID:" + wId);
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== ACHIEVEMENTS GUI ==========
+    private void openAchievementsGUI(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_ACHIEVEMENTS);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("achievement_defs")) {
+            for (String key : dataConfig.getConfigurationSection("achievement_defs").getKeys(false)) {
+                String aPath = "achievement_defs." + key;
+                String name = dataConfig.getString(aPath + ".name", key);
+                String desc = dataConfig.getString(aPath + ".description", "");
+                String title = dataConfig.getString(aPath + ".title", "");
+                boolean unlocked = dataConfig.getBoolean("achievements." + p.getUniqueId() + "." + key, false);
+                ItemStack display = new ItemStack(unlocked ? Material.DIAMOND : Material.COAL);
+                ItemMeta meta = display.getItemMeta();
+                meta.setDisplayName((unlocked ? ChatColor.GREEN + "✔ " : ChatColor.RED + "✘ ") + ChatColor.GOLD + name);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.GRAY + desc);
+                if (!title.isEmpty()) lore.add(ChatColor.LIGHT_PURPLE + "Title: " + title);
+                lore.add(unlocked ? ChatColor.GREEN + "UNLOCKED" : ChatColor.RED + "LOCKED");
+                meta.setLore(lore);
+                display.setItemMeta(meta);
+                gui.setItem(getNextGridSlot(), display);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    // ========== ACHIEVEMENT CHECK HELPER ==========
+    private void checkAchievement(Player p, String achievementId, boolean condition) {
+        if (!condition) return;
+        if (dataConfig.getBoolean("achievements." + p.getUniqueId() + "." + achievementId, false)) return;
+        if (!dataConfig.contains("achievement_defs." + achievementId)) return;
+        dataConfig.set("achievements." + p.getUniqueId() + "." + achievementId, true);
+        saveDataFile();
+        String name = dataConfig.getString("achievement_defs." + achievementId + ".name", achievementId);
+        String title = dataConfig.getString("achievement_defs." + achievementId + ".title", "");
+        int xp = dataConfig.getInt("achievement_defs." + achievementId + ".xp_reward", 0);
+        p.sendMessage(ChatColor.GOLD + "🏆 Achievement Unlocked: " + ChatColor.GREEN + name + (xp > 0 ? ChatColor.YELLOW + " (+" + xp + " XP)" : ""));
+        if (xp > 0) p.giveExp(xp);
+        if (!title.isEmpty()) {
+            dataConfig.set("chat_tags." + p.getUniqueId(), title);
+            saveDataFile();
+            p.sendMessage(ChatColor.LIGHT_PURPLE + "New title unlocked: " + ChatColor.translateAlternateColorCodes('&', title));
+        }
+        Bukkit.broadcastMessage(ChatColor.GOLD + "🏆 " + ChatColor.YELLOW + p.getName() + ChatColor.GOLD + " unlocked: " + ChatColor.GREEN + name);
+        logAction(p.getName(), "achievement_unlocked", name);
+    }
+
+    // ========== SCHEDULED ANNOUNCEMENTS ==========
+    private void startScheduledAnnouncements() {
+        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
+        if (intervalTicks <= 0) intervalTicks = 6000;
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
+            List<String> messages = dataConfig.getStringList("announcements.messages");
+            if (messages.isEmpty()) return;
+            int index = dataConfig.getInt("announcements.current_index", 0);
+            if (index >= messages.size()) index = 0;
+            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
+            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            Bukkit.broadcastMessage(prefix + msg);
+            dataConfig.set("announcements.current_index", index + 1);
+        }, intervalTicks, intervalTicks);
     }
 
 }
