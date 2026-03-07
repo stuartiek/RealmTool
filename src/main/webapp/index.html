@@ -293,7 +293,7 @@
                 <button onclick="loadTickets()" style="padding: 6px 12px; background: #2196F3;">Apply Filters</button>
             </div>
             <table>
-                <tr><th>ID</th><th>Player</th><th>Priority</th><th>Category</th><th>Status</th><th>Message</th><th>Created</th><th>Action</th></tr>
+                <tr><th>ID</th><th>Player</th><th>Priority</th><th>Category</th><th>Status</th><th>Assignee</th><th>Message</th><th>Created</th><th>Action</th></tr>
                 <tbody id="tickets-list"></tbody>
             </table>
         </div>
@@ -331,6 +331,7 @@
                         </select>
                     </p>
                     <p><strong>Assignee:</strong> <input type="text" id="modal-assignee" style="padding: 4px; margin-left: 10px; width: 200px;"></p>
+                    <p id="modal-location-row" style="display: none;"><strong>Location:</strong> <span id="modal-location">N/A</span></p>
                 </div>
                 <div style="background: #1a1a1a; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
                     <p><strong>Message:</strong></p>
@@ -342,6 +343,7 @@
                 </div>
                 <div style="margin-bottom: 15px;">
                     <p><strong>Add Response:</strong></p>
+                    <input type="text" id="modal-admin-name" placeholder="Your name" style="width: 200px; padding: 8px; margin-bottom: 8px; background: #1a1a1a; border: 1px solid #444; color: #ccc;">
                     <input type="text" id="modal-response-text" placeholder="Your response..." style="width: 100%; padding: 8px; margin-bottom: 8px; background: #1a1a1a; border: 1px solid #444; color: #ccc;">
                     <button onclick="addTicketResponse()" style="padding: 6px 12px; background: #4CAF50;">Add Response</button>
                 </div>
@@ -1538,7 +1540,7 @@
                     <div class="stats" id="claims-total">0</div>
                 </div>
                 <div class="card">
-                    <div class="label">Disputed</div>
+                    <div class="label">Players with Claims</div>
                     <div class="stats" id="claims-disputed">0</div>
                 </div>
                 <div class="card">
@@ -1555,7 +1557,7 @@
                         <th>Location</th>
                         <th>Size</th>
                         <th>Members</th>
-                        <th>Status</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="claims-table"></tbody>
@@ -2089,8 +2091,8 @@
             headers: { 'Authorization': `Bearer ${API_KEY}` }
         };
         
-        // For POST/PUT requests, send params as JSON body
-        if ((method === 'POST' || method === 'PUT') && params) {
+        // For POST/PUT/PATCH/DELETE requests, send params as JSON body
+        if ((method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') && params) {
             options.headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(params);
         }
@@ -2117,7 +2119,7 @@
             document.getElementById('stat-players').textContent = players.length;
         }
         document.getElementById('stat-punished').textContent = punished;
-        document.getElementById('stat-tickets').textContent = tickets ? tickets.length : 0;
+        document.getElementById('stat-tickets').textContent = tickets ? tickets.filter(t => t.status === 'open' || t.status === 'in_progress').length : 0;
         document.getElementById('stat-muted').textContent = muted ? muted.length : 0;
     }
 
@@ -2212,11 +2214,12 @@
                 <td><span style="background: ${getPriorityColor(t.priority)}; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: white;">${t.priority}</span></td>
                 <td>${getCategoryLabel(t.category)}</td>
                 <td>${getStatusBadge(t.status)}</td>
+                <td>${t.assignee || '<span style="color:#666">—</span>'}</td>
                 <td>${t.message.substring(0, 40)}${t.message.length > 40 ? '...' : ''}</td>
                 <td>${t.time}</td>
                 <td onclick="event.stopPropagation();"><button onclick="closeTicket(${t.id})" style="padding: 4px 8px; font-size: 11px; background: #388e3c;">Close</button></td>
             </tr>
-        `).join('') : '<tr><td colspan="8">No tickets</td></tr>';
+        `).join('') : '<tr><td colspan="9">No tickets</td></tr>';
         document.getElementById('tickets-list').innerHTML = html;
     }
 
@@ -2231,12 +2234,21 @@
         document.getElementById('modal-priority').value = ticket.priority;
         document.getElementById('modal-category').value = ticket.category;
         document.getElementById('modal-assignee').value = ticket.assignee || '';
-        document.getElementById('modal-resolution-reason').value = '';
+        document.getElementById('modal-resolution-reason').value = ticket.resolution || '';
+        
+        // Show location if available
+        const locRow = document.getElementById('modal-location-row');
+        if (ticket.location) {
+            locRow.style.display = '';
+            document.getElementById('modal-location').textContent = `${ticket.location.world} (${ticket.location.x}, ${ticket.location.y}, ${ticket.location.z})`;
+        } else {
+            locRow.style.display = 'none';
+        }
         
         window.currentTicketId = ticketId;
         
-        const responsesHtml = ticket.responses && Object.values(ticket.responses).length > 0 ?
-            Object.values(ticket.responses).map(r => `
+        const responsesHtml = ticket.responses && ticket.responses.length > 0 ?
+            ticket.responses.map(r => `
                 <div style="background: #2a2a2a; padding: 8px; margin-bottom: 8px; border-left: 3px solid #2196F3; border-radius: 3px;">
                     <strong>${r.admin}</strong> <span style="color: #999; font-size: 11px;">${r.timestamp}</span><br>
                     <span style="color: #bbb;">${r.message}</span>
@@ -2257,11 +2269,7 @@
         const status = document.getElementById('modal-status').value;
         const assignee = document.getElementById('modal-assignee').value;
         
-        const params = new URLSearchParams({
-            priority, category, status, assignee
-        });
-        
-        await apiCall(`/ticket/${ticketId}?${params}`, 'PATCH');
+        await apiCall(`/ticket/${ticketId}`, 'PATCH', { priority, category, status, assignee });
         loadTickets();
     }
 
@@ -2270,13 +2278,9 @@
         const message = document.getElementById('modal-response-text').value;
         if (!message) return alert('Enter a response');
         
-        const adminName = prompt('Your name?') || 'Admin';
-        const params = new URLSearchParams({
-            admin: adminName,
-            message: message
-        });
+        const admin = document.getElementById('modal-admin-name').value || 'Admin';
         
-        await apiCall(`/ticket/${ticketId}/response?${params}`, 'POST');
+        await apiCall(`/ticket/${ticketId}/response`, 'POST', { admin, message });
         document.getElementById('modal-response-text').value = '';
         openTicketModal(ticketId);
     }
@@ -2287,8 +2291,7 @@
         
         if (!reason) return alert('Select a resolution reason');
         
-        const params = new URLSearchParams({ reason });
-        await apiCall(`/ticket/${ticketId}/resolve?${params}`, 'POST');
+        await apiCall(`/ticket/${ticketId}/resolve`, 'POST', { reason });
         document.getElementById('ticket-modal').style.display = 'none';
         loadTickets();
     }
@@ -3924,8 +3927,21 @@
     }
 
     async function loadAnnouncements() {
-        console.log('Loading announcements...');
-        // TODO: Fetch /api/announcements
+        const data = await apiCall('/announcements/scheduled');
+        const items = data && data.announcements ? data.announcements : [];
+        const html = items.length ? items.map((a, i) => {
+            const isPast = new Date(a.time).getTime() <= Date.now();
+            const status = a.sent ? '<span style="color:#4ec9b0;">Sent</span>' 
+                : isPast ? '<span style="color:#d4a017;">Pending</span>'
+                : '<span style="color:#569cd6;">Scheduled</span>';
+            return `<tr>
+                <td>${a.message}</td>
+                <td>${new Date(a.time).toLocaleString()}</td>
+                <td>${status}</td>
+                <td><button class="btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteScheduledAnnouncement(${i})">Delete</button></td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="4" style="text-align:center;color:#999;">No scheduled announcements</td></tr>';
+        document.getElementById('announcements-table').innerHTML = html;
     }
 
     async function scheduleAnnouncement() {
@@ -3935,8 +3951,21 @@
             alert('Please fill in all fields');
             return;
         }
-        console.log('Scheduling announcement', msg, time);
-        // TODO: POST /api/announcements/schedule
+        const response = await apiCall('/announcements/schedule', 'POST', { message: msg, time: time });
+        if (response && response.success) {
+            alert('Announcement scheduled!');
+            document.getElementById('announce-msg').value = '';
+            document.getElementById('announce-time').value = '';
+            loadAnnouncements();
+        } else {
+            alert('Failed to schedule announcement');
+        }
+    }
+
+    async function deleteScheduledAnnouncement(index) {
+        if (!confirm('Delete this scheduled announcement?')) return;
+        const response = await apiCall('/announcements/schedule', 'DELETE', { index: index });
+        if (response && response.success) loadAnnouncements();
     }
 
     async function loadBackups() {
@@ -4032,8 +4061,33 @@
     }
 
     async function loadLandClaims() {
-        console.log('Loading land claims...');
-        // TODO: Fetch /api/claims
+        try {
+            const data = await apiCall('/claims');
+            document.getElementById('claims-total').textContent = data.totalChunks || 0;
+            document.getElementById('claims-disputed').textContent = data.totalPlayers || 0;
+            document.getElementById('claims-largest').textContent = (data.largestClaim || 0) + ' chunks';
+            const tbody = document.getElementById('claims-table');
+            tbody.innerHTML = '';
+            if (data.claims) {
+                data.claims.forEach(c => {
+                    const tr = document.createElement('tr');
+                    const locPreview = c.locations && c.locations.length > 0 ? c.locations[0] : 'N/A';
+                    const moreCount = c.locations && c.locations.length > 1 ? ` (+${c.locations.length - 1} more)` : '';
+                    tr.innerHTML = `<td>${c.owner}</td>` +
+                        `<td title="${c.locations ? c.locations.join('\n') : ''}">${locPreview}${moreCount}</td>` +
+                        `<td>${c.chunks} chunks</td>` +
+                        `<td>${c.trusted && c.trusted.length > 0 ? c.trusted.join(', ') : 'None'}</td>` +
+                        `<td><button class="btn-danger" onclick="deleteClaim('${c.uuid}')">Remove</button></td>`;
+                    tbody.appendChild(tr);
+                });
+            }
+        } catch(e) { console.error('Failed to load claims:', e); }
+    }
+
+    async function deleteClaim(uuid) {
+        if (!confirm('Remove all claims for this player?')) return;
+        await apiCall('/claims/' + uuid, 'DELETE');
+        loadLandClaims();
     }
 
     function filterClaimsTable() {
@@ -5094,7 +5148,8 @@
 
     // ========== SCHEDULED ANNOUNCEMENTS ==========
     async function loadSchedAnnouncements() {
-        const data = await apiCall('/api/announcements');
+        const data = await apiCall('/announcements');
+        if (!data) return;
         document.getElementById('announce-enabled').checked = data.enabled;
         document.getElementById('announce-interval').value = data.intervalMinutes || 5;
         document.getElementById('announce-prefix').value = data.prefix || '&6[&eAnnouncement&6]&r ';
@@ -5102,7 +5157,7 @@
     }
     async function saveAnnouncements() {
         const messages = document.getElementById('announce-messages').value.split('\n').filter(s => s.trim());
-        await apiCall('/api/announcements', 'POST', {
+        await apiCall('/announcements', 'POST', {
             enabled: document.getElementById('announce-enabled').checked,
             intervalMinutes: parseInt(document.getElementById('announce-interval').value),
             prefix: document.getElementById('announce-prefix').value,
