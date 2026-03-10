@@ -8,8 +8,8 @@ commands:
     permission: dmt.admin
     usage: /dmt help
   ticket:
-    description: Submit a ticket
-    usage: /ticket new <message>
+    description: Ticket system
+    usage: /ticket [new|list|view|close]
   tpa:
     description: Teleport request system
     usage: /tpa accept|deny <player>
@@ -55,6 +55,9 @@ commands:
   stats:
     description: View PvP stats
     usage: /stats [player]
+  report:
+    description: Report a player
+    usage: /report <player> <reason>
 permissions:
   dmt.admin:
     description: Allows use of admin tools

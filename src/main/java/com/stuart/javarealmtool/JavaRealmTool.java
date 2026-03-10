@@ -57,6 +57,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_MENU_SELECTOR = ChatColor.AQUA + "Menu Selection";
     private final String GUI_PLAYER_MENU = ChatColor.GREEN + "Player Menu";
     private final String GUI_PLAYER_LIST_TPA = ChatColor.GREEN + "Players (TPA)";
+    private final String GUI_REPORT_PLAYER = ChatColor.RED + "Report Player";
     private final String GUI_WARP_MANAGEMENT = ChatColor.BLUE + "Manage Warp: ";
     private final String GUI_CLAIMS = ChatColor.BLUE + "Chunk Claims";
     private final String GUI_CLAIM_CONFIRM = ChatColor.YELLOW + "Confirm Claim";
@@ -80,6 +81,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final String GUI_DUEL_CONFIRM = ChatColor.RED + "Duel Request: ";
     private final String GUI_PWARP_LIST = ChatColor.AQUA + "Player Warps";
     private final String GUI_ACHIEVEMENTS = ChatColor.GOLD + "Achievements";
+    private final String GUI_POLL_LIST = ChatColor.GOLD + "Active Polls";
+    private final String GUI_POLL_VOTE = ChatColor.GOLD + "Poll: ";
     private final Map<UUID, Long> kitCooldowns = new HashMap<>();
     private final Map<UUID, String> pendingShopAction = new HashMap<>();
     private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
@@ -90,8 +93,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     final Map<UUID, Integer> duelWagers = new HashMap<>();
     final Map<UUID, UUID> activeDuels = new HashMap<>();
     private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
+    private final Map<UUID, Long> ticketCooldowns = new HashMap<>();
+    private final String GUI_TICKET_DETAIL = ChatColor.GOLD + "Ticket #";
+    private int christmasSnowTaskId = -1;
+    private int halloweenTaskId = -1;
+    private int newYearTaskId = -1;
+    private int valentineTaskId = -1;
+    private int springTaskId = -1;
+    private int summerTaskId = -1;
 
-    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME }
+    private final Map<UUID, Long> reportCooldowns = new HashMap<>();
+    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME, TICKET_RESPOND, TICKET_RESOLVE, REPORT }
     private static class PunishmentContext {
         String targetName;
         ActionType type;
@@ -122,6 +134,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
         if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
         if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
+        if (getCommand("report") != null) getCommand("report").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -143,6 +156,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
         startAfkChecker();
+
+        // Resume event effects if events were active before restart
+        var activeEvents = dataConfig.getConfigurationSection("events.active");
+        if (activeEvents != null) {
+            for (String eventName : activeEvents.getKeys(false)) {
+                startEventEffect(eventName);
+            }
+        }
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
     }
@@ -462,8 +483,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         if (cmd.getName().equalsIgnoreCase("vote")) {
             if (args.length == 0) {
-                // Show active polls
-                showActivePolls(p);
+                openPollList(p);
                 return true;
             }
             if (args.length >= 2) {
@@ -490,21 +510,139 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
 
         if (cmd.getName().equalsIgnoreCase("ticket")) {
-            if (args.length < 2 || !args[0].equalsIgnoreCase("new")) {
-                p.sendMessage(ChatColor.RED + "Usage: /ticket new <message>");
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.GOLD + "===== Ticket System =====");
+                p.sendMessage(ChatColor.YELLOW + "/ticket new [category] <message>" + ChatColor.GRAY + " - Create a ticket");
+                p.sendMessage(ChatColor.YELLOW + "/ticket list" + ChatColor.GRAY + " - View your tickets");
+                p.sendMessage(ChatColor.YELLOW + "/ticket view <id>" + ChatColor.GRAY + " - View ticket details");
+                p.sendMessage(ChatColor.YELLOW + "/ticket close <id>" + ChatColor.GRAY + " - Close your ticket");
+                p.sendMessage(ChatColor.GRAY + "Categories: bug, griefing, chat, item_loss, pvp, other");
                 return true;
             }
-            int id = dataConfig.getInt("tickets.next_id", 1);
-            String path = "tickets." + id;
-            dataConfig.set(path + ".player", p.getName());
-            dataConfig.set(path + ".message", String.join(" ", Arrays.copyOfRange(args, 1, args.length)));
-            dataConfig.set(path + ".status", "open");
-            dataConfig.set(path + ".priority", "medium");
-            dataConfig.set(path + ".category", "other");
-            dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
-            dataConfig.set("tickets.next_id", id + 1);
-            saveDataFile();
-            p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created.");
+            String sub = args[0].toLowerCase();
+            if (sub.equals("new")) {
+                if (args.length < 2) {
+                    p.sendMessage(ChatColor.RED + "Usage: /ticket new [category] <message>");
+                    return true;
+                }
+                // Cooldown check (60 seconds)
+                long now = System.currentTimeMillis();
+                Long lastTicket = ticketCooldowns.get(p.getUniqueId());
+                if (lastTicket != null && (now - lastTicket) < 60000) {
+                    long remaining = (60000 - (now - lastTicket)) / 1000;
+                    p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before creating another ticket.");
+                    return true;
+                }
+                // Check if second arg is a category
+                Set<String> validCategories = Set.of("bug", "griefing", "chat", "item_loss", "pvp", "other");
+                String category = "other";
+                int messageStart = 1;
+                if (args.length > 2 && validCategories.contains(args[1].toLowerCase())) {
+                    category = args[1].toLowerCase();
+                    messageStart = 2;
+                }
+                if (messageStart >= args.length) {
+                    p.sendMessage(ChatColor.RED + "Please provide a message for your ticket.");
+                    return true;
+                }
+                int id = dataConfig.getInt("tickets.next_id", 1);
+                String path = "tickets." + id;
+                dataConfig.set(path + ".player", p.getName());
+                dataConfig.set(path + ".uuid", p.getUniqueId().toString());
+                dataConfig.set(path + ".message", String.join(" ", Arrays.copyOfRange(args, messageStart, args.length)));
+                dataConfig.set(path + ".status", "open");
+                dataConfig.set(path + ".priority", "medium");
+                dataConfig.set(path + ".category", category);
+                dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+                // Save location
+                dataConfig.set(path + ".world", p.getWorld().getName());
+                dataConfig.set(path + ".x", p.getLocation().getBlockX());
+                dataConfig.set(path + ".y", p.getLocation().getBlockY());
+                dataConfig.set(path + ".z", p.getLocation().getBlockZ());
+                dataConfig.set("tickets.next_id", id + 1);
+                saveDataFile();
+                ticketCooldowns.put(p.getUniqueId(), now);
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created (" + category + "). Staff will review it soon.");
+                // Notify online staff
+                for (Player staff : Bukkit.getOnlinePlayers()) {
+                    if (staff.hasPermission("realmtool.admin")) {
+                        staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + dataConfig.getString(path + ".message"));
+                    }
+                }
+                return true;
+            }
+            if (sub.equals("list")) {
+                boolean found = false;
+                if (dataConfig.contains("tickets")) {
+                    for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+                        if (key.equals("next_id")) continue;
+                        String ticketPlayer = dataConfig.getString("tickets." + key + ".player", "");
+                        if (ticketPlayer.equalsIgnoreCase(p.getName())) {
+                            String status = dataConfig.getString("tickets." + key + ".status", "open");
+                            String msg = dataConfig.getString("tickets." + key + ".message", "");
+                            ChatColor statusColor = status.equals("open") ? ChatColor.GREEN : status.equals("resolved") ? ChatColor.AQUA : ChatColor.GRAY;
+                            p.sendMessage(ChatColor.GOLD + "#" + key + " " + statusColor + "[" + status.toUpperCase() + "] " + ChatColor.WHITE + (msg.length() > 40 ? msg.substring(0, 40) + "..." : msg));
+                            found = true;
+                        }
+                    }
+                }
+                if (!found) p.sendMessage(ChatColor.YELLOW + "You have no tickets.");
+                return true;
+            }
+            if (sub.equals("view")) {
+                if (args.length < 2) { p.sendMessage(ChatColor.RED + "Usage: /ticket view <id>"); return true; }
+                String ticketId = args[1];
+                String base = "tickets." + ticketId;
+                if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return true; }
+                String ticketPlayer = dataConfig.getString(base + ".player", "");
+                if (!ticketPlayer.equalsIgnoreCase(p.getName()) && !p.hasPermission("realmtool.admin")) {
+                    p.sendMessage(ChatColor.RED + "You can only view your own tickets.");
+                    return true;
+                }
+                p.sendMessage(ChatColor.GOLD + "===== Ticket #" + ticketId + " =====");
+                p.sendMessage(ChatColor.YELLOW + "Player: " + ChatColor.WHITE + ticketPlayer);
+                p.sendMessage(ChatColor.YELLOW + "Status: " + ChatColor.WHITE + dataConfig.getString(base + ".status", "open"));
+                p.sendMessage(ChatColor.YELLOW + "Priority: " + ChatColor.WHITE + dataConfig.getString(base + ".priority", "medium"));
+                p.sendMessage(ChatColor.YELLOW + "Category: " + ChatColor.WHITE + dataConfig.getString(base + ".category", "other"));
+                p.sendMessage(ChatColor.YELLOW + "Message: " + ChatColor.WHITE + dataConfig.getString(base + ".message", ""));
+                p.sendMessage(ChatColor.YELLOW + "Created: " + ChatColor.WHITE + dataConfig.getString(base + ".timestamp", ""));
+                String resolution = dataConfig.getString(base + ".resolution");
+                if (resolution != null) p.sendMessage(ChatColor.YELLOW + "Resolution: " + ChatColor.WHITE + resolution);
+                List<String> responses = dataConfig.getStringList(base + ".responses");
+                if (!responses.isEmpty()) {
+                    p.sendMessage(ChatColor.GOLD + "--- Responses ---");
+                    for (String resp : responses) {
+                        String[] parts = resp.split(" \\| ", 3);
+                        if (parts.length == 3) {
+                            p.sendMessage(ChatColor.AQUA + parts[1] + ChatColor.GRAY + " (" + parts[0] + "): " + ChatColor.WHITE + parts[2]);
+                        } else {
+                            p.sendMessage(ChatColor.GRAY + resp);
+                        }
+                    }
+                }
+                return true;
+            }
+            if (sub.equals("close")) {
+                if (args.length < 2) { p.sendMessage(ChatColor.RED + "Usage: /ticket close <id>"); return true; }
+                String ticketId = args[1];
+                String base = "tickets." + ticketId;
+                if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return true; }
+                String ticketPlayer = dataConfig.getString(base + ".player", "");
+                if (!ticketPlayer.equalsIgnoreCase(p.getName()) && !p.hasPermission("realmtool.admin")) {
+                    p.sendMessage(ChatColor.RED + "You can only close your own tickets.");
+                    return true;
+                }
+                String currentStatus = dataConfig.getString(base + ".status", "open");
+                if (currentStatus.equals("closed")) {
+                    p.sendMessage(ChatColor.RED + "This ticket is already closed.");
+                    return true;
+                }
+                dataConfig.set(base + ".status", "closed");
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " closed.");
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /ticket for help.");
             return true;
         }
 
@@ -746,6 +884,47 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             return true;
         }
 
+        if (cmd.getName().equalsIgnoreCase("report")) {
+            if (args.length < 2) {
+                p.sendMessage(ChatColor.GOLD + "===== Report System =====");
+                p.sendMessage(ChatColor.YELLOW + "/report <player> <reason>" + ChatColor.GRAY + " - Report a player");
+                return true;
+            }
+            // Cooldown check (60 seconds)
+            long now = System.currentTimeMillis();
+            Long lastReport = reportCooldowns.get(p.getUniqueId());
+            if (lastReport != null && (now - lastReport) < 60000) {
+                int remaining = (int) ((60000 - (now - lastReport)) / 1000);
+                p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before submitting another report.");
+                return true;
+            }
+            String reportedName = args[0];
+            String reason = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+            // Don't allow self-reports
+            if (reportedName.equalsIgnoreCase(p.getName())) {
+                p.sendMessage(ChatColor.RED + "You cannot report yourself.");
+                return true;
+            }
+            // Store report
+            if (!dataConfig.contains("reports")) dataConfig.set("reports", new ArrayList<>());
+            List<String> reports = dataConfig.getStringList("reports");
+            String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+            reports.add(ts + " | " + p.getName() + " reported " + reportedName + " for: " + reason);
+            dataConfig.set("reports", reports);
+            saveDataFile();
+            reportCooldowns.put(p.getUniqueId(), now);
+            p.sendMessage(ChatColor.GREEN + "Report submitted! Staff have been notified.");
+            // Notify online admins
+            for (Player admin : Bukkit.getOnlinePlayers()) {
+                if (admin.hasPermission("dmt.admin")) {
+                    admin.sendMessage(ChatColor.RED + "[Report] " + ChatColor.YELLOW + p.getName() + ChatColor.RED + " reported " + ChatColor.YELLOW + reportedName + ChatColor.RED + ": " + ChatColor.WHITE + reason);
+                }
+            }
+            // Discord webhook
+            fireDiscordEvent("reports", "New Report", "**" + p.getName() + "** reported **" + reportedName + "**\nReason: " + reason, 0xe67e22, reportedName);
+            return true;
+        }
+
         return true;
     }
 
@@ -772,6 +951,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         p.sendMessage(ChatColor.GREEN + "/pwarp set <name>" + ChatColor.WHITE + " - Create a player warp");
         p.sendMessage(ChatColor.GREEN + "/achievements" + ChatColor.WHITE + " - View your achievements");
         p.sendMessage(ChatColor.GREEN + "/stats [player]" + ChatColor.WHITE + " - View PvP stats");
+        p.sendMessage(ChatColor.GREEN + "/report <player> <reason>" + ChatColor.WHITE + " - Report a player");
 
         if (p.hasPermission("dmt.admin")) {
             p.sendMessage("");
@@ -876,6 +1056,38 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, null);
                     if (target != null) target.kickPlayer(ChatColor.RED + "Banned: " + reason);
                     break;
+                case TICKET_RESPOND:
+                    addTicketResponse(Integer.parseInt(ctx.targetName), p.getName(), reason);
+                    p.sendMessage(ChatColor.GREEN + "Response added to ticket #" + ctx.targetName + ".");
+                    break;
+                case TICKET_RESOLVE:
+                    resolveTicket(Integer.parseInt(ctx.targetName), reason);
+                    p.sendMessage(ChatColor.GREEN + "Ticket #" + ctx.targetName + " resolved: " + reason);
+                    break;
+                case REPORT:
+                    // Cooldown check (60 seconds)
+                    long now = System.currentTimeMillis();
+                    Long lastRep = reportCooldowns.get(p.getUniqueId());
+                    if (lastRep != null && (now - lastRep) < 60000) {
+                        int rem = (int) ((60000 - (now - lastRep)) / 1000);
+                        p.sendMessage(ChatColor.RED + "Please wait " + rem + "s before submitting another report.");
+                        break;
+                    }
+                    if (!dataConfig.contains("reports")) dataConfig.set("reports", new ArrayList<>());
+                    List<String> reps = dataConfig.getStringList("reports");
+                    String rts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+                    reps.add(rts + " | " + p.getName() + " reported " + ctx.targetName + " for: " + reason);
+                    dataConfig.set("reports", reps);
+                    saveDataFile();
+                    reportCooldowns.put(p.getUniqueId(), now);
+                    p.sendMessage(ChatColor.GREEN + "Report submitted! Staff have been notified.");
+                    for (Player adm : Bukkit.getOnlinePlayers()) {
+                        if (adm.hasPermission("dmt.admin")) {
+                            adm.sendMessage(ChatColor.RED + "[Report] " + ChatColor.YELLOW + p.getName() + ChatColor.RED + " reported " + ChatColor.YELLOW + ctx.targetName + ChatColor.RED + ": " + ChatColor.WHITE + reason);
+                        }
+                    }
+                    fireDiscordEvent("reports", "New Report", "**" + p.getName() + "** reported **" + ctx.targetName + "**\nReason: " + reason, 0xe67e22, ctx.targetName);
+                    break;
             }
             if (ctx.targetName != null && ctx.type != ActionType.ADD_NOTE) {
                 p.sendMessage(ChatColor.AQUA + "Action applied to " + ctx.targetName);
@@ -977,6 +1189,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         kitMeta.setLore(Arrays.asList(ChatColor.GRAY + "Browse and purchase kits"));
         kits.setItemMeta(kitMeta);
         gui.setItem(getNextGridSlot(), kits);
+        
+        // Report Player
+        ItemStack report = new ItemStack(Material.WRITABLE_BOOK);
+        ItemMeta rpMeta = report.getItemMeta();
+        rpMeta.setDisplayName(ChatColor.RED + "Report Player");
+        rpMeta.setLore(Arrays.asList(ChatColor.GRAY + "Report a player to staff"));
+        report.setItemMeta(rpMeta);
+        gui.setItem(getNextGridSlot(), report);
         
         // Back button
         ItemStack back = new ItemStack(Material.BARRIER);
@@ -1182,6 +1402,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         p.openInventory(gui);
     }
 
+    private void openReportPlayerList(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_REPORT_PLAYER);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        for (Player target : Bukkit.getOnlinePlayers()) {
+            if (target.getUniqueId().equals(p.getUniqueId())) continue;
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta hMeta = (SkullMeta) head.getItemMeta();
+            hMeta.setOwningPlayer(target);
+            hMeta.setDisplayName(ChatColor.YELLOW + target.getName());
+            head.setItemMeta(hMeta);
+            int slot = getNextGridSlot();
+            if (slot != -1) gui.setItem(slot, head);
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
     private void openMainMenu(Player p) {
 
         Inventory gui = Bukkit.createInventory(null, 54, GUI_MAIN);
@@ -1314,18 +1557,140 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         if (dataConfig.contains("tickets")) {
             for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
                 if (key.equals("next_id")) continue;
-                if ("open".equals(dataConfig.getString("tickets." + key + ".status"))) {
-                    List<String> lore = new ArrayList<>();
-                    lore.add(ChatColor.YELLOW + "By: " + dataConfig.getString("tickets." + key + ".player"));
-                    lore.add(ChatColor.GRAY + dataConfig.getString("tickets." + key + ".message"));
-                    lore.add(ChatColor.RED + "Click to close");
-                    ItemStack ticketItem = createGuiItem(Material.PAPER, ChatColor.GOLD + "Ticket #" + key, lore);
-                    int slot = getNextGridSlot();
-                    if (slot != -1) gui.setItem(slot, ticketItem);
+                String status = dataConfig.getString("tickets." + key + ".status", "open");
+                if (!"open".equals(status) && !"in_progress".equals(status)) continue;
+                String priority = dataConfig.getString("tickets." + key + ".priority", "medium");
+                String category = dataConfig.getString("tickets." + key + ".category", "other");
+                String player = dataConfig.getString("tickets." + key + ".player", "???");
+                String message = dataConfig.getString("tickets." + key + ".message", "");
+                String assignee = dataConfig.getString("tickets." + key + ".assignee", "");
+                String time = dataConfig.getString("tickets." + key + ".timestamp", "");
+                int responseCount = dataConfig.getStringList("tickets." + key + ".responses").size();
+
+                // Color-coded material by priority
+                Material mat;
+                switch (priority) {
+                    case "critical": mat = Material.REDSTONE_BLOCK; break;
+                    case "high": mat = Material.ORANGE_WOOL; break;
+                    case "low": mat = Material.LIME_WOOL; break;
+                    default: mat = Material.YELLOW_WOOL; break; // medium
                 }
+                ChatColor statusColor = status.equals("in_progress") ? ChatColor.AQUA : ChatColor.GREEN;
+
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.YELLOW + "By: " + ChatColor.WHITE + player);
+                lore.add(ChatColor.YELLOW + "Status: " + statusColor + status);
+                lore.add(ChatColor.YELLOW + "Priority: " + ChatColor.WHITE + priority);
+                lore.add(ChatColor.YELLOW + "Category: " + ChatColor.WHITE + category);
+                if (!assignee.isEmpty()) lore.add(ChatColor.YELLOW + "Assignee: " + ChatColor.WHITE + assignee);
+                lore.add(ChatColor.YELLOW + "Created: " + ChatColor.GRAY + time);
+                lore.add(ChatColor.YELLOW + "Responses: " + ChatColor.WHITE + "" + responseCount);
+                lore.add(ChatColor.GRAY + (message.length() > 50 ? message.substring(0, 50) + "..." : message));
+                lore.add("");
+                lore.add(ChatColor.GREEN + "Click to view details");
+
+                ItemStack ticketItem = createGuiItem(mat, ChatColor.GOLD + "Ticket #" + key, lore);
+                int slot = getNextGridSlot();
+                if (slot != -1) gui.setItem(slot, ticketItem);
             }
         }
         gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Main Menu"));
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        p.openInventory(gui);
+    }
+
+    private void openTicketDetailMenu(Player p, String ticketId) {
+        String base = "tickets." + ticketId;
+        if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return; }
+
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_TICKET_DETAIL + ticketId);
+        String player = dataConfig.getString(base + ".player", "???");
+        String status = dataConfig.getString(base + ".status", "open");
+        String priority = dataConfig.getString(base + ".priority", "medium");
+        String category = dataConfig.getString(base + ".category", "other");
+        String message = dataConfig.getString(base + ".message", "");
+        String assignee = dataConfig.getString(base + ".assignee", "");
+        String time = dataConfig.getString(base + ".timestamp", "");
+        String resolution = dataConfig.getString(base + ".resolution", "");
+        List<String> responses = dataConfig.getStringList(base + ".responses");
+
+        // Ticket info item (slot 4)
+        List<String> infoLore = new ArrayList<>();
+        infoLore.add(ChatColor.YELLOW + "Player: " + ChatColor.WHITE + player);
+        infoLore.add(ChatColor.YELLOW + "Created: " + ChatColor.GRAY + time);
+        infoLore.add(ChatColor.YELLOW + "Category: " + ChatColor.WHITE + category);
+        infoLore.add("");
+        // Word-wrap message
+        for (int i = 0; i < message.length(); i += 40) {
+            infoLore.add(ChatColor.WHITE + message.substring(i, Math.min(i + 40, message.length())));
+        }
+        if (dataConfig.contains(base + ".world")) {
+            infoLore.add("");
+            infoLore.add(ChatColor.AQUA + "Location: " + dataConfig.getString(base + ".world") + " " +
+                dataConfig.getInt(base + ".x") + ", " + dataConfig.getInt(base + ".y") + ", " + dataConfig.getInt(base + ".z"));
+        }
+        gui.setItem(4, createGuiItem(Material.BOOK, ChatColor.GOLD + "Ticket #" + ticketId + " Info", infoLore));
+
+        // Status display (slot 19)
+        ChatColor statusColor;
+        switch (status) {
+            case "in_progress": statusColor = ChatColor.AQUA; break;
+            case "resolved": statusColor = ChatColor.GREEN; break;
+            case "closed": statusColor = ChatColor.GRAY; break;
+            default: statusColor = ChatColor.YELLOW; break;
+        }
+        gui.setItem(19, createGuiItem(Material.NAME_TAG, statusColor + "Status: " + status));
+
+        // Priority display (slot 20)
+        Material prioMat;
+        switch (priority) {
+            case "critical": prioMat = Material.REDSTONE_BLOCK; break;
+            case "high": prioMat = Material.ORANGE_WOOL; break;
+            case "low": prioMat = Material.LIME_WOOL; break;
+            default: prioMat = Material.YELLOW_WOOL; break;
+        }
+        gui.setItem(20, createGuiItem(prioMat, ChatColor.YELLOW + "Priority: " + priority));
+
+        // Assignee (slot 21)
+        gui.setItem(21, createGuiItem(Material.PLAYER_HEAD, ChatColor.YELLOW + "Assignee: " + (assignee.isEmpty() ? "Unassigned" : assignee)));
+
+        // Resolution (slot 22)
+        if (!resolution.isEmpty()) {
+            gui.setItem(22, createGuiItem(Material.EMERALD, ChatColor.GREEN + "Resolution: " + resolution));
+        }
+
+        // Action buttons row
+        gui.setItem(28, createGuiItem(Material.WRITABLE_BOOK, ChatColor.GREEN + "Add Response", Collections.singletonList(ChatColor.GRAY + "Click to type a response")));
+        gui.setItem(29, createGuiItem(Material.ARROW, ChatColor.AQUA + "Set In Progress"));
+        gui.setItem(30, createGuiItem(Material.GOLD_INGOT, ChatColor.YELLOW + "Set Priority"));
+        gui.setItem(31, createGuiItem(Material.ARMOR_STAND, ChatColor.BLUE + "Assign to Me"));
+        gui.setItem(32, createGuiItem(Material.EMERALD_BLOCK, ChatColor.GREEN + "Resolve"));
+        gui.setItem(33, createGuiItem(Material.BARRIER, ChatColor.RED + "Close Ticket"));
+
+        // Teleport to location (slot 34)
+        if (dataConfig.contains(base + ".world")) {
+            gui.setItem(34, createGuiItem(Material.ENDER_PEARL, ChatColor.LIGHT_PURPLE + "Teleport to Location"));
+        }
+
+        // Show responses (slots 37-44)
+        int respSlot = 37;
+        for (int i = Math.max(0, responses.size() - 8); i < responses.size() && respSlot <= 44; i++) {
+            String raw = responses.get(i);
+            String[] parts = raw.split(" \\| ", 3);
+            List<String> respLore = new ArrayList<>();
+            if (parts.length == 3) {
+                respLore.add(ChatColor.GRAY + parts[0]);
+                respLore.add(ChatColor.WHITE + parts[2]);
+                gui.setItem(respSlot, createGuiItem(Material.MAP, ChatColor.AQUA + parts[1], respLore));
+            } else {
+                respLore.add(ChatColor.WHITE + raw);
+                gui.setItem(respSlot, createGuiItem(Material.MAP, ChatColor.AQUA + "Response", respLore));
+            }
+            respSlot++;
+        }
+
+        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Ticket List"));
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
         p.openInventory(gui);
@@ -1833,6 +2198,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         boolean relevant = title.equals(GUI_MAIN)
             || title.equals(GUI_PLAYER_LIST)
             || title.equals(GUI_TICKET_LIST)
+            || title.startsWith(GUI_TICKET_DETAIL)
             || title.startsWith(GUI_PLAYER_ACTION)
             || title.startsWith(GUI_NOTES_VIEW)
             || title.equals(ChatColor.RED + "Punished Players")
@@ -1840,6 +2206,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             || title.equals(GUI_MENU_SELECTOR)
             || title.equals(GUI_PLAYER_MENU)
             || title.equals(GUI_PLAYER_LIST_TPA)
+            || title.equals(GUI_REPORT_PLAYER)
             || title.equals(ChatColor.BLUE + "Warps")
             || title.startsWith(GUI_WARP_MANAGEMENT)
             || title.startsWith(ChatColor.RED + "Delete:")
@@ -1862,7 +2229,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             || title.equals(GUI_QUEST_LIST)
             || title.equals(GUI_AUCTION_HOUSE)
             || title.equals(GUI_PWARP_LIST)
-            || title.equals(GUI_ACHIEVEMENTS);
+            || title.equals(GUI_ACHIEVEMENTS)
+            || title.equals(GUI_POLL_LIST)
+            || title.startsWith(GUI_POLL_VOTE);
         if (!relevant) return;
 
         e.setCancelled(true);
@@ -1921,6 +2290,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 openPlayerListTPA(p);
             } else if (itemName.equals("Kits")) {
                 openKitListGUI(p);
+            } else if (itemName.equals("Report Player")) {
+                openReportPlayerList(p);
             } else if (type == Material.BARRIER) {
                 p.closeInventory();
             }
@@ -2092,6 +2463,41 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             return;
         }
 
+        // Poll List
+        if (title.equals(GUI_POLL_LIST)) {
+            if (type == Material.BARRIER) { p.closeInventory(); return; }
+            if (type == Material.PAPER) {
+                String pollId = ChatColor.stripColor(clicked.getItemMeta().getLore().get(0)).replace("ID: ", "");
+                openPollVote(p, pollId);
+            }
+            return;
+        }
+
+        // Poll Voting
+        if (title.startsWith(GUI_POLL_VOTE)) {
+            if (type == Material.BARRIER) { openPollList(p); return; }
+            if (type == Material.LIME_CONCRETE) {
+                String pollId = ChatColor.stripColor(clicked.getItemMeta().getLore().get(0)).replace("ID: ", "");
+                int choiceIdx = Integer.parseInt(ChatColor.stripColor(clicked.getItemMeta().getLore().get(1)).replace("Option: ", ""));
+                List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+                if (voters.contains(p.getUniqueId().toString())) {
+                    p.sendMessage(ChatColor.RED + "You already voted on this poll.");
+                    p.closeInventory();
+                    return;
+                }
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                if (choiceIdx < 1 || choiceIdx > options.size()) { p.closeInventory(); return; }
+                voters.add(p.getUniqueId().toString());
+                dataConfig.set("polls." + pollId + ".voters", voters);
+                int current = dataConfig.getInt("polls." + pollId + ".votes." + choiceIdx, 0);
+                dataConfig.set("polls." + pollId + ".votes." + choiceIdx, current + 1);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "\u2705 Vote recorded for: " + ChatColor.YELLOW + options.get(choiceIdx - 1));
+                p.closeInventory();
+            }
+            return;
+        }
+
         // Player List for TPA
         if (title.equals(GUI_PLAYER_LIST_TPA)) {
             if (type == Material.BARRIER) {
@@ -2108,6 +2514,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 } else {
                     p.sendMessage(ChatColor.RED + "That player is no longer online.");
                 }
+            }
+            return;
+        }
+
+        // Report Player List
+        if (title.equals(GUI_REPORT_PLAYER)) {
+            if (type == Material.BARRIER) {
+                openPlayerMenu(p);
+            } else if (type == Material.PLAYER_HEAD) {
+                p.closeInventory();
+                pendingActions.put(p.getUniqueId(), new PunishmentContext(itemName, ActionType.REPORT));
+                p.sendMessage(ChatColor.GOLD + "Enter the reason for reporting " + ChatColor.YELLOW + itemName + ChatColor.GOLD + ":");
             }
             return;
         }
@@ -2408,12 +2826,77 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 case 43: p.closeInventory(); break;
             }
         } else if (title.equals(GUI_TICKET_LIST)) {
-            if (type == Material.PAPER) {
-                String id = itemName.replace("Ticket #", "");
-                dataConfig.set("tickets." + id + ".status", "closed");
+            if (type == Material.REDSTONE) { openMainMenu(p); return; }
+            // Any colored wool or redstone block = ticket item, click to open detail
+            if (type == Material.YELLOW_WOOL || type == Material.ORANGE_WOOL || type == Material.LIME_WOOL || type == Material.REDSTONE_BLOCK) {
+                String id = ChatColor.stripColor(itemName).replace("Ticket #", "").trim();
+                openTicketDetailMenu(p, id);
+            }
+        } else if (title.startsWith(GUI_TICKET_DETAIL)) {
+            String ticketId = title.replace(GUI_TICKET_DETAIL, "").trim();
+            if (type == Material.REDSTONE) { openTicketListMenu(p); return; }
+            if (type == Material.WRITABLE_BOOK) {
+                // Add response via chat
+                p.closeInventory();
+                pendingActions.put(p.getUniqueId(), new PunishmentContext(ticketId, ActionType.TICKET_RESPOND));
+                p.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Type your response for ticket #" + ticketId + ":");
+            } else if (type == Material.ARROW) {
+                // Set in progress
+                dataConfig.set("tickets." + ticketId + ".status", "in_progress");
                 saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " set to in_progress.");
+                openTicketDetailMenu(p, ticketId);
+            } else if (type == Material.GOLD_INGOT) {
+                // Cycle priority
+                String current = dataConfig.getString("tickets." + ticketId + ".priority", "medium");
+                String next;
+                switch (current) {
+                    case "low": next = "medium"; break;
+                    case "medium": next = "high"; break;
+                    case "high": next = "critical"; break;
+                    default: next = "low"; break;
+                }
+                dataConfig.set("tickets." + ticketId + ".priority", next);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " priority set to " + next + ".");
+                openTicketDetailMenu(p, ticketId);
+            } else if (type == Material.ARMOR_STAND) {
+                // Assign to me
+                dataConfig.set("tickets." + ticketId + ".assignee", p.getName());
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " assigned to you.");
+                openTicketDetailMenu(p, ticketId);
+            } else if (type == Material.EMERALD_BLOCK) {
+                // Resolve
+                p.closeInventory();
+                pendingActions.put(p.getUniqueId(), new PunishmentContext(ticketId, ActionType.TICKET_RESOLVE));
+                p.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Type a resolution reason for ticket #" + ticketId + ":");
+            } else if (type == Material.BARRIER) {
+                // Close ticket
+                dataConfig.set("tickets." + ticketId + ".status", "closed");
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " closed.");
+                // Notify player
+                String ticketPlayer = dataConfig.getString("tickets." + ticketId + ".player", "");
+                Player target = Bukkit.getPlayer(ticketPlayer);
+                if (target != null && target.isOnline()) {
+                    target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + ticketId + " has been closed by " + p.getName() + ".");
+                }
                 openTicketListMenu(p);
-            } else if (type == Material.REDSTONE) openMainMenu(p);
+            } else if (type == Material.ENDER_PEARL) {
+                // Teleport to ticket location
+                String world = dataConfig.getString("tickets." + ticketId + ".world");
+                if (world != null && Bukkit.getWorld(world) != null) {
+                    int x = dataConfig.getInt("tickets." + ticketId + ".x");
+                    int y = dataConfig.getInt("tickets." + ticketId + ".y");
+                    int z = dataConfig.getInt("tickets." + ticketId + ".z");
+                    p.teleport(new Location(Bukkit.getWorld(world), x + 0.5, y, z + 0.5));
+                    p.closeInventory();
+                    p.sendMessage(ChatColor.GREEN + "Teleported to ticket #" + ticketId + " location.");
+                } else {
+                    p.sendMessage(ChatColor.RED + "World not found for this ticket.");
+                }
+            }
         } else if (title.equals(ChatColor.RED + "Punished Players")) {
             if (type == Material.PLAYER_HEAD) openPlayerActionMenu(p, itemName);
             else if (type == Material.REDSTONE) openMainMenu(p);
@@ -2825,6 +3308,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         dataConfig.set("last_seen." + uuid, System.currentTimeMillis());
         dataConfig.set("last_seen_name." + uuid, e.getPlayer().getName());
         saveDataFile();
+
+        // --- TICKET NOTIFICATIONS ON JOIN ---
+        if (dataConfig.contains("tickets")) {
+            int updatedCount = 0;
+            for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+                if (key.equals("next_id")) continue;
+                String ticketPlayer = dataConfig.getString("tickets." + key + ".player", "");
+                if (ticketPlayer.equalsIgnoreCase(e.getPlayer().getName()) && dataConfig.getBoolean("tickets." + key + ".has_new_response", false)) {
+                    updatedCount++;
+                    dataConfig.set("tickets." + key + ".has_new_response", false);
+                }
+            }
+            if (updatedCount > 0) {
+                saveDataFile();
+                final int count = updatedCount;
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    if (e.getPlayer().isOnline()) {
+                        e.getPlayer().sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "You have " + count + " ticket(s) with new responses! Use /ticket list to check.");
+                    }
+                }, 40L);
+            }
+        }
     }
 
     @EventHandler
@@ -3110,7 +3615,33 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         m.put("category", dataConfig.getString(base + ".category", "other"));
         m.put("assignee", dataConfig.getString(base + ".assignee", ""));
         m.put("timestamp", dataConfig.getString(base + ".timestamp", ""));
-        m.put("responses", new ArrayList<>(dataConfig.getStringList(base + ".responses")));
+        m.put("resolution", dataConfig.getString(base + ".resolution", ""));
+        // Location
+        if (dataConfig.contains(base + ".world")) {
+            Map<String, Object> loc = new HashMap<>();
+            loc.put("world", dataConfig.getString(base + ".world", ""));
+            loc.put("x", dataConfig.getInt(base + ".x", 0));
+            loc.put("y", dataConfig.getInt(base + ".y", 0));
+            loc.put("z", dataConfig.getInt(base + ".z", 0));
+            m.put("location", loc);
+        }
+        // Parse responses into proper objects
+        List<Map<String, String>> parsedResponses = new ArrayList<>();
+        for (String raw : dataConfig.getStringList(base + ".responses")) {
+            String[] parts = raw.split(" \\| ", 3);
+            Map<String, String> resp = new HashMap<>();
+            if (parts.length == 3) {
+                resp.put("timestamp", parts[0].trim());
+                resp.put("admin", parts[1].trim());
+                resp.put("message", parts[2].trim());
+            } else {
+                resp.put("timestamp", "");
+                resp.put("admin", "Unknown");
+                resp.put("message", raw);
+            }
+            parsedResponses.add(resp);
+        }
+        m.put("responses", parsedResponses);
         return m;
     }
 
@@ -3120,7 +3651,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + admin + " | " + message;
         responses.add(entry);
         dataConfig.set(path, responses);
+        dataConfig.set("tickets." + id + ".has_new_response", true);
         saveDataFile();
+        // Notify player if online
+        String playerName = dataConfig.getString("tickets." + id + ".player", "");
+        Player target = Bukkit.getPlayer(playerName);
+        if (target != null && target.isOnline()) {
+            target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.GREEN + admin + " responded to your ticket #" + id + ": " + ChatColor.WHITE + message);
+        }
     }
 
     public void updateTicketField(int id, String field, String value) {
@@ -3131,7 +3669,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     public void resolveTicket(int id, String reason) {
         dataConfig.set("tickets." + id + ".status", "resolved");
         dataConfig.set("tickets." + id + ".resolution", reason);
+        dataConfig.set("tickets." + id + ".has_new_response", true);
         saveDataFile();
+        // Notify player if online
+        String playerName = dataConfig.getString("tickets." + id + ".player", "");
+        Player target = Bukkit.getPlayer(playerName);
+        if (target != null && target.isOnline()) {
+            target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.GREEN + "Your ticket #" + id + " has been resolved: " + ChatColor.WHITE + reason);
+        }
     }
 
     public void mutePlayer(UUID u, String playerName, String reason) {
@@ -3814,6 +4359,80 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
 
     // ========== ACTIVE POLLS DISPLAY ==========
+    private void openPollList(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_POLL_LIST);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        resetGridSlots();
+        if (dataConfig.contains("polls")) {
+            for (String pollId : dataConfig.getConfigurationSection("polls").getKeys(false)) {
+                if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) continue;
+                String question = dataConfig.getString("polls." + pollId + ".question", "");
+                List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+                List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+                boolean hasVoted = voters.contains(p.getUniqueId().toString());
+                ItemStack item = new ItemStack(Material.PAPER);
+                ItemMeta meta = item.getItemMeta();
+                meta.setDisplayName((hasVoted ? ChatColor.GRAY : ChatColor.YELLOW) + question);
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.DARK_GRAY + "ID: " + pollId);
+                lore.add("");
+                int totalVotes = 0;
+                for (int i = 0; i < options.size(); i++) totalVotes += dataConfig.getInt("polls." + pollId + ".votes." + (i + 1), 0);
+                for (int i = 0; i < options.size(); i++) {
+                    int votes = dataConfig.getInt("polls." + pollId + ".votes." + (i + 1), 0);
+                    int pct = totalVotes > 0 ? Math.round((float) votes / totalVotes * 100) : 0;
+                    lore.add(ChatColor.AQUA + "  " + (i + 1) + ". " + options.get(i) + ChatColor.GRAY + " (" + votes + " votes, " + pct + "%)");
+                }
+                lore.add("");
+                lore.add(hasVoted ? ChatColor.RED + "Already voted" : ChatColor.GREEN + "Click to vote!");
+                meta.setLore(lore);
+                item.setItemMeta(meta);
+                int slot = getNextGridSlot();
+                if (slot != -1) gui.setItem(slot, item);
+            }
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Close");
+        back.setItemMeta(bMeta);
+        gui.setItem(53, back);
+        p.openInventory(gui);
+    }
+
+    private void openPollVote(Player p, String pollId) {
+        if (!dataConfig.contains("polls." + pollId)) { p.sendMessage(ChatColor.RED + "Poll not found."); return; }
+        if (!dataConfig.getBoolean("polls." + pollId + ".active", false)) { p.sendMessage(ChatColor.RED + "This poll has ended."); return; }
+        List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+        if (voters.contains(p.getUniqueId().toString())) { p.sendMessage(ChatColor.RED + "You already voted on this poll."); return; }
+        String question = dataConfig.getString("polls." + pollId + ".question", "");
+        List<String> options = dataConfig.getStringList("polls." + pollId + ".options");
+        int size = Math.max(9, (int) Math.ceil((options.size() + 1) / 9.0) * 9);
+        if (size > 54) size = 54;
+        Inventory gui = Bukkit.createInventory(null, size, GUI_POLL_VOTE + question);
+        for (int i = 0; i < options.size(); i++) {
+            ItemStack item = new ItemStack(Material.LIME_CONCRETE);
+            ItemMeta meta = item.getItemMeta();
+            meta.setDisplayName(ChatColor.GREEN + "" + (i + 1) + ". " + options.get(i));
+            List<String> lore = new ArrayList<>();
+            lore.add(ChatColor.DARK_GRAY + "ID: " + pollId);
+            lore.add(ChatColor.DARK_GRAY + "Option: " + (i + 1));
+            int votes = dataConfig.getInt("polls." + pollId + ".votes." + (i + 1), 0);
+            lore.add("");
+            lore.add(ChatColor.GRAY + "Current votes: " + ChatColor.YELLOW + votes);
+            lore.add(ChatColor.AQUA + "Click to vote!");
+            meta.setLore(lore);
+            item.setItemMeta(meta);
+            gui.setItem(i, item);
+        }
+        ItemStack back = new ItemStack(Material.BARRIER);
+        ItemMeta bMeta = back.getItemMeta();
+        bMeta.setDisplayName(ChatColor.RED + "Back");
+        back.setItemMeta(bMeta);
+        gui.setItem(size - 1, back);
+        p.openInventory(gui);
+    }
+
     private void showActivePolls(Player p) {
         boolean found = false;
         if (dataConfig.contains("polls")) {
@@ -4118,6 +4737,314 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             Bukkit.broadcastMessage(prefix + msg);
             dataConfig.set("announcements.current_index", index + 1);
         }, intervalTicks, intervalTicks);
+
+        // One-time scheduled announcements checker (every 30 seconds = 600 ticks)
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) dataConfig.getList("announcements.scheduled", new ArrayList<>());
+            if (raw.isEmpty()) return;
+            boolean changed = false;
+            long now = System.currentTimeMillis();
+            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            for (Map<?, ?> entry : raw) {
+                Object sentObj = entry.get("sent");
+                boolean sent = sentObj instanceof Boolean && (Boolean) sentObj;
+                if (sent) continue;
+                String timeStr = String.valueOf(entry.get("time"));
+                try {
+                    // Parse ISO local datetime (yyyy-MM-ddTHH:mm)
+                    long targetMs = java.time.LocalDateTime.parse(timeStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= targetMs) {
+                        String message = ChatColor.translateAlternateColorCodes('&', String.valueOf(entry.get("message")));
+                        Bukkit.broadcastMessage(prefix + message);
+                        ((Map) entry).put("sent", true);
+                        changed = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (changed) {
+                dataConfig.set("announcements.scheduled", raw);
+                saveDataFile();
+            }
+        }, 600L, 600L);
+    }
+
+    // ========== EVENT EFFECTS ==========
+    private static final Set<org.bukkit.block.Biome> HOT_BIOMES = Set.of(
+        org.bukkit.block.Biome.DESERT,
+        org.bukkit.block.Biome.BADLANDS,
+        org.bukkit.block.Biome.ERODED_BADLANDS,
+        org.bukkit.block.Biome.WOODED_BADLANDS,
+        org.bukkit.block.Biome.SAVANNA,
+        org.bukkit.block.Biome.SAVANNA_PLATEAU,
+        org.bukkit.block.Biome.WINDSWEPT_SAVANNA,
+        org.bukkit.block.Biome.WARM_OCEAN,
+        org.bukkit.block.Biome.LUKEWARM_OCEAN,
+        org.bukkit.block.Biome.DEEP_LUKEWARM_OCEAN,
+        org.bukkit.block.Biome.JUNGLE,
+        org.bukkit.block.Biome.BAMBOO_JUNGLE,
+        org.bukkit.block.Biome.SPARSE_JUNGLE,
+        org.bukkit.block.Biome.MANGROVE_SWAMP
+    );
+
+    private static final Set<org.bukkit.block.Biome> COLD_BIOMES = Set.of(
+        org.bukkit.block.Biome.SNOWY_PLAINS,
+        org.bukkit.block.Biome.SNOWY_TAIGA,
+        org.bukkit.block.Biome.SNOWY_BEACH,
+        org.bukkit.block.Biome.SNOWY_SLOPES,
+        org.bukkit.block.Biome.FROZEN_OCEAN,
+        org.bukkit.block.Biome.DEEP_FROZEN_OCEAN,
+        org.bukkit.block.Biome.FROZEN_RIVER,
+        org.bukkit.block.Biome.FROZEN_PEAKS,
+        org.bukkit.block.Biome.JAGGED_PEAKS,
+        org.bukkit.block.Biome.ICE_SPIKES,
+        org.bukkit.block.Biome.GROVE
+    );
+
+    // --- Christmas: Snowflakes falling (skip hot biomes) ---
+    public void startChristmasSnow() {
+        if (christmasSnowTaskId != -1) return;
+        christmasSnowTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                org.bukkit.block.Biome biome = p.getLocation().getBlock().getBiome();
+                if (HOT_BIOMES.contains(biome)) continue;
+                Location loc = p.getLocation();
+                for (int i = 0; i < 15; i++) {
+                    double offsetX = (Math.random() - 0.5) * 30;
+                    double offsetY = 5 + Math.random() * 15;
+                    double offsetZ = (Math.random() - 0.5) * 30;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.SNOWFLAKE, particleLoc, 1, 0.5, 2.0, 0.5, 0.02);
+                }
+            }
+        }, 0L, 5L);
+        getLogger().info("Christmas snow effect started!");
+    }
+
+    public void stopChristmasSnow() {
+        if (christmasSnowTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(christmasSnowTaskId);
+            christmasSnowTaskId = -1;
+            getLogger().info("Christmas snow effect stopped!");
+        }
+    }
+
+    // --- Halloween: Smoke, witch sparkles, soul fire (all biomes) ---
+    public void startHalloweenEffect() {
+        if (halloweenTaskId != -1) return;
+        halloweenTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                Location loc = p.getLocation();
+                for (int i = 0; i < 8; i++) {
+                    double offsetX = (Math.random() - 0.5) * 25;
+                    double offsetY = Math.random() * 8;
+                    double offsetZ = (Math.random() - 0.5) * 25;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    // Dark smoke rising from the ground
+                    p.spawnParticle(org.bukkit.Particle.SMOKE, particleLoc, 1, 0.3, 0.5, 0.3, 0.01);
+                }
+                for (int i = 0; i < 5; i++) {
+                    double offsetX = (Math.random() - 0.5) * 20;
+                    double offsetY = 1 + Math.random() * 5;
+                    double offsetZ = (Math.random() - 0.5) * 20;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    // Witch purple sparkles
+                    p.spawnParticle(org.bukkit.Particle.WITCH, particleLoc, 1, 0.2, 0.3, 0.2, 0.01);
+                }
+                for (int i = 0; i < 3; i++) {
+                    double offsetX = (Math.random() - 0.5) * 15;
+                    double offsetY = Math.random() * 3;
+                    double offsetZ = (Math.random() - 0.5) * 15;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    // Eerie soul flames flickering near ground
+                    p.spawnParticle(org.bukkit.Particle.SOUL_FIRE_FLAME, particleLoc, 1, 0.1, 0.2, 0.1, 0.005);
+                }
+            }
+        }, 0L, 8L);
+        getLogger().info("Halloween effect started!");
+    }
+
+    public void stopHalloweenEffect() {
+        if (halloweenTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(halloweenTaskId);
+            halloweenTaskId = -1;
+            getLogger().info("Halloween effect stopped!");
+        }
+    }
+
+    // --- New Year: Firework sparks shooting upward ---
+    public void startNewYearEffect() {
+        if (newYearTaskId != -1) return;
+        newYearTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                Location loc = p.getLocation();
+                for (int i = 0; i < 10; i++) {
+                    double offsetX = (Math.random() - 0.5) * 30;
+                    double offsetY = 3 + Math.random() * 20;
+                    double offsetZ = (Math.random() - 0.5) * 30;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    // Firework sparks bursting in the sky
+                    p.spawnParticle(org.bukkit.Particle.FIREWORK, particleLoc, 1, 1.5, 1.0, 1.5, 0.08);
+                }
+                // Occasional enchantment glint at ground level
+                for (int i = 0; i < 4; i++) {
+                    double offsetX = (Math.random() - 0.5) * 15;
+                    double offsetY = Math.random() * 3;
+                    double offsetZ = (Math.random() - 0.5) * 15;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.ENCHANT, particleLoc, 1, 0.5, 1.0, 0.5, 0.5);
+                }
+            }
+        }, 0L, 10L);
+        getLogger().info("New Year effect started!");
+    }
+
+    public void stopNewYearEffect() {
+        if (newYearTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(newYearTaskId);
+            newYearTaskId = -1;
+            getLogger().info("New Year effect stopped!");
+        }
+    }
+
+    // --- Valentine: Floating hearts ---
+    public void startValentineEffect() {
+        if (valentineTaskId != -1) return;
+        valentineTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                Location loc = p.getLocation();
+                for (int i = 0; i < 6; i++) {
+                    double offsetX = (Math.random() - 0.5) * 20;
+                    double offsetY = 1 + Math.random() * 10;
+                    double offsetZ = (Math.random() - 0.5) * 20;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    // Floating hearts drifting upward
+                    p.spawnParticle(org.bukkit.Particle.HEART, particleLoc, 1, 0.3, 0.5, 0.3, 0.0);
+                }
+                // Pink dust accents
+                for (int i = 0; i < 5; i++) {
+                    double offsetX = (Math.random() - 0.5) * 18;
+                    double offsetY = Math.random() * 8;
+                    double offsetZ = (Math.random() - 0.5) * 18;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.CHERRY_LEAVES, particleLoc, 1, 0.5, 0.3, 0.5, 0.01);
+                }
+            }
+        }, 0L, 10L);
+        getLogger().info("Valentine effect started!");
+    }
+
+    public void stopValentineEffect() {
+        if (valentineTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(valentineTaskId);
+            valentineTaskId = -1;
+            getLogger().info("Valentine effect stopped!");
+        }
+    }
+
+    // --- Spring: Cherry blossoms and green nature sparkles (skip cold biomes) ---
+    public void startSpringEffect() {
+        if (springTaskId != -1) return;
+        springTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                org.bukkit.block.Biome biome = p.getLocation().getBlock().getBiome();
+                if (COLD_BIOMES.contains(biome)) continue;
+                Location loc = p.getLocation();
+                // Cherry blossom petals drifting down
+                for (int i = 0; i < 10; i++) {
+                    double offsetX = (Math.random() - 0.5) * 25;
+                    double offsetY = 4 + Math.random() * 12;
+                    double offsetZ = (Math.random() - 0.5) * 25;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.CHERRY_LEAVES, particleLoc, 1, 0.8, 1.5, 0.8, 0.02);
+                }
+                // Green nature sparkles near the ground
+                for (int i = 0; i < 5; i++) {
+                    double offsetX = (Math.random() - 0.5) * 20;
+                    double offsetY = Math.random() * 4;
+                    double offsetZ = (Math.random() - 0.5) * 20;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.HAPPY_VILLAGER, particleLoc, 1, 0.3, 0.3, 0.3, 0.0);
+                }
+            }
+        }, 0L, 6L);
+        getLogger().info("Spring effect started!");
+    }
+
+    public void stopSpringEffect() {
+        if (springTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(springTaskId);
+            springTaskId = -1;
+            getLogger().info("Spring effect stopped!");
+        }
+    }
+
+    // --- Summer: Warm shimmering flames and dripping water (skip cold biomes) ---
+    public void startSummerEffect() {
+        if (summerTaskId != -1) return;
+        summerTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                org.bukkit.block.Biome biome = p.getLocation().getBlock().getBiome();
+                if (COLD_BIOMES.contains(biome)) continue;
+                Location loc = p.getLocation();
+                // Heat shimmer / warm flame particles floating upward
+                for (int i = 0; i < 6; i++) {
+                    double offsetX = (Math.random() - 0.5) * 25;
+                    double offsetY = Math.random() * 5;
+                    double offsetZ = (Math.random() - 0.5) * 25;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.FLAME, particleLoc, 1, 0.2, 0.5, 0.2, 0.003);
+                }
+                // Water drips for a hot-day splash feel
+                for (int i = 0; i < 4; i++) {
+                    double offsetX = (Math.random() - 0.5) * 20;
+                    double offsetY = 3 + Math.random() * 8;
+                    double offsetZ = (Math.random() - 0.5) * 20;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.DRIPPING_WATER, particleLoc, 1, 0.3, 0.5, 0.3, 0.0);
+                }
+                // Occasional sun sparkle
+                if (Math.random() < 0.3) {
+                    double offsetX = (Math.random() - 0.5) * 15;
+                    double offsetY = 5 + Math.random() * 10;
+                    double offsetZ = (Math.random() - 0.5) * 15;
+                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
+                    p.spawnParticle(org.bukkit.Particle.END_ROD, particleLoc, 1, 0.5, 0.5, 0.5, 0.01);
+                }
+            }
+        }, 0L, 8L);
+        getLogger().info("Summer effect started!");
+    }
+
+    public void stopSummerEffect() {
+        if (summerTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(summerTaskId);
+            summerTaskId = -1;
+            getLogger().info("Summer effect stopped!");
+        }
+    }
+
+    /** Start the effect for the given event name. Called from WebServer. */
+    public void startEventEffect(String eventName) {
+        switch (eventName.toLowerCase()) {
+            case "christmas" -> startChristmasSnow();
+            case "halloween" -> startHalloweenEffect();
+            case "newyear" -> startNewYearEffect();
+            case "valentine" -> startValentineEffect();
+            case "spring" -> startSpringEffect();
+            case "summer" -> startSummerEffect();
+        }
+    }
+
+    /** Stop the effect for the given event name. Called from WebServer. */
+    public void stopEventEffect(String eventName) {
+        switch (eventName.toLowerCase()) {
+            case "christmas" -> stopChristmasSnow();
+            case "halloween" -> stopHalloweenEffect();
+            case "newyear" -> stopNewYearEffect();
+            case "valentine" -> stopValentineEffect();
+            case "spring" -> stopSpringEffect();
+            case "summer" -> stopSummerEffect();
+        }
     }
 
 }

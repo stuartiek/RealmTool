@@ -98,13 +98,7 @@ public class WebServer {
         });
 
         app.get("/api/tickets", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String status = ctx.queryParam("status");
             String priority = ctx.queryParam("priority");
@@ -117,8 +111,8 @@ public class WebServer {
                         String ticketStatus = plugin.getDataConfig().getString("tickets." + key + ".status", "open");
                         String ticketPriority = plugin.getDataConfig().getString("tickets." + key + ".priority", "medium");
                         
-                        if ((status == null || status.equals(ticketStatus)) && 
-                            (priority == null || priority.equals(ticketPriority))) {
+                        if ((status == null || status.isEmpty() || status.equals(ticketStatus)) && 
+                            (priority == null || priority.isEmpty() || priority.equals(ticketPriority))) {
                             Map<String, Object> t = new HashMap<>();
                             t.put("id", key);
                             t.put("player", plugin.getDataConfig().getString("tickets." + key + ".player"));
@@ -478,31 +472,25 @@ public class WebServer {
         });
 
         app.post("/api/ticket/close/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
             
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("tickets." + id + ".status", "closed");
                 plugin.saveDataFile();
                 plugin.logAction("WebAdmin", "closed ticket", id);
+                // Notify player if online
+                String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
+                Player target = Bukkit.getPlayer(playerName);
+                if (target != null && target.isOnline()) {
+                    target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + id + " has been closed.");
+                }
             });
-            ctx.result("OK");
+            ctx.json(Map.of("success", true));
         });
 
         app.get("/api/ticket/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String id = ctx.pathParam("id");
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () ->
@@ -512,67 +500,98 @@ public class WebServer {
         });
 
         app.post("/api/ticket/{id}/response", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String id = ctx.pathParam("id");
-            String admin = ctx.queryParam("admin");
-            String message = ctx.queryParam("message");
+            // Read from JSON body
+            String admin = null;
+            String message = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    admin = (String) bodyMap.get("admin");
+                    message = (String) bodyMap.get("message");
+                }
+            } catch (Exception ignored) {}
+            // Fallback to query params
+            if (admin == null) admin = ctx.queryParam("admin");
+            if (message == null) message = ctx.queryParam("message");
+            
+            final String fAdmin = admin != null ? admin : "Admin";
+            final String fMessage = message != null ? message : "";
             
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.addTicketResponse(Integer.parseInt(id), admin, message);
+                plugin.addTicketResponse(Integer.parseInt(id), fAdmin, fMessage);
                 plugin.logAction("WebAdmin", "added response to ticket", id);
             });
-            ctx.result("OK");
+            ctx.json(Map.of("success", true));
         });
 
         app.patch("/api/ticket/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String id = ctx.pathParam("id");
-            String priority = ctx.queryParam("priority");
-            String category = ctx.queryParam("category");
-            String status = ctx.queryParam("status");
-            String assignee = ctx.queryParam("assignee");
+            // Read from JSON body or query params
+            String priority = null, category = null, status = null, assignee = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    priority = (String) bodyMap.get("priority");
+                    category = (String) bodyMap.get("category");
+                    status = (String) bodyMap.get("status");
+                    assignee = (String) bodyMap.get("assignee");
+                }
+            } catch (Exception ignored) {}
+            if (priority == null) priority = ctx.queryParam("priority");
+            if (category == null) category = ctx.queryParam("category");
+            if (status == null) status = ctx.queryParam("status");
+            if (assignee == null) assignee = ctx.queryParam("assignee");
 
+            final String fPriority = priority, fCategory = category, fStatus = status, fAssignee = assignee;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                if (priority != null) plugin.updateTicketField(Integer.parseInt(id), "priority", priority);
-                if (category != null) plugin.updateTicketField(Integer.parseInt(id), "category", category);
-                if (status != null) plugin.updateTicketField(Integer.parseInt(id), "status", status);
-                if (assignee != null) plugin.updateTicketField(Integer.parseInt(id), "assignee", assignee);
+                if (fPriority != null) plugin.updateTicketField(Integer.parseInt(id), "priority", fPriority);
+                if (fCategory != null) plugin.updateTicketField(Integer.parseInt(id), "category", fCategory);
+                if (fStatus != null) {
+                    plugin.updateTicketField(Integer.parseInt(id), "status", fStatus);
+                    // Notify player of status change
+                    String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
+                    Player target = Bukkit.getPlayer(playerName);
+                    if (target != null && target.isOnline()) {
+                        target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + id + " status changed to: " + ChatColor.WHITE + fStatus);
+                    }
+                }
+                if (fAssignee != null) plugin.updateTicketField(Integer.parseInt(id), "assignee", fAssignee);
                 plugin.logAction("WebAdmin", "updated ticket", id);
             });
-            ctx.result("OK");
+            ctx.json(Map.of("success", true));
         });
 
         app.post("/api/ticket/{id}/resolve", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String id = ctx.pathParam("id");
-            String reason = ctx.queryParam("reason");
+            // Read from JSON body or query params
+            String reason = null;
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    reason = (String) bodyMap.get("reason");
+                }
+            } catch (Exception ignored) {}
+            if (reason == null) reason = ctx.queryParam("reason");
+            final String fReason = reason != null ? reason : "No reason";
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.resolveTicket(Integer.parseInt(id), reason);
+                plugin.resolveTicket(Integer.parseInt(id), fReason);
                 plugin.logAction("WebAdmin", "resolved ticket", id);
             });
-            ctx.result("OK");
+            ctx.json(Map.of("success", true));
         });
 
         app.post("/api/command", ctx -> {
@@ -592,6 +611,55 @@ public class WebServer {
                 });
             }
             ctx.result("OK");
+        });
+
+        // --- PERFORMANCE ---
+        app.get("/api/performance", ctx -> {
+            if (!auth(ctx)) return;
+
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> res = new HashMap<>();
+
+                // TPS (Paper API)
+                double[] tps = Bukkit.getServer().getTPS();
+                res.put("tps", tps.length > 0 ? tps[0] : 20.0);
+
+                // Memory
+                Runtime rt = Runtime.getRuntime();
+                long used = rt.totalMemory() - rt.freeMemory();
+                long max = rt.maxMemory();
+                res.put("memory", max > 0 ? (int) (used * 100 / max) : 0);
+                res.put("memoryUsedMB", used / 1024 / 1024);
+                res.put("memoryMaxMB", max / 1024 / 1024);
+
+                // Player count
+                res.put("playercount", Bukkit.getOnlinePlayers().size());
+
+                // Uptime in seconds
+                long uptimeMs = java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime();
+                res.put("uptime", uptimeMs / 1000);
+
+                // Join history (recent joins from action_history)
+                List<Map<String, String>> joinHistory = new ArrayList<>();
+                List<String> history = plugin.getDataConfig().getStringList("action_history");
+                for (int i = history.size() - 1; i >= 0 && joinHistory.size() < 50; i--) {
+                    String entry = history.get(i);
+                    if (entry.contains("player_joined")) {
+                        // Format: "timestamp | actor | action | target"
+                        String[] parts = entry.split(" \\| ", 4);
+                        if (parts.length >= 4) {
+                            Map<String, String> j = new HashMap<>();
+                            j.put("player", parts[3].trim());
+                            j.put("time", parts[0].trim());
+                            joinHistory.add(j);
+                        }
+                    }
+                }
+                res.put("joinHistory", joinHistory);
+
+                return res;
+            });
+            ctx.json(future.get());
         });
 
         // --- WHITELIST ---
@@ -1119,12 +1187,68 @@ public class WebServer {
             ctx.json(future.get());
         });
 
+        // --- LAND CLAIMS ---
+        app.get("/api/claims", ctx -> {
+            if (!auth(ctx)) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<String, Object>> claimsList = new ArrayList<>();
+                int totalChunks = 0;
+                int largestClaim = 0;
+                if (data.contains("claims")) {
+                    for (String uuid : data.getConfigurationSection("claims").getKeys(false)) {
+                        List<String> claimed = data.getStringList("claims." + uuid + ".claimed");
+                        List<String> trusted = data.getStringList("claims." + uuid + ".trusted");
+                        if (claimed.isEmpty()) continue;
+                        String name = data.getString("last_seen_name." + uuid, uuid);
+                        totalChunks += claimed.size();
+                        if (claimed.size() > largestClaim) largestClaim = claimed.size();
+                        Map<String, Object> entry = new HashMap<>();
+                        entry.put("uuid", uuid);
+                        entry.put("owner", name);
+                        entry.put("chunks", claimed.size());
+                        entry.put("trusted", trusted);
+                        List<String> locations = new ArrayList<>();
+                        for (String ck : claimed) {
+                            String[] parts = ck.split(":");
+                            if (parts.length == 3) {
+                                try {
+                                    int cx = Integer.parseInt(parts[1]);
+                                    int cz = Integer.parseInt(parts[2]);
+                                    locations.add(parts[0] + " (" + (cx * 16) + ", " + (cz * 16) + ")");
+                                } catch (NumberFormatException e) {
+                                    locations.add(ck);
+                                }
+                            }
+                        }
+                        entry.put("locations", locations);
+                        claimsList.add(entry);
+                    }
+                }
+                claimsList.sort((a, b) -> Integer.compare((int) b.get("chunks"), (int) a.get("chunks")));
+                Map<String, Object> result = new HashMap<>();
+                result.put("claims", claimsList);
+                result.put("totalChunks", totalChunks);
+                result.put("totalPlayers", claimsList.size());
+                result.put("largestClaim", largestClaim);
+                return result;
+            });
+            ctx.json(future.get());
+        });
+
+        app.delete("/api/claims/{uuid}", ctx -> {
+            if (!auth(ctx)) return;
+            String uuid = ctx.pathParam("uuid");
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("claims." + uuid, null);
+                plugin.saveDataFile();
+            });
+            ctx.result("OK");
+        });
+
         // --- KITS ---
         app.get("/api/kits", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx)) return;
 
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> kits = new ArrayList<>();
@@ -1571,61 +1695,59 @@ public class WebServer {
 
         // ========== POLLS API ==========
         app.get("/api/polls", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
-            Map<String, Object> result = new HashMap<>();
-            if (plugin.getDataConfig().contains("polls")) {
-                for (String pid : plugin.getDataConfig().getConfigurationSection("polls").getKeys(false)) {
-                    Map<String, Object> poll = new HashMap<>();
-                    String pp = "polls." + pid;
-                    poll.put("question", plugin.getDataConfig().getString(pp + ".question", ""));
-                    poll.put("options", plugin.getDataConfig().getStringList(pp + ".options"));
-                    poll.put("active", plugin.getDataConfig().getBoolean(pp + ".active", false));
-                    Map<String, Integer> votes = new HashMap<>();
-                    if (plugin.getDataConfig().contains(pp + ".votes")) {
-                        for (String vk : plugin.getDataConfig().getConfigurationSection(pp + ".votes").getKeys(false)) {
-                            votes.put(vk, plugin.getDataConfig().getInt(pp + ".votes." + vk, 0));
+            if (!auth(ctx)) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> result = new HashMap<>();
+                if (plugin.getDataConfig().contains("polls")) {
+                    for (String pid : plugin.getDataConfig().getConfigurationSection("polls").getKeys(false)) {
+                        Map<String, Object> poll = new HashMap<>();
+                        String pp = "polls." + pid;
+                        poll.put("question", plugin.getDataConfig().getString(pp + ".question", ""));
+                        poll.put("options", plugin.getDataConfig().getStringList(pp + ".options"));
+                        poll.put("active", plugin.getDataConfig().getBoolean(pp + ".active", false));
+                        Map<String, Integer> votes = new HashMap<>();
+                        if (plugin.getDataConfig().contains(pp + ".votes")) {
+                            for (String vk : plugin.getDataConfig().getConfigurationSection(pp + ".votes").getKeys(false)) {
+                                votes.put(vk, plugin.getDataConfig().getInt(pp + ".votes." + vk, 0));
+                            }
                         }
+                        poll.put("votes", votes);
+                        result.put(pid, poll);
                     }
-                    poll.put("votes", votes);
-                    result.put(pid, poll);
                 }
-            }
-            ctx.json(result);
+                return result;
+            });
+            ctx.json(future.get());
         });
 
         app.post("/api/polls", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx)) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String id = (String) body.get("id");
             if (id == null || id.isEmpty()) id = String.valueOf(System.currentTimeMillis());
             String pp = "polls." + id;
-            final String fId = id;
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getDataConfig().set(pp + ".question", body.getOrDefault("question", ""));
-                plugin.getDataConfig().set(pp + ".options", body.getOrDefault("options", new ArrayList<>()));
-                plugin.getDataConfig().set(pp + ".active", body.getOrDefault("active", true));
+            final String fpp = pp;
+            Future<?> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                plugin.getDataConfig().set(fpp + ".question", body.getOrDefault("question", ""));
+                plugin.getDataConfig().set(fpp + ".options", body.getOrDefault("options", new ArrayList<>()));
+                plugin.getDataConfig().set(fpp + ".active", body.getOrDefault("active", true));
                 plugin.saveDataFile();
+                return null;
             });
+            future.get();
             ctx.json(Map.of("success", true));
         });
 
         app.delete("/api/polls/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx)) return;
             String id = ctx.pathParam("id");
-            Bukkit.getScheduler().runTask(plugin, () -> {
+            Future<?> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 plugin.getDataConfig().set("polls." + id, null);
                 plugin.saveDataFile();
+                return null;
             });
+            future.get();
             ctx.json(Map.of("success", true));
         });
 
@@ -2291,6 +2413,67 @@ public class WebServer {
             ctx.json(Map.of("success", true));
         });
 
+        // ========== ONE-TIME SCHEDULED ANNOUNCEMENTS ==========
+        app.get("/api/announcements/scheduled", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
+            List<Map<String, Object>> announcements = new ArrayList<>();
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                announcements.add(m);
+            }
+            ctx.json(Map.of("announcements", announcements));
+        });
+
+        app.post("/api/announcements/schedule", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String message = (String) body.get("message");
+            String time = (String) body.get("time");
+            if (message == null || time == null || message.isEmpty() || time.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "Missing message or time"));
+                return;
+            }
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
+            List<Map<String, Object>> scheduled = new ArrayList<>();
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                scheduled.add(m);
+            }
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("message", message);
+            entry.put("time", time);
+            entry.put("sent", false);
+            scheduled.add(entry);
+            data.set("announcements.scheduled", scheduled);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/announcements/schedule", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            int index = ((Number) body.get("index")).intValue();
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
+            List<Map<String, Object>> scheduled = new ArrayList<>();
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                scheduled.add(m);
+            }
+            if (index >= 0 && index < scheduled.size()) {
+                scheduled.remove(index);
+                data.set("announcements.scheduled", scheduled);
+                plugin.saveDataFile();
+            }
+            ctx.json(Map.of("success", true));
+        });
+
         // ========== PLAYER REPUTATION ==========
         app.get("/api/reputation", ctx -> {
             if (!auth(ctx)) return;
@@ -2429,6 +2612,172 @@ public class WebServer {
                 plugin.setAfkTimeoutMinutes(timeout);
             }
             ctx.json(Map.of("success", true));
+        });
+
+        // ========== PLAYER ANALYTICS ==========
+        app.get("/api/analytics/players", ctx -> {
+            if (!auth(ctx)) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<String, Object>> analytics = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+
+                // Gather all players with playtime data
+                var playtimeSection = data.getConfigurationSection("playtime");
+                if (playtimeSection != null) {
+                    for (String uuidStr : playtimeSection.getKeys(false)) {
+                        try {
+                            UUID uuid = UUID.fromString(uuidStr);
+                            String name = data.getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                            if (name == null || seen.contains(name)) continue;
+                            seen.add(name);
+                            long minutes = data.getLong("playtime." + uuidStr, 0);
+                            long playtimeHours = minutes / 60;
+                            long lastSeen = data.getLong("last_seen." + uuidStr, 0);
+                            List<String> sessionList = data.getStringList("sessions." + uuidStr);
+                            int sessionCount = 0;
+                            for (String s : sessionList) {
+                                if (s.startsWith("LOGIN")) sessionCount++;
+                            }
+                            Map<String, Object> entry = new HashMap<>();
+                            entry.put("player", name);
+                            entry.put("playtimeHours", playtimeHours);
+                            entry.put("sessions", sessionCount);
+                            entry.put("lastSeen", lastSeen);
+                            analytics.add(entry);
+                        } catch (IllegalArgumentException ignored) {}
+                    }
+                }
+
+                // Also include online players that may not have playtime yet
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    if (seen.contains(p.getName())) continue;
+                    seen.add(p.getName());
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("player", p.getName());
+                    entry.put("playtimeHours", 0);
+                    entry.put("sessions", 1);
+                    entry.put("lastSeen", System.currentTimeMillis());
+                    analytics.add(entry);
+                }
+
+                // Sort by playtime descending
+                analytics.sort((a, b) -> Long.compare((long) b.get("playtimeHours"), (long) a.get("playtimeHours")));
+
+                return Map.of("analytics", (Object) analytics);
+            });
+            ctx.json(future.get());
+        });
+
+        // ========== EVENTS MANAGER ==========
+        app.get("/api/events/active", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<String, Object>> events = new ArrayList<>();
+            var section = data.getConfigurationSection("events.active");
+            if (section != null) {
+                for (String name : section.getKeys(false)) {
+                    Map<String, Object> e = new HashMap<>();
+                    e.put("name", name);
+                    e.put("startTime", data.getString("events.active." + name + ".startTime", "-"));
+                    e.put("playersOnline", Bukkit.getOnlinePlayers().size());
+                    events.add(e);
+                }
+            }
+            ctx.json(Map.of("events", events));
+        });
+
+        app.post("/api/events/start", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String eventName = (String) body.get("event");
+            if (eventName == null || eventName.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "Missing event name"));
+                return;
+            }
+            var data = plugin.getDataConfig();
+            String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
+            data.set("events.active." + eventName + ".startTime", timestamp);
+            data.set("events.active." + eventName + ".admin", "WebAdmin");
+            plugin.saveDataFile();
+
+            // Broadcast in-game and start event effects
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Bukkit.broadcastMessage(ChatColor.GOLD + "★ " + ChatColor.GREEN + "The " +
+                    ChatColor.YELLOW + eventName + ChatColor.GREEN + " event has started! " +
+                    ChatColor.GOLD + "★");
+                plugin.startEventEffect(eventName);
+            });
+
+            ctx.json(Map.of("status", "success"));
+        });
+
+        app.post("/api/events/stop", ctx -> {
+            if (!auth(ctx)) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String eventName = (String) body.get("event");
+            if (eventName == null || eventName.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "Missing event name"));
+                return;
+            }
+            var data = plugin.getDataConfig();
+            String startTime = data.getString("events.active." + eventName + ".startTime", "");
+            String admin = data.getString("events.active." + eventName + ".admin", "WebAdmin");
+
+            // Calculate duration
+            String duration = "-";
+            if (!startTime.isEmpty()) {
+                try {
+                    long startMs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(startTime).getTime();
+                    long elapsed = System.currentTimeMillis() - startMs;
+                    long hours = elapsed / 3600000;
+                    long minutes = (elapsed % 3600000) / 60000;
+                    duration = (hours > 0 ? hours + "h " : "") + minutes + "m";
+                } catch (Exception ignored) {}
+            }
+
+            // Add to history
+            List<Map<?, ?>> history = (List<Map<?, ?>>) data.getList("events.history", new ArrayList<>());
+            List<Map<String, Object>> historyList = new ArrayList<>();
+            for (Map<?, ?> h : history) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : h.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                historyList.add(m);
+            }
+            Map<String, Object> record = new HashMap<>();
+            record.put("event", eventName);
+            record.put("admin", admin);
+            record.put("startTime", startTime);
+            record.put("duration", duration);
+            historyList.add(0, record);
+            data.set("events.history", historyList);
+
+            // Remove from active
+            data.set("events.active." + eventName, null);
+            plugin.saveDataFile();
+
+            // Broadcast in-game and stop event effects
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Bukkit.broadcastMessage(ChatColor.GOLD + "★ " + ChatColor.RED + "The " +
+                    ChatColor.YELLOW + eventName + ChatColor.RED + " event has ended! " +
+                    ChatColor.GOLD + "★");
+                plugin.stopEventEffect(eventName);
+            });
+
+            ctx.json(Map.of("status", "success"));
+        });
+
+        app.get("/api/events/history", ctx -> {
+            if (!auth(ctx)) return;
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> history = (List<Map<?, ?>>) data.getList("events.history", new ArrayList<>());
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Map<?, ?> h : history) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : h.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                result.add(m);
+            }
+            ctx.json(Map.of("history", result));
         });
 
         // ========== AUDIT LOG ==========
