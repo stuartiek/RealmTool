@@ -1077,17 +1077,33 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     }
                     Bukkit.getScheduler().runTask(this, () -> {
                         WorldCreator wc = new WorldCreator(worldName);
-                        if ("flat".equals(type)) wc.type(WorldType.FLAT);
-                        else if ("void".equals(type)) {
+                        if ("flat".equals(type)) {
                             wc.type(WorldType.FLAT);
-                            wc.generatorSettings("2;0;1;");
+                        } else if ("void".equals(type)) {
+                            // use a custom chunk generator to avoid JSON parsing errors
+                            wc.generator(new org.bukkit.generator.ChunkGenerator() {
+                                @Override
+                                public ChunkData generateChunkData(World world, Random random, int x, int z, org.bukkit.generator.ChunkGenerator.BiomeGrid biome) {
+                                    // return an empty chunk (void) using the helper provided by ChunkGenerator
+                                    return super.createChunkData(world);
+                                }
+                            });
                             wc.generateStructures(false);
                         }
-                        World created = Bukkit.createWorld(wc);
+                        World created = null;
+                        try {
+                            created = Bukkit.createWorld(wc);
+                        } catch (Exception ex) {
+                            p.sendMessage(ChatColor.RED + "Failed to create world: " + ex.getMessage());
+                            ex.printStackTrace();
+                        }
                         if (created != null) {
                             p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' created (" + type + ").");
-                        } else {
-                            p.sendMessage(ChatColor.RED + "Failed to create world.");
+                        } else if (created == null) {
+                            // if an exception occurred it has already been reported
+                            if (p.isOnline()) {
+                                p.sendMessage(ChatColor.RED + "World creation returned null.");
+                            }
                         }
                     });
                     break;
@@ -2653,6 +2669,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             } else if (type == Material.GRASS_BLOCK) {
                 p.closeInventory();
                 openWorldOptionsMenu(p, itemName);
+            } else if (type == Material.REDSTONE) {
+                // "Back to Utilities" button
+                openWorldUtilitiesMenu(p);
             }
             return;
         }
