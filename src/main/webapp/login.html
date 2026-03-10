@@ -117,11 +117,11 @@
         
         <form onsubmit="handleLogin(event)">
             <div class="form-group">
-                <label for="api-key">API Key</label>
+                <label for="username">Username</label>
                 <input 
-                    type="password" 
-                    id="api-key" 
-                    placeholder="Enter your API key" 
+                    type="text" 
+                    id="username" 
+                    placeholder="Enter your Minecraft username" 
                     required 
                     autofocus
                 >
@@ -129,17 +129,13 @@
             
             <button type="submit" class="login-btn">Login</button>
         </form>
-        
-        <div class="default-key-hint">
-            Default key: qs1a_k7OacJtpUAN-9WIJuYVl0DNgght
-        </div>
     </div>
 
     <script>
         // Check if already logged in
         window.addEventListener('load', () => {
-            const apiKey = localStorage.getItem('apiKey');
-            if (apiKey) {
+            const token = localStorage.getItem('authToken');
+            if (token) {
                 window.location.href = 'index.html';
             }
         });
@@ -147,46 +143,46 @@
         async function handleLogin(event) {
             event.preventDefault();
             
-            const apiKey = document.getElementById('api-key').value;
+            const username = document.getElementById('username').value;
             const errorMsg = document.getElementById('error-message');
             const successMsg = document.getElementById('success-message');
             
-            if (!apiKey) {
-                errorMsg.textContent = 'API Key is required';
+            if (!username) {
+                errorMsg.textContent = 'Username is required';
                 errorMsg.style.display = 'block';
                 successMsg.style.display = 'none';
                 return;
             }
             
             try {
-                // Test the API key by making a simple request
-                const response = await fetch('/api/players', {
-                    headers: { 'Authorization': `Bearer ${apiKey}` }
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
                 });
                 
                 if (response.ok) {
+                    const data = await response.json();
                     successMsg.textContent = 'Login successful! Redirecting...';
                     successMsg.style.display = 'block';
                     errorMsg.style.display = 'none';
                     
-                    // Store the API key
-                    localStorage.setItem('apiKey', apiKey);
+                    localStorage.setItem('authToken', data.token);
                     
-                    // Redirect after a short delay
                     setTimeout(() => {
                         window.location.href = 'index.html';
                     }, 500);
                 } else {
-                    errorMsg.textContent = 'Invalid API Key';
+                    const errorText = await response.text();
+                    errorMsg.textContent = `Login failed: ${errorText}`;
                     errorMsg.style.display = 'block';
                     successMsg.style.display = 'none';
-                    document.getElementById('api-key').value = '';
+                    document.getElementById('username').value = '';
                 }
             } catch (e) {
-                errorMsg.textContent = 'Connection error. Please check the API key.';
+                errorMsg.textContent = 'Connection error. Is the server running?';
                 errorMsg.style.display = 'block';
                 successMsg.style.display = 'none';
-                document.getElementById('api-key').value = '';
             }
         }
     </script>

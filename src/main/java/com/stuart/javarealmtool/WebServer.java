@@ -22,6 +22,7 @@ public class WebServer {
     private final JavaRealmTool plugin;
     private Javalin app;
     private final ConcurrentLinkedQueue<WsContext> sessions = new ConcurrentLinkedQueue<>();
+    private final Map<String, String> userSessions = new HashMap<>();
 
     public WebServer(JavaRealmTool plugin) { this.plugin = plugin; }
 
@@ -53,21 +54,112 @@ public class WebServer {
     }
 
     private boolean auth(io.javalin.http.Context ctx) {
-        String a = ctx.header("Authorization");
-        String k1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-        String k2 = "Bearer " + plugin.getApiKey();
-        if (a == null || (!a.equals(k1) && !a.equals(k2))) { ctx.status(401); return false; }
+        String token = ctx.header("Authorization");
+        if (token == null || !userSessions.containsKey(token)) {
+            ctx.status(401).result("Unauthorized");
+            return false;
+        }
         return true;
     }
 
+    private boolean hasPermission(String token, String permission) {
+        String username = userSessions.get(token);
+        if (username == null) return false;
+
+        Future<Boolean> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+            Player player = Bukkit.getPlayer(username);
+            if (player != null && player.isOnline()) {
+                return player.hasPermission(permission);
+            }
+            // FIX: Allow offline OPs to access the web panel
+            // This fixes the "empty player list" issue when you are not in-game
+            if (Bukkit.getOfflinePlayer(username).isOp()) return true;
+
+            return false;
+        });
+
+        try {
+            return future.get();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private List<String> getPlayerPermissions(String username) {
+        Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+            Player player = Bukkit.getPlayer(username);
+            if (player != null && player.isOnline()) {
+                List<String> permissions = new ArrayList<>();
+                for (var entry : player.getEffectivePermissions()) {
+                    if (entry.getValue()) {
+                        permissions.add(entry.getPermission());
+                    }
+                }
+                return permissions;
+            }
+            return new ArrayList<>();
+        });
+
+        try {
+            return future.get();
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+
     private void setupRoutes() {
+        app.post("/api/login", ctx -> {
+            var body = ctx.bodyAsClass(Map.class);
+            String username = (String) body.get("username");
+
+            if (username == null) {
+                ctx.status(400).result("Username is required");
+                return;
+            }
+
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Player player = Bukkit.getPlayer(username);
+                if (player == null || !player.isOnline()) {
+                    return Map.of("error", "Player not found or not online. You must be joined to the server.");
+                }
+                if (!player.hasPermission("webapp.access")) {
+                    return Map.of("error", "You do not have permission (webapp.access) to log in.");
+                }
+                return Map.of("name", player.getName());
+            });
+
+            try {
+                Map<String, Object> result = future.get();
+                if (result.containsKey("name")) {
+                    String token = UUID.randomUUID().toString();
+                    userSessions.put("Bearer " + token, (String) result.get("name"));
+                    ctx.json(Map.of("token", token));
+                } else {
+                    ctx.status(401).result((String) result.getOrDefault("error", "Login failed"));
+                }
+            } catch (Exception e) {
+                ctx.status(500).result("Internal server error during login");
+            }
+        });
+
+        app.get("/api/me", ctx -> {
+            if (!auth(ctx)) return;
+            String token = ctx.header("Authorization");
+            String username = userSessions.get(token);
+            if (username == null) {
+                ctx.status(401).result("Unauthorized");
+                return;
+            }
+
+            List<String> permissions = getPlayerPermissions(username);
+            ctx.json(Map.of("username", username, "permissions", permissions));
+        });
+        
         // --- AUTHENTICATE ---
         app.get("/api/players", ctx -> {
-            String received = ctx.header("Authorization");
-            String hardcoded = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String fromConfig = "Bearer " + plugin.getApiKey();
-            if (received == null || (!received.equals(hardcoded) && !received.equals(fromConfig))) {
-                ctx.status(401).result("Unauthorized");
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) {
+                ctx.status(403).result("Forbidden");
                 return;
             }
 
@@ -98,7 +190,7 @@ public class WebServer {
         });
 
         app.get("/api/tickets", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
 
             String status = ctx.queryParam("status");
             String priority = ctx.queryParam("priority");
@@ -132,7 +224,7 @@ public class WebServer {
         });
 
         app.get("/api/notes", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.notes")) return;
             String player = ctx.queryParam("player");
             
             // If no player specified, return all players that have notes
@@ -211,13 +303,7 @@ public class WebServer {
         });
 
         app.patch("/api/note/{player}/{index}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.edit.notes")) return;
             
             String player = ctx.pathParam("player");
             int index = Integer.parseInt(ctx.pathParam("index"));
@@ -237,13 +323,7 @@ public class WebServer {
         });
 
         app.delete("/api/note/{player}/{index}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.delete.notes")) return;
             
             String player = ctx.pathParam("player");
             int index = Integer.parseInt(ctx.pathParam("index"));
@@ -262,13 +342,7 @@ public class WebServer {
         });
 
         app.get("/api/warnings", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.warnings")) return;
             String player = ctx.queryParam("player");
             if (player == null) { ctx.result("[]"); return; }
             
@@ -281,13 +355,7 @@ public class WebServer {
         });
 
         app.get("/api/history", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.history")) return;
             
             Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> history = plugin.getDataConfig().getStringList("action_history");
@@ -299,13 +367,7 @@ public class WebServer {
         });
 
         app.get("/api/chat", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.chat")) return;
             
             Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> chat = plugin.getDataConfig().getStringList("chat_history");
@@ -335,28 +397,21 @@ public class WebServer {
         });
 
         app.get("/api/banned", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.banned")) return;
             List<String> banned = new ArrayList<>(Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getEntries());
             ctx.json(banned);
         });
 
         // --- ACTION API ---
         app.post("/api/actions/{action}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx)) return;
 
             String action = ctx.pathParam("action");
+            String requiredPermission = "webapp.action." + action;
+            if (!hasPermission(ctx.header("Authorization"), requiredPermission)) {
+                ctx.status(403).result("Forbidden");
+                return;
+            }
                 String targetNameParam = ctx.queryParam("player");
             String reasonParam = ctx.queryParam("reason");
             
@@ -472,7 +527,7 @@ public class WebServer {
         });
 
         app.post("/api/ticket/close/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
             
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -490,7 +545,7 @@ public class WebServer {
         });
 
         app.get("/api/ticket/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
 
             String id = ctx.pathParam("id");
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () ->
@@ -500,7 +555,7 @@ public class WebServer {
         });
 
         app.post("/api/ticket/{id}/response", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
 
             String id = ctx.pathParam("id");
             // Read from JSON body
@@ -530,7 +585,7 @@ public class WebServer {
         });
 
         app.patch("/api/ticket/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
 
             String id = ctx.pathParam("id");
             // Read from JSON body or query params
@@ -571,7 +626,7 @@ public class WebServer {
         });
 
         app.post("/api/ticket/{id}/resolve", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
 
             String id = ctx.pathParam("id");
             // Read from JSON body or query params
@@ -595,13 +650,7 @@ public class WebServer {
         });
 
         app.post("/api/command", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) {
-                ctx.status(401).result("Unauthorized");
-                return;
-            }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.run.command")) return;
             
             String cmd = ctx.queryParam("cmd");
             if (cmd != null) {
@@ -615,7 +664,7 @@ public class WebServer {
 
         // --- PERFORMANCE ---
         app.get("/api/performance", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.performance")) return;
 
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 Map<String, Object> res = new HashMap<>();
@@ -664,18 +713,12 @@ public class WebServer {
 
         // --- WHITELIST ---
         app.get("/api/whitelist", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.whitelist")) return;
             ctx.json(new ArrayList<>(Bukkit.getWhitelistedPlayers().stream().map(p -> p.getName()).toList()));
         });
 
         app.post("/api/whitelist/{action}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.whitelist")) return;
             String action = ctx.pathParam("action");
             String player = ctx.queryParam("player");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -692,10 +735,7 @@ public class WebServer {
 
         // --- MUTE ---
         app.get("/api/muted", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.mutes")) return;
             Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> raw = plugin.getDataConfig().getStringList("muted");
                 List<Map<String, String>> result = new ArrayList<>();
@@ -721,10 +761,7 @@ public class WebServer {
         });
 
         app.post("/api/mute", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.mute")) return;
             
                 String playerParam = ctx.queryParam("player");
                 String reasonParam = ctx.queryParam("reason");
@@ -755,10 +792,7 @@ public class WebServer {
         });
 
         app.post("/api/unmute", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.unmute")) return;
             
                 String playerParam = ctx.queryParam("player");
             
@@ -787,10 +821,7 @@ public class WebServer {
 
         // --- IPs & SESSIONS ---
         app.get("/api/ips", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.ips")) return;
             String player = ctx.queryParam("player");
             if (player == null) { ctx.result("[]"); return; }
             Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
@@ -801,10 +832,7 @@ public class WebServer {
         });
 
         app.get("/api/sessions", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.sessions")) return;
             String player = ctx.queryParam("player");
             if (player == null) { ctx.result("[]"); return; }
             Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
@@ -816,10 +844,7 @@ public class WebServer {
 
         // --- TEMPLATES ---
         app.get("/api/templates", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.templates")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 if (plugin.getDataConfig().contains("templates") && plugin.getDataConfig().getConfigurationSection("templates") != null) {
                     return new HashMap<>(plugin.getDataConfig().getConfigurationSection("templates").getValues(false));
@@ -830,10 +855,7 @@ public class WebServer {
         });
 
         app.post("/api/template/save", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.templates")) return;
             String name = null;
             String content = null;
             try {
@@ -858,10 +880,7 @@ public class WebServer {
         });
 
         app.post("/api/template/delete", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.templates")) return;
             String name = null;
             try {
                 String body = ctx.body();
@@ -884,10 +903,7 @@ public class WebServer {
 
         // --- TELEPORT ---
         app.post("/api/teleport", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.teleport")) return;
             String player1 = ctx.queryParam("player1");
             String player2 = ctx.queryParam("player2");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -903,10 +919,7 @@ public class WebServer {
 
         // --- INVENTORY GIVE ---
         app.post("/api/give", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.give")) return;
             String player = ctx.queryParam("player");
             String item = ctx.queryParam("item");
             String amount = ctx.queryParam("amount");
@@ -922,10 +935,7 @@ public class WebServer {
 
         // --- RESTART ---
         app.post("/api/restart", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.restart")) return;
             String delayStr = ctx.queryParam("delay");
             long delay = delayStr != null ? Long.parseLong(delayStr) : 5;
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -939,10 +949,7 @@ public class WebServer {
 
         // --- BACKUP ---
         app.post("/api/backup", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.backup")) return;
             Bukkit.getScheduler().runTask(plugin, () -> {
                 Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "save-all");
                 plugin.logAction("WebAdmin", "triggered backup", "");
@@ -952,10 +959,7 @@ public class WebServer {
 
         // --- WORLDS ---
         app.get("/api/worlds", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.worlds")) return;
             List<Map<String, Object>> worlds = new ArrayList<>();
             for (World w : Bukkit.getWorlds()) {
                 Map<String, Object> m = new HashMap<>();
@@ -970,10 +974,7 @@ public class WebServer {
 
         // --- PLUGINS ---
         app.get("/api/plugins", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.plugins")) return;
             List<String> plugins = new ArrayList<>();
             for (org.bukkit.plugin.Plugin p : Bukkit.getPluginManager().getPlugins()) {
                 plugins.add(p.getName() + " v" + p.getDescription().getVersion());
@@ -983,10 +984,7 @@ public class WebServer {
 
         // --- GAMERULES ---
         app.get("/api/gamerules", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.gamerules")) return;
             World world = Bukkit.getWorlds().get(0);
             Map<String, Object> rules = new HashMap<>();
             rules.put("pvp", world.getPVP());
@@ -995,10 +993,7 @@ public class WebServer {
         });
 
         app.post("/api/gamerule", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.gamerules")) return;
             String rule = ctx.queryParam("rule");
             String value = ctx.queryParam("value");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -1011,10 +1006,7 @@ public class WebServer {
 
         // --- BULK ACTIONS ---
         app.post("/api/bulk", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.bulk")) return;
             String action = ctx.queryParam("action");
             String players = ctx.queryParam("players");
             String reason = ctx.queryParam("reason");
@@ -1040,10 +1032,7 @@ public class WebServer {
 
         // --- DISCORD INTEGRATION ---
         app.get("/api/discord", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.discord")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 Map<String, Object> res = new HashMap<>();
                 res.put("webhook", plugin.getDataConfig().getString("discord.webhook", ""));
@@ -1071,10 +1060,7 @@ public class WebServer {
         });
 
         app.post("/api/discord", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.discord")) return;
 
             // Parse from JSON body
             String webhook = null;
@@ -1129,10 +1115,7 @@ public class WebServer {
         });
 
         app.post("/api/discord/test", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.discord")) return;
 
             String webhook = null;
             try {
@@ -1152,10 +1135,7 @@ public class WebServer {
 
         // --- REPORTS ---
         app.post("/api/report", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.report")) return;
             var body = ctx.bodyAsClass(Map.class);
             String reporter = body.get("reporter") != null ? body.get("reporter").toString() : null;
             String reported = body.get("reported") != null ? body.get("reported").toString() : null;
@@ -1174,10 +1154,7 @@ public class WebServer {
         });
 
         app.get("/api/reports", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.reports")) return;
             Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> reports = plugin.getDataConfig().getStringList("reports");
                 List<String> recent = new ArrayList<>(reports);
@@ -1189,7 +1166,7 @@ public class WebServer {
 
         // --- LAND CLAIMS ---
         app.get("/api/claims", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.claims")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 var data = plugin.getDataConfig();
                 List<Map<String, Object>> claimsList = new ArrayList<>();
@@ -1237,7 +1214,7 @@ public class WebServer {
         });
 
         app.delete("/api/claims/{uuid}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.claims")) return;
             String uuid = ctx.pathParam("uuid");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("claims." + uuid, null);
@@ -1248,7 +1225,7 @@ public class WebServer {
 
         // --- KITS ---
         app.get("/api/kits", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.kits")) return;
 
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> kits = new ArrayList<>();
@@ -1272,13 +1249,16 @@ public class WebServer {
         });
 
         app.post("/api/kits", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.kits")) return;
 
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            java.util.Map<String, Object> body = mapper.readValue(ctx.body(), java.util.Map.class);
+            Map<String, Object> body;
+            try {
+                body = mapper.readValue(ctx.body(), Map.class);
+            } catch (Exception e) {
+                ctx.status(400).result("Invalid JSON body");
+                return;
+            }
 
             String name = (String) body.get("name");
             if (name == null || name.trim().isEmpty()) { ctx.status(400).result("Kit name required"); return; }
@@ -1307,10 +1287,7 @@ public class WebServer {
         });
 
         app.delete("/api/kits/{name}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.kits")) return;
 
             String kitName = ctx.pathParam("name");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -1323,10 +1300,7 @@ public class WebServer {
 
         // --- MAINTENANCE MODE ---
         app.get("/api/maintenance", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.maintenance")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 Map<String, Object> res = new HashMap<>();
                 res.put("enabled", plugin.getDataConfig().getBoolean("maintenance.enabled", false));
@@ -1339,10 +1313,7 @@ public class WebServer {
         });
 
         app.post("/api/maintenance/set", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.maintenance")) return;
 
             String status = null;
             String message = null;
@@ -1403,10 +1374,7 @@ public class WebServer {
         });
 
         app.post("/api/maintenance/whitelist/add", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.maintenance")) return;
 
             String player = null;
             try {
@@ -1435,10 +1403,7 @@ public class WebServer {
         });
 
         app.delete("/api/maintenance/whitelist/{player}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.maintenance")) return;
 
             String player = ctx.pathParam("player");
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -1453,10 +1418,7 @@ public class WebServer {
 
         // ========== CRATES API ==========
         app.get("/api/crates", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.crates")) return;
             Map<String, Object> result = new HashMap<>();
             if (plugin.getDataConfig().contains("crates")) {
                 for (String crateId : plugin.getDataConfig().getConfigurationSection("crates").getKeys(false)) {
@@ -1473,10 +1435,7 @@ public class WebServer {
         });
 
         app.post("/api/crates", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.crates")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String name = (String) body.get("name");
@@ -1493,10 +1452,7 @@ public class WebServer {
         });
 
         app.delete("/api/crates/{name}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.crates")) return;
             String name = ctx.pathParam("name");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("crates." + name, null);
@@ -1507,10 +1463,7 @@ public class WebServer {
 
         // ========== BOUNTIES API ==========
         app.get("/api/bounties", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.bounties")) return;
             List<Map<String, Object>> list = new ArrayList<>();
             if (plugin.getDataConfig().contains("bounties")) {
                 for (String id : plugin.getDataConfig().getConfigurationSection("bounties").getKeys(false)) {
@@ -1527,10 +1480,7 @@ public class WebServer {
         });
 
         app.delete("/api/bounties/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.bounties")) return;
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("bounties." + id, null);
@@ -1541,10 +1491,7 @@ public class WebServer {
 
         // ========== SHOPS API ==========
         app.get("/api/shops", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.shops")) return;
             List<Map<String, Object>> list = new ArrayList<>();
             if (plugin.getDataConfig().contains("shops")) {
                 for (String id : plugin.getDataConfig().getConfigurationSection("shops").getKeys(false)) {
@@ -1562,10 +1509,7 @@ public class WebServer {
         });
 
         app.delete("/api/shops/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.shops")) return;
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("shops." + id, null);
@@ -1576,10 +1520,7 @@ public class WebServer {
 
         // ========== QUESTS API ==========
         app.get("/api/quests", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.quests")) return;
             Map<String, Object> result = new HashMap<>();
             if (plugin.getDataConfig().contains("quests")) {
                 for (String qid : plugin.getDataConfig().getConfigurationSection("quests").getKeys(false)) {
@@ -1599,10 +1540,7 @@ public class WebServer {
         });
 
         app.post("/api/quests", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.quests")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String id = (String) body.get("id");
@@ -1623,10 +1561,7 @@ public class WebServer {
         });
 
         app.delete("/api/quests/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.quests")) return;
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("quests." + id, null);
@@ -1637,10 +1572,7 @@ public class WebServer {
 
         // ========== STAFF APPLICATIONS API ==========
         app.get("/api/applications", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.applications")) return;
             List<Map<String, Object>> list = new ArrayList<>();
             if (plugin.getDataConfig().contains("applications")) {
                 for (String id : plugin.getDataConfig().getConfigurationSection("applications").getKeys(false)) {
@@ -1658,10 +1590,7 @@ public class WebServer {
         });
 
         app.post("/api/applications/{id}/status", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.applications")) return;
             String id = ctx.pathParam("id");
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
@@ -1681,10 +1610,7 @@ public class WebServer {
         });
 
         app.delete("/api/applications/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.applications")) return;
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("applications." + id, null);
@@ -1695,7 +1621,7 @@ public class WebServer {
 
         // ========== POLLS API ==========
         app.get("/api/polls", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.polls")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 Map<String, Object> result = new HashMap<>();
                 if (plugin.getDataConfig().contains("polls")) {
@@ -1721,7 +1647,7 @@ public class WebServer {
         });
 
         app.post("/api/polls", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.polls")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String id = (String) body.get("id");
@@ -1740,7 +1666,7 @@ public class WebServer {
         });
 
         app.delete("/api/polls/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.polls")) return;
             String id = ctx.pathParam("id");
             Future<?> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 plugin.getDataConfig().set("polls." + id, null);
@@ -1753,10 +1679,7 @@ public class WebServer {
 
         // ========== AUTO-MODERATION API ==========
         app.get("/api/automod", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.automod")) return;
             Map<String, Object> res = new HashMap<>();
             res.put("filter_words", plugin.getDataConfig().getStringList("automod.filter_words"));
             res.put("spam_cooldown", plugin.getDataConfig().getInt("automod.spam_cooldown", 2));
@@ -1766,10 +1689,7 @@ public class WebServer {
         });
 
         app.post("/api/automod", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.automod")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -1785,10 +1705,7 @@ public class WebServer {
 
         // ========== PLAYTIME REWARDS API ==========
         app.get("/api/playtime-rewards", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.playtime-rewards")) return;
             Map<String, Object> result = new HashMap<>();
             if (plugin.getDataConfig().contains("playtime_rewards")) {
                 for (String id : plugin.getDataConfig().getConfigurationSection("playtime_rewards").getKeys(false)) {
@@ -1805,10 +1722,7 @@ public class WebServer {
         });
 
         app.post("/api/playtime-rewards", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.playtime-rewards")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String id = (String) body.get("id");
@@ -1826,10 +1740,7 @@ public class WebServer {
         });
 
         app.delete("/api/playtime-rewards/{id}", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.playtime-rewards")) return;
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.getDataConfig().set("playtime_rewards." + id, null);
@@ -1840,10 +1751,7 @@ public class WebServer {
 
         // ========== MOTD EDITOR API ==========
         app.get("/api/motd", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.motd")) return;
             Map<String, Object> res = new HashMap<>();
             res.put("line1", plugin.getDataConfig().getString("motd.line1", "A Minecraft Server"));
             res.put("line2", plugin.getDataConfig().getString("motd.line2", ""));
@@ -1852,10 +1760,7 @@ public class WebServer {
         });
 
         app.post("/api/motd", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.motd")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             Bukkit.getScheduler().runTask(plugin, () -> {
@@ -1869,10 +1774,7 @@ public class WebServer {
 
         // ========== CUSTOM ENCHANTMENTS API ==========
         app.get("/api/enchantments", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.enchantments")) return;
             // Return list of available custom enchantments
             List<Map<String, String>> enchants = new ArrayList<>();
             enchants.add(Map.of("name", "Timber", "description", "Breaks entire log columns when chopping trees"));
@@ -1883,10 +1785,7 @@ public class WebServer {
         });
 
         app.post("/api/enchantments/apply", ctx -> {
-            String auth = ctx.header("Authorization");
-            String key1 = "Bearer qs1a_k7OacJtpUAN-9WIJuYVl0DNgght";
-            String key2 = "Bearer " + plugin.getApiKey();
-            if (auth == null || (!auth.equals(key1) && !auth.equals(key2))) { ctx.status(401); return; }
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.enchant")) return;
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             String playerName = (String) body.get("player");
@@ -1906,7 +1805,7 @@ public class WebServer {
 
         // ========== DAILY LOGIN REWARDS ==========
         app.get("/api/daily-login", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.daily-login")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             result.put("enabled", data.getBoolean("daily_login_enabled", false));
@@ -1932,7 +1831,7 @@ public class WebServer {
         });
 
         app.post("/api/daily-login", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.daily-login")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             if (body.containsKey("enabled")) data.set("daily_login_enabled", body.get("enabled"));
@@ -1944,7 +1843,7 @@ public class WebServer {
 
         // ========== AUCTION HOUSE ==========
         app.get("/api/auctions", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.auctions")) return;
             var data = plugin.getDataConfig();
             List<Map<String, Object>> auctions = new ArrayList<>();
             if (data.contains("auctions")) {
@@ -1966,7 +1865,7 @@ public class WebServer {
         });
 
         app.post("/api/auctions", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.auctions")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             String id = "auction_" + System.currentTimeMillis();
@@ -1985,7 +1884,7 @@ public class WebServer {
         });
 
         app.delete("/api/auctions/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.auctions")) return;
             plugin.getDataConfig().set("auctions." + ctx.pathParam("id"), null);
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
@@ -1993,7 +1892,7 @@ public class WebServer {
 
         // ========== NICKNAMES ==========
         app.get("/api/nicknames", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.nicknames")) return;
             var data = plugin.getDataConfig();
             List<Map<String, Object>> nicks = new ArrayList<>();
             if (data.contains("nicknames")) {
@@ -2010,7 +1909,7 @@ public class WebServer {
         });
 
         app.post("/api/nicknames", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.nick")) return;
             var body = ctx.bodyAsClass(Map.class);
             String playerName = (String) body.get("player");
             String nick = (String) body.get("nick");
@@ -2032,7 +1931,7 @@ public class WebServer {
 
         // ========== CHAT TAGS ==========
         app.get("/api/chat-tags", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.chat-tags")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             List<Map<String, Object>> tags = new ArrayList<>();
@@ -2053,7 +1952,7 @@ public class WebServer {
         });
 
         app.post("/api/chat-tags", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.chat-tags")) return;
             var body = ctx.bodyAsClass(Map.class);
             String action = (String) body.getOrDefault("action", "set");
             if (action.equals("add_available")) {
@@ -2086,13 +1985,13 @@ public class WebServer {
 
         // ========== SERVER RULES ==========
         app.get("/api/rules", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.rules")) return;
             List<String> rules = plugin.getDataConfig().getStringList("server_rules");
             ctx.json(Map.of("rules", rules));
         });
 
         app.post("/api/rules", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.rules")) return;
             var body = ctx.bodyAsClass(Map.class);
             List<String> rules = (List<String>) body.get("rules");
             plugin.getDataConfig().set("server_rules", rules);
@@ -2102,7 +2001,7 @@ public class WebServer {
 
         // ========== PLAYER WARPS ==========
         app.get("/api/player-warps", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.player-warps")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             result.put("cost", data.getInt("pwarp_cost", 5));
@@ -2128,7 +2027,7 @@ public class WebServer {
         });
 
         app.post("/api/player-warps/settings", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.player-warps")) return;
             var body = ctx.bodyAsClass(Map.class);
             if (body.containsKey("cost")) plugin.getDataConfig().set("pwarp_cost", ((Number)body.get("cost")).intValue());
             if (body.containsKey("max")) plugin.getDataConfig().set("pwarp_max", ((Number)body.get("max")).intValue());
@@ -2137,7 +2036,7 @@ public class WebServer {
         });
 
         app.delete("/api/player-warps/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.player-warps")) return;
             plugin.getDataConfig().set("pwarps." + ctx.pathParam("id"), null);
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
@@ -2145,7 +2044,7 @@ public class WebServer {
 
         // ========== CUSTOM RECIPES ==========
         app.get("/api/custom-recipes", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.custom-recipes")) return;
             var data = plugin.getDataConfig();
             List<Map<String, Object>> recipes = new ArrayList<>();
             if (data.contains("custom_recipes")) {
@@ -2164,7 +2063,7 @@ public class WebServer {
         });
 
         app.post("/api/custom-recipes", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.custom-recipes")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             String id = "recipe_" + System.currentTimeMillis();
@@ -2194,7 +2093,7 @@ public class WebServer {
         });
 
         app.delete("/api/custom-recipes/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.custom-recipes")) return;
             plugin.getDataConfig().set("custom_recipes." + ctx.pathParam("id"), null);
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
@@ -2202,7 +2101,7 @@ public class WebServer {
 
         // ========== PVP STATS ==========
         app.get("/api/pvp-stats", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.pvp-stats")) return;
             var data = plugin.getDataConfig();
             List<Map<String, Object>> stats = new ArrayList<>();
             if (data.contains("pvpstats")) {
@@ -2226,7 +2125,7 @@ public class WebServer {
 
         // ========== ACHIEVEMENTS ==========
         app.get("/api/achievements", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.achievements")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             List<Map<String, Object>> defs = new ArrayList<>();
@@ -2266,7 +2165,7 @@ public class WebServer {
         });
 
         app.post("/api/achievements", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.achievements")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             String id = (String) body.getOrDefault("id", "ach_" + System.currentTimeMillis());
@@ -2280,7 +2179,7 @@ public class WebServer {
         });
 
         app.delete("/api/achievements/{id}", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.achievements")) return;
             plugin.getDataConfig().set("achievement_defs." + ctx.pathParam("id"), null);
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
@@ -2288,7 +2187,7 @@ public class WebServer {
 
         // ========== DUELS ==========
         app.get("/api/duels", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.duels")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             // Active duels from plugin memory
@@ -2322,7 +2221,7 @@ public class WebServer {
 
         // ========== FIRST JOIN / WELCOME ==========
         app.get("/api/welcome", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.welcome")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             result.put("message", data.getString("welcome_message", "&6Welcome to the server, &e{player}&6!"));
@@ -2345,7 +2244,7 @@ public class WebServer {
         });
 
         app.post("/api/welcome", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.welcome")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             if (body.containsKey("message")) data.set("welcome_message", body.get("message"));
@@ -2357,7 +2256,7 @@ public class WebServer {
 
         // ========== INACTIVE PLAYER ALERTS ==========
         app.get("/api/inactive-players", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.inactive-players")) return;
             var data = plugin.getDataConfig();
             int thresholdDays = data.getInt("inactive_threshold_days", 14);
             long thresholdMs = (long) thresholdDays * 86400000L;
@@ -2382,7 +2281,7 @@ public class WebServer {
         });
 
         app.post("/api/inactive-players/settings", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.inactive-players")) return;
             var body = ctx.bodyAsClass(Map.class);
             if (body.containsKey("thresholdDays")) plugin.getDataConfig().set("inactive_threshold_days", ((Number)body.get("thresholdDays")).intValue());
             plugin.saveDataFile();
@@ -2391,7 +2290,7 @@ public class WebServer {
 
         // ========== SCHEDULED ANNOUNCEMENTS ==========
         app.get("/api/announcements", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.announcements")) return;
             var data = plugin.getDataConfig();
             Map<String, Object> result = new HashMap<>();
             result.put("enabled", data.getBoolean("announcements.enabled", false));
@@ -2402,7 +2301,7 @@ public class WebServer {
         });
 
         app.post("/api/announcements", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
             var body = ctx.bodyAsClass(Map.class);
             var data = plugin.getDataConfig();
             if (body.containsKey("enabled")) data.set("announcements.enabled", body.get("enabled"));
@@ -2415,7 +2314,7 @@ public class WebServer {
 
         // ========== ONE-TIME SCHEDULED ANNOUNCEMENTS ==========
         app.get("/api/announcements/scheduled", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.announcements")) return;
             var data = plugin.getDataConfig();
             List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
             List<Map<String, Object>> announcements = new ArrayList<>();
@@ -2428,7 +2327,7 @@ public class WebServer {
         });
 
         app.post("/api/announcements/schedule", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
             var body = ctx.bodyAsClass(Map.class);
             String message = (String) body.get("message");
             String time = (String) body.get("time");
@@ -2455,7 +2354,7 @@ public class WebServer {
         });
 
         app.delete("/api/announcements/schedule", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
             var body = ctx.bodyAsClass(Map.class);
             int index = ((Number) body.get("index")).intValue();
             var data = plugin.getDataConfig();
@@ -2476,7 +2375,7 @@ public class WebServer {
 
         // ========== PLAYER REPUTATION ==========
         app.get("/api/reputation", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.reputation")) return;
             String playerParam = ctx.queryParam("player");
             var data = plugin.getDataConfig();
 
@@ -2579,7 +2478,7 @@ public class WebServer {
 
         // ========== AFK MANAGER ==========
         app.get("/api/afk", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.afk")) return;
             Future<List<Map<String, Object>>> future2 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> afkPlayers = new ArrayList<>();
                 long now = System.currentTimeMillis();
@@ -2605,7 +2504,7 @@ public class WebServer {
         });
 
         app.post("/api/afk/settings", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.afk")) return;
             var body = ctx.bodyAsClass(Map.class);
             if (body.containsKey("timeout")) {
                 int timeout = Integer.parseInt(body.get("timeout").toString());
@@ -2616,7 +2515,7 @@ public class WebServer {
 
         // ========== PLAYER ANALYTICS ==========
         app.get("/api/analytics/players", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.analytics")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 var data = plugin.getDataConfig();
                 List<Map<String, Object>> analytics = new ArrayList<>();
@@ -2671,7 +2570,7 @@ public class WebServer {
 
         // ========== EVENTS MANAGER ==========
         app.get("/api/events/active", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.events")) return;
             var data = plugin.getDataConfig();
             List<Map<String, Object>> events = new ArrayList<>();
             var section = data.getConfigurationSection("events.active");
@@ -2688,7 +2587,7 @@ public class WebServer {
         });
 
         app.post("/api/events/start", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.events")) return;
             var body = ctx.bodyAsClass(Map.class);
             String eventName = (String) body.get("event");
             if (eventName == null || eventName.isEmpty()) {
@@ -2713,7 +2612,7 @@ public class WebServer {
         });
 
         app.post("/api/events/stop", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.events")) return;
             var body = ctx.bodyAsClass(Map.class);
             String eventName = (String) body.get("event");
             if (eventName == null || eventName.isEmpty()) {
@@ -2768,7 +2667,7 @@ public class WebServer {
         });
 
         app.get("/api/events/history", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.events")) return;
             var data = plugin.getDataConfig();
             List<Map<?, ?>> history = (List<Map<?, ?>>) data.getList("events.history", new ArrayList<>());
             List<Map<String, Object>> result = new ArrayList<>();
@@ -2782,7 +2681,7 @@ public class WebServer {
 
         // ========== AUDIT LOG ==========
         app.get("/api/audit", ctx -> {
-            if (!auth(ctx)) return;
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.audit")) return;
             String adminFilter = ctx.queryParam("admin");
             String actionFilter = ctx.queryParam("action");
             Future<Map<String, Object>> future3 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
@@ -2821,6 +2720,430 @@ public class WebServer {
                 return Map.of("logs", (Object) logs);
             });
             ctx.json(future3.get());
+        });
+
+        // --- PERMISSION GROUPS ---
+
+        app.get("/api/groups", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.groups")) return;
+            Future<Map<String, Object>> future4 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> groups = new ArrayList<>();
+                var section = plugin.getDataConfig().getConfigurationSection("groups");
+                if (section != null) {
+                    plugin.getLogger().info("[DEBUG] groups section: " + section.getKeys(false));
+                    for (String name : section.getKeys(false)) {
+                        Map<String, Object> g = new HashMap<>();
+                        g.put("name", name);
+                        g.put("color", plugin.getDataConfig().getString("groups." + name + ".color", "#ffffff"));
+                        g.put("prefix", plugin.getDataConfig().getString("groups." + name + ".prefix", ""));
+                        g.put("permissions", plugin.getDataConfig().getStringList("groups." + name + ".permissions"));
+                        List<String> memberUuids = plugin.getDataConfig().getStringList("groups." + name + ".members");
+                        List<Map<String, String>> members = new ArrayList<>();
+                        for (String uuid : memberUuids) {
+                            Map<String, String> m = new HashMap<>();
+                            m.put("uuid", uuid);
+                            try {
+                                String playerName = plugin.getDataConfig().getString("last_seen_name." + uuid,
+                                    Bukkit.getOfflinePlayer(UUID.fromString(uuid)).getName());
+                                m.put("name", playerName != null ? playerName : uuid);
+                            } catch (Exception e) { m.put("name", uuid); }
+                            members.add(m);
+                        }
+                        g.put("members", members);
+                        groups.add(g);
+                    }
+                } else {
+                    plugin.getLogger().info("[DEBUG] groups section is null");
+                }
+                return Map.of("groups", (Object) groups);
+            });
+            ctx.json(future4.get());
+        });
+
+        app.post("/api/groups/create", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String color = (String) body.get("color");
+            String prefix = (String) body.get("prefix");
+            if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
+            name = name.replaceAll("[^a-zA-Z0-9_-]", "");
+            if (name.isEmpty()) { ctx.status(400).json(Map.of("error", "Invalid name")); return; }
+            String finalName = name;
+            String finalColor = color != null ? color : "#ffffff";
+            String finalPrefix = prefix != null ? prefix : "";
+            Future<Map<String, Object>> future5 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (plugin.getDataConfig().contains("groups." + finalName)) {
+                    return Map.of("error", (Object) "Group already exists");
+                }
+                plugin.getDataConfig().set("groups." + finalName + ".color", finalColor);
+                plugin.getDataConfig().set("groups." + finalName + ".prefix", finalPrefix);
+                plugin.getDataConfig().set("groups." + finalName + ".permissions", new ArrayList<String>());
+                plugin.getDataConfig().set("groups." + finalName + ".members", new ArrayList<String>());
+                plugin.saveDataFile();
+                plugin.logAction("WebPanel", "group_create", finalName);
+                return Map.of("success", (Object) true);
+            });
+            Map<String, Object> result = future5.get();
+            if (result.containsKey("error")) { ctx.status(400); }
+            ctx.json(result);
+        });
+
+        app.post("/api/groups/delete", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
+            String finalName = name;
+            Future<Map<String, Object>> future6 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                    return Map.of("error", (Object) "Group not found");
+                }
+                plugin.getDataConfig().set("groups." + finalName, null);
+                plugin.saveDataFile();
+                plugin.refreshAllPermissions();
+                plugin.logAction("WebPanel", "group_delete", finalName);
+                return Map.of("success", (Object) true);
+            });
+            Map<String, Object> result = future6.get();
+            if (result.containsKey("error")) { ctx.status(400); }
+            ctx.json(result);
+        });
+
+        app.post("/api/groups/update", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String color = (String) body.get("color");
+            String prefix = (String) body.get("prefix");
+            if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
+            String finalName = name;
+            String finalColor = color;
+            String finalPrefix = prefix;
+            Future<Map<String, Object>> future7 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                    return Map.of("error", (Object) "Group not found");
+                }
+                if (finalColor != null) plugin.getDataConfig().set("groups." + finalName + ".color", finalColor);
+                if (finalPrefix != null) plugin.getDataConfig().set("groups." + finalName + ".prefix", finalPrefix);
+                plugin.saveDataFile();
+                plugin.logAction("WebPanel", "group_update", finalName);
+                return Map.of("success", (Object) true);
+            });
+            Map<String, Object> result = future7.get();
+            if (result.containsKey("error")) { ctx.status(400); }
+            ctx.json(result);
+        });
+
+        app.post("/api/groups/permissions/add", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String permission = (String) body.get("permission");
+            if (name == null || permission == null || permission.isBlank()) { ctx.status(400).json(Map.of("error", "Name and permission required")); return; }
+            String finalName = name;
+            String finalPerm = permission.trim();
+            Future<Map<String, Object>> future8 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                    return Map.of("error", (Object) "Group not found");
+                }
+                List<String> perms = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".permissions"));
+                if (perms.contains(finalPerm)) return Map.of("error", (Object) "Permission already exists");
+                perms.add(finalPerm);
+                plugin.getDataConfig().set("groups." + finalName + ".permissions", perms);
+                plugin.saveDataFile();
+                plugin.refreshAllPermissions();
+                plugin.logAction("WebPanel", "group_perm_add", finalName + " " + finalPerm);
+                return Map.of("success", (Object) true);
+            });
+            Map<String, Object> result = future8.get();
+            if (result.containsKey("error")) { ctx.status(400); }
+            ctx.json(result);
+        });
+
+        app.post("/api/groups/permissions/remove", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String permission = (String) body.get("permission");
+            if (name == null || permission == null) { ctx.status(400).json(Map.of("error", "Name and permission required")); return; }
+            String finalName = name;
+            String finalPerm = permission.trim();
+            Future<Map<String, Object>> future9 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<String> perms = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".permissions"));
+                perms.remove(finalPerm);
+                plugin.getDataConfig().set("groups." + finalName + ".permissions", perms);
+                plugin.saveDataFile();
+                plugin.refreshAllPermissions();
+                plugin.logAction("WebPanel", "group_perm_remove", finalName + " " + finalPerm);
+                return Map.of("success", (Object) true);
+            });
+            ctx.json(future9.get());
+        });
+
+        app.post("/api/groups/members/add", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String playerName = (String) body.get("player");
+            if (name == null || playerName == null || playerName.isBlank()) { ctx.status(400).json(Map.of("error", "Group name and player required")); return; }
+            String finalName = name;
+            String finalPlayer = playerName.trim();
+            Future<Map<String, Object>> future10 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                    return Map.of("error", (Object) "Group not found");
+                }
+                // Resolve player UUID
+                Player online = Bukkit.getPlayerExact(finalPlayer);
+                UUID uuid = online != null ? online.getUniqueId() : Bukkit.getOfflinePlayer(finalPlayer).getUniqueId();
+                String uuidStr = uuid.toString();
+                // Remove from any existing group first
+                var groupsSection = plugin.getDataConfig().getConfigurationSection("groups");
+                if (groupsSection != null) {
+                    for (String gn : groupsSection.getKeys(false)) {
+                        List<String> gMembers = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + gn + ".members"));
+                        if (gMembers.remove(uuidStr)) {
+                            plugin.getDataConfig().set("groups." + gn + ".members", gMembers);
+                        }
+                    }
+                }
+                // Add to new group
+                List<String> members = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".members"));
+                if (!members.contains(uuidStr)) members.add(uuidStr);
+                plugin.getDataConfig().set("groups." + finalName + ".members", members);
+                // Update last_seen_name for this uuid
+                plugin.getDataConfig().set("last_seen_name." + uuidStr, finalPlayer);
+                plugin.saveDataFile();
+                // Apply permissions if online
+                if (online != null) plugin.applyPermissionGroup(online);
+                plugin.logAction("WebPanel", "group_member_add", finalPlayer + " -> " + finalName);
+                return Map.of("success", (Object) true, "uuid", (Object) uuidStr);
+            });
+            Map<String, Object> result = future10.get();
+            if (result.containsKey("error")) { ctx.status(400); }
+            ctx.json(result);
+        });
+
+        app.post("/api/groups/members/remove", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = om.readValue(ctx.body(), Map.class);
+            String name = (String) body.get("name");
+            String uuid = (String) body.get("uuid");
+            if (name == null || uuid == null) { ctx.status(400).json(Map.of("error", "Group name and uuid required")); return; }
+            String finalName = name;
+            String finalUuid = uuid;
+            Future<Map<String, Object>> future11 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<String> members = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".members"));
+                members.remove(finalUuid);
+                plugin.getDataConfig().set("groups." + finalName + ".members", members);
+                plugin.saveDataFile();
+                // Remove permissions if online
+                try {
+                    Player online = Bukkit.getPlayer(UUID.fromString(finalUuid));
+                    if (online != null) plugin.removePermissionAttachment(online);
+                } catch (Exception ignored) {}
+                plugin.logAction("WebPanel", "group_member_remove", finalUuid + " from " + finalName);
+                return Map.of("success", (Object) true);
+            });
+            ctx.json(future11.get());
+        });
+
+        // ========== RANKS API (Backed by Groups) ==========
+        app.get("/api/ranks", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.groups")) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> ranks = new ArrayList<>();
+                var section = plugin.getDataConfig().getConfigurationSection("groups");
+                if (section != null) {
+                    for (String name : section.getKeys(false)) {
+                        Map<String, Object> r = new HashMap<>();
+                        String path = "groups." + name;
+                        r.put("name", name);
+                        r.put("color", plugin.getDataConfig().getString(path + ".color", "#ffffff"));
+                        r.put("prefix", plugin.getDataConfig().getString(path + ".prefix", ""));
+                        r.put("level", plugin.getDataConfig().getInt(path + ".level", 1));
+                        r.put("description", plugin.getDataConfig().getString(path + ".description", ""));
+                        ranks.add(r);
+                    }
+                }
+                return Map.of("ranks", (Object) ranks);
+            });
+            ctx.json(future.get());
+        });
+
+        app.post("/api/ranks/create", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String name = (String) body.get("name");
+            if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
+            String finalName = name.replaceAll("[^a-zA-Z0-9_-]", "");
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                String path = "groups." + finalName;
+                if (!plugin.getDataConfig().contains(path)) {
+                    plugin.getDataConfig().set(path + ".color", body.getOrDefault("color", "#ffffff"));
+                    plugin.getDataConfig().set(path + ".level", body.getOrDefault("level", 1));
+                    plugin.getDataConfig().set(path + ".description", body.getOrDefault("description", ""));
+                    plugin.getDataConfig().set(path + ".permissions", new ArrayList<String>());
+                    plugin.getDataConfig().set(path + ".members", new ArrayList<String>());
+                    plugin.saveDataFile();
+                    plugin.logAction("WebAdmin", "created rank", finalName);
+                }
+            });
+            ctx.json(Map.of("status", true));
+        });
+
+        app.post("/api/ranks/update", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String name = (String) body.get("name");
+            if (name == null) { ctx.status(400).json(Map.of("error", "Name required")); return; }
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                String path = "groups." + name;
+                if (plugin.getDataConfig().contains(path)) {
+                    if (body.containsKey("description")) plugin.getDataConfig().set(path + ".description", body.get("description"));
+                    if (body.containsKey("level")) plugin.getDataConfig().set(path + ".level", body.get("level"));
+                    if (body.containsKey("color")) plugin.getDataConfig().set(path + ".color", body.get("color"));
+                    plugin.saveDataFile();
+                    plugin.logAction("WebAdmin", "updated rank", name);
+                }
+            });
+            ctx.json(Map.of("status", true));
+        });
+
+        app.post("/api/ranks/delete", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String name = (String) body.get("name");
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.getDataConfig().set("groups." + name, null);
+                plugin.saveDataFile();
+                plugin.refreshAllPermissions();
+                plugin.logAction("WebAdmin", "deleted rank", name);
+            });
+            ctx.json(Map.of("status", true));
+        });
+
+        app.post("/api/ranks/promote", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String player = (String) body.get("player");
+            String rank = (String) body.get("rank");
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                String uuidStr = uuid.toString();
+                
+                // Remove from all other groups first
+                var groups = plugin.getDataConfig().getConfigurationSection("groups");
+                if (groups != null) {
+                    for (String g : groups.getKeys(false)) {
+                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                        if (members.remove(uuidStr)) {
+                            plugin.getDataConfig().set("groups." + g + ".members", members);
+                        }
+                    }
+                }
+                
+                // Add to new group
+                List<String> members = plugin.getDataConfig().getStringList("groups." + rank + ".members");
+                if (!members.contains(uuidStr)) members.add(uuidStr);
+                plugin.getDataConfig().set("groups." + rank + ".members", members);
+                
+                plugin.getDataConfig().set("users." + uuidStr + ".promotedBy", "WebAdmin");
+                plugin.getDataConfig().set("users." + uuidStr + ".promotionDate", System.currentTimeMillis());
+                
+                plugin.saveDataFile();
+                
+                Player p = Bukkit.getPlayer(uuid);
+                if (p != null) plugin.applyPermissionGroup(p);
+                
+                plugin.logAction("WebAdmin", "promoted " + player + " to", rank);
+            });
+            ctx.json(Map.of("status", true));
+        });
+
+        app.post("/api/ranks/demote", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String player = (String) body.get("player");
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                String uuidStr = uuid.toString();
+                
+                var groups = plugin.getDataConfig().getConfigurationSection("groups");
+                if (groups != null) {
+                    for (String g : groups.getKeys(false)) {
+                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                        if (members.remove(uuidStr)) {
+                            plugin.getDataConfig().set("groups." + g + ".members", members);
+                        }
+                    }
+                }
+                plugin.saveDataFile();
+                
+                Player p = Bukkit.getPlayer(uuid);
+                if (p != null) plugin.removePermissionAttachment(p);
+                
+                plugin.logAction("WebAdmin", "demoted", player);
+            });
+            ctx.json(Map.of("status", true));
+        });
+
+        app.get("/api/allplayers", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> players = new ArrayList<>();
+                Set<UUID> seen = new HashSet<>();
+                
+                // Online
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    seen.add(p.getUniqueId());
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("name", p.getName());
+                    m.put("uuid", p.getUniqueId().toString());
+                    m.put("rank", plugin.getPlayerGroup(p.getUniqueId()));
+                    m.put("promotedBy", plugin.getDataConfig().getString("users." + p.getUniqueId() + ".promotedBy"));
+                    m.put("promotionDate", plugin.getDataConfig().getLong("users." + p.getUniqueId() + ".promotionDate"));
+                    players.add(m);
+                }
+                
+                // Offline (from groups)
+                var groups = plugin.getDataConfig().getConfigurationSection("groups");
+                if (groups != null) {
+                    for (String g : groups.getKeys(false)) {
+                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                        for (String uuidStr : members) {
+                            try {
+                                UUID uuid = UUID.fromString(uuidStr);
+                                if (seen.contains(uuid)) continue;
+                                seen.add(uuid);
+                                String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                                Map<String, Object> m = new HashMap<>();
+                                m.put("name", name != null ? name : uuidStr);
+                                m.put("uuid", uuidStr);
+                                m.put("rank", g);
+                                m.put("promotedBy", plugin.getDataConfig().getString("users." + uuidStr + ".promotedBy"));
+                                m.put("promotionDate", plugin.getDataConfig().getLong("users." + uuidStr + ".promotionDate"));
+                                players.add(m);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+                
+                return Map.of("players", (Object) players);
+            });
+            ctx.json(future.get());
         });
     }
 

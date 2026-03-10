@@ -13,6 +13,7 @@ import org.bukkit.event.player.*;
 import org.bukkit.event.server.ServerListPingEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.*;
+import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scoreboard.*;
 
@@ -41,6 +42,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final Map<UUID, String> currentChunk = new HashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
     private final Map<UUID, Long> lastActivity = new HashMap<>();
+    private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
 
@@ -170,8 +172,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        if (webServer != null) webServer.stop();
+        if (webServer != null) {
+            webServer.stop();
+        }
         saveDataFile();
+        getLogger().info("DrowsyManagementTool has been disabled.");
     }
 
     public FileConfiguration getDataConfig() { return dataConfig; }
@@ -208,7 +213,59 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
 
     public void saveDataFile() {
-        try { dataConfig.save(dataFile); } catch (IOException ignored) {}
+        try {
+            dataConfig.save(dataFile);
+        } catch (IOException e) {
+            getLogger().severe("Could not save data to " + dataFile);
+            e.printStackTrace();
+        }
+    }
+
+    // --- Permission Groups ---
+
+    public void applyPermissionGroup(Player player) {
+        UUID uuid = player.getUniqueId();
+        // Remove old attachment if exists
+        removePermissionAttachment(player);
+        // Find the player's group
+        String groupName = getPlayerGroup(uuid);
+        if (groupName == null) return;
+        List<String> perms = dataConfig.getStringList("groups." + groupName + ".permissions");
+        if (perms.isEmpty()) return;
+        PermissionAttachment attachment = player.addAttachment(this);
+        for (String perm : perms) {
+            if (perm.startsWith("-")) {
+                attachment.setPermission(perm.substring(1), false);
+            } else {
+                attachment.setPermission(perm, true);
+            }
+        }
+        permissionAttachments.put(uuid, attachment);
+        player.recalculatePermissions();
+    }
+
+    public void removePermissionAttachment(Player player) {
+        PermissionAttachment old = permissionAttachments.remove(player.getUniqueId());
+        if (old != null) {
+            try { player.removeAttachment(old); } catch (Exception ignored) {}
+            player.recalculatePermissions();
+        }
+    }
+
+    public String getPlayerGroup(UUID uuid) {
+        var groupsSection = dataConfig.getConfigurationSection("groups");
+        if (groupsSection == null) return null;
+        for (String groupName : groupsSection.getKeys(false)) {
+            List<String> members = dataConfig.getStringList("groups." + groupName + ".members");
+            if (members.contains(uuid.toString())) return groupName;
+        }
+        return null;
+    }
+
+    public void refreshAllPermissions() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            applyPermissionGroup(p);
+        }
     }
 
     public boolean sendDiscordWebhook(String webhookUrl, String title, String description, int color) {
@@ -3226,6 +3283,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
         fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
 
+        // --- PERMISSION GROUPS ---
+        applyPermissionGroup(e.getPlayer());
+
         // --- DAILY LOGIN REWARDS ---
         if (dataConfig.getBoolean("daily_login_enabled", false)) {
             long lastLogin = dataConfig.getLong("daily_login." + uuid + ".last", 0);
@@ -3316,6 +3376,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         lastActivity.remove(e.getPlayer().getUniqueId());
+        removePermissionAttachment(e.getPlayer());
         this.trackSession(e.getPlayer().getUniqueId(), e.getPlayer().getName(), false);
         this.logAction("System", "player_left", e.getPlayer().getName());
         fireDiscordEvent("leaves", "Player Left", "**" + e.getPlayer().getName() + "** left the server.", 0xe74c3c, e.getPlayer().getName());

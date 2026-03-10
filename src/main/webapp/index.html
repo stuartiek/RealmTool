@@ -63,138 +63,138 @@
             <button class="nav-btn active" onclick="switchTab('overview', this)">📊 Overview</button>
 
             <!-- Player Management -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.players">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">👥 Player Management</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('players', this)">Players</button>
-                    <button class="nav-btn" onclick="switchTab('sessions', this)">Sessions</button>
-                    <button class="nav-btn" onclick="switchTab('ips', this)">IP Tracking</button>
-                    <button class="nav-btn" onclick="switchTab('reputation', this)">Reputation</button>
-                    <button class="nav-btn" onclick="switchTab('afk', this)">AFK Manager</button>
+                    <button class="nav-btn" onclick="switchTab('players', this)" data-permission="webapp.view.players">Players</button>
+                    <button class="nav-btn" onclick="switchTab('sessions', this)" data-permission="webapp.view.sessions">Sessions</button>
+                    <button class="nav-btn" onclick="switchTab('ips', this)" data-permission="webapp.view.ips">IP Tracking</button>
+                    <button class="nav-btn" onclick="switchTab('reputation', this)" data-permission="webapp.view.reputation">Reputation</button>
+                    <button class="nav-btn" onclick="switchTab('afk', this)" data-permission="webapp.view.afk">AFK Manager</button>
                 </div>
             </div>
 
             <!-- Moderation & Safety -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.banned">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">⚖️ Moderation</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('moderation', this)">Moderation</button>
-                    <button class="nav-btn" onclick="switchTab('whitelist', this)">Whitelist</button>
-                    <button class="nav-btn" onclick="switchTab('mutes', this)">Mutes</button>
-                    <button class="nav-btn" onclick="switchTab('punishments', this)">Punishments</button>
-                    <button class="nav-btn" onclick="switchTab('reports', this)">Reports</button>
+                    <button class="nav-btn" onclick="switchTab('moderation', this)" data-permission="webapp.action.ban">Moderation</button>
+                    <button class="nav-btn" onclick="switchTab('whitelist', this)" data-permission="webapp.manage.whitelist">Whitelist</button>
+                    <button class="nav-btn" onclick="switchTab('mutes', this)" data-permission="webapp.view.mutes">Mutes</button>
+                    <button class="nav-btn" onclick="switchTab('punishments', this)" data-permission="webapp.action.punish">Punishments</button>
+                    <button class="nav-btn" onclick="switchTab('reports', this)" data-permission="webapp.view.reports">Reports</button>
                 </div>
             </div>
 
             <!-- Communication & Tickets -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.chat">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">💬 Communication</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('chat', this)">Chat</button>
-                    <button class="nav-btn" onclick="switchTab('notes', this)">Notes</button>
-                    <button class="nav-btn" onclick="switchTab('tickets', this)">Tickets</button>
-                    <button class="nav-btn" onclick="switchTab('templates', this)">Templates</button>
+                    <button class="nav-btn" onclick="switchTab('chat', this)" data-permission="webapp.view.chat">Chat</button>
+                    <button class="nav-btn" onclick="switchTab('notes', this)" data-permission="webapp.view.notes">Notes</button>
+                    <button class="nav-btn" onclick="switchTab('tickets', this)" data-permission="webapp.view.tickets">Tickets</button>
+                    <button class="nav-btn" onclick="switchTab('templates', this)" data-permission="webapp.view.templates">Templates</button>
                 </div>
             </div>
 
             <!-- Server Management -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.worlds">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🌍 Server Mgmt</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('worlds', this)">Worlds</button>
-                    <button class="nav-btn" onclick="switchTab('plugins', this)">Plugins</button>
-                    <button class="nav-btn" onclick="switchTab('gamerules', this)">Game Rules</button>
-                    <button class="nav-btn" onclick="switchTab('blocklog', this)">Block Log</button>
-                    <button class="nav-btn" onclick="switchTab('console', this)">Console</button>
-                    <button class="nav-btn" onclick="switchTab('performance', this)">Performance</button>
-                    <button class="nav-btn" onclick="switchTab('restart', this)">Restart</button>
+                    <button class="nav-btn" onclick="switchTab('worlds', this)" data-permission="webapp.view.worlds">Worlds</button>
+                    <button class="nav-btn" onclick="switchTab('plugins', this)" data-permission="webapp.view.plugins">Plugins</button>
+                    <button class="nav-btn" onclick="switchTab('gamerules', this)" data-permission="webapp.view.gamerules">Game Rules</button>
+                    <button class="nav-btn" onclick="switchTab('blocklog', this)" data-permission="webapp.view.history">Block Log</button>
+                    <button class="nav-btn" onclick="switchTab('console', this)" data-permission="webapp.run.command">Console</button>
+                    <button class="nav-btn" onclick="switchTab('performance', this)" data-permission="webapp.view.performance">Performance</button>
+                    <button class="nav-btn" onclick="switchTab('restart', this)" data-permission="webapp.action.restart">Restart</button>
                 </div>
             </div>
 
             <!-- Events & Seasons -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.events">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🎄 Events</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('events', this)">Event Manager</button>
-                    <button class="nav-btn" onclick="switchTab('eventlog', this)">Event History</button>
+                    <button class="nav-btn" onclick="switchTab('events', this)" data-permission="webapp.view.events">Event Manager</button>
+                    <button class="nav-btn" onclick="switchTab('eventlog', this)" data-permission="webapp.view.events">Event History</button>
                 </div>
             </div>
 
             <!-- Analytics & Community -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.analytics">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">📊 Analytics</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('player-analytics', this)">Player Analytics</button>
-                    <button class="nav-btn" onclick="switchTab('leaderboards', this)">Leaderboards</button>
-                    <button class="nav-btn" onclick="switchTab('economy', this)">Economy</button>
+                    <button class="nav-btn" onclick="switchTab('player-analytics', this)" data-permission="webapp.view.analytics">Player Analytics</button>
+                    <button class="nav-btn" onclick="switchTab('leaderboards', this)" data-permission="webapp.view.analytics">Leaderboards</button>
+                    <button class="nav-btn" onclick="switchTab('economy', this)" data-permission="webapp.view.analytics">Economy</button>
                 </div>
             </div>
 
             <!-- Logging & Audit -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.history">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">📋 Logging</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('history', this)">History</button>
-                    <button class="nav-btn" onclick="switchTab('auditlog', this)">Audit Log</button>
-                    <button class="nav-btn" onclick="switchTab('warnings', this)">Warnings Log</button>
-                    <button class="nav-btn" onclick="switchTab('bulk', this)">Bulk Actions</button>
-                    <button class="nav-btn" onclick="switchTab('serverlogs', this)">Server Logs</button>
+                    <button class="nav-btn" onclick="switchTab('history', this)" data-permission="webapp.view.history">History</button>
+                    <button class="nav-btn" onclick="switchTab('auditlog', this)" data-permission="webapp.view.audit">Audit Log</button>
+                    <button class="nav-btn" onclick="switchTab('warnings', this)" data-permission="webapp.view.warnings">Warnings Log</button>
+                    <button class="nav-btn" onclick="switchTab('bulk', this)" data-permission="webapp.action.bulk">Bulk Actions</button>
+                    <button class="nav-btn" onclick="switchTab('serverlogs', this)" data-permission="webapp.view.console">Server Logs</button>
                 </div>
             </div>
 
             <!-- Community & Appeals -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.announcements">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">💬 Community</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('appeals', this)">Player Appeals</button>
-                    <button class="nav-btn" onclick="switchTab('announcements', this)">Announcements</button>
+                    <button class="nav-btn" onclick="switchTab('appeals', this)" data-permission="webapp.view.applications">Player Appeals</button>
+                    <button class="nav-btn" onclick="switchTab('announcements', this)" data-permission="webapp.view.announcements">Announcements</button>
                 </div>
             </div>
 
             <!-- Server Operations -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.action.backup">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">⚙️ Operations</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('backups', this)">Backups</button>
-                    <button class="nav-btn" onclick="switchTab('scheduler', this)">Command Scheduler</button>
-                    <button class="nav-btn" onclick="switchTab('maintenance', this)">Maintenance Mode</button>
+                    <button class="nav-btn" onclick="switchTab('backups', this)" data-permission="webapp.action.backup">Backups</button>
+                    <button class="nav-btn" onclick="switchTab('scheduler', this)" data-permission="webapp.manage.announcements">Command Scheduler</button>
+                    <button class="nav-btn" onclick="switchTab('maintenance', this)" data-permission="webapp.manage.maintenance">Maintenance Mode</button>
                 </div>
             </div>
 
             <!-- Advanced -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.manage.groups">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🛠️ Advanced</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('permissions', this)">Permission Groups</button>
-                    <button class="nav-btn" onclick="switchTab('landc-claims', this)">Land Claims</button>
-                    <button class="nav-btn" onclick="switchTab('roleplay', this)">Roleplay Commands</button>
-                    <button class="nav-btn" onclick="switchTab('voterewards', this)">Vote Rewards</button>
+                    <button class="nav-btn" onclick="switchTab('permissions', this)" data-permission="webapp.manage.groups">Permission Groups</button>
+                    <button class="nav-btn" onclick="switchTab('landc-claims', this)" data-permission="webapp.view.claims">Land Claims</button>
+                    <button class="nav-btn" onclick="switchTab('roleplay', this)" data-permission="webapp.admin">Roleplay Commands</button>
+                    <button class="nav-btn" onclick="switchTab('voterewards', this)" data-permission="webapp.admin">Vote Rewards</button>
                 </div>
             </div>
 
             <!-- Integrations -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.manage.discord">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🔗 Integrations</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('discord', this)">Discord</button>
+                    <button class="nav-btn" onclick="switchTab('discord', this)" data-permission="webapp.manage.discord">Discord</button>
                 </div>
             </div>
 
             <!-- Kits -->
-            <button class="nav-btn" onclick="switchTab('kits', this)">🎁 Kits</button>
+            <button class="nav-btn" onclick="switchTab('kits', this)" data-permission="webapp.view.kits">🎁 Kits</button>
 
             <!-- Ranks -->
-            <button class="nav-btn" onclick="switchTab('ranks', this)">⭐ Ranks</button>
+            <button class="nav-btn" onclick="switchTab('ranks', this)" data-permission="webapp.manage.groups">⭐ Ranks</button>
 
             <!-- High Impact Features -->
-            <div class="nav-group">
+            <div class="nav-group" data-permission="webapp.view.crates">
                 <button class="nav-group-btn expanded" onclick="toggleNavGroup(this)">🎮 Game Features</button>
                 <div class="nav-group-items">
-                    <button class="nav-btn" onclick="switchTab('crates', this)">Crates</button>
-                    <button class="nav-btn" onclick="switchTab('bounties', this)">Bounties</button>
-                    <button class="nav-btn" onclick="switchTab('shops', this)">Player Shops</button>
-                    <button class="nav-btn" onclick="switchTab('quests', this)">Quests</button>
-                    <button class="nav-btn" onclick="switchTab('enchantments', this)">Custom Enchants</button>
+                    <button class="nav-btn" onclick="switchTab('crates', this)" data-permission="webapp.view.crates">Crates</button>
+                    <button class="nav-btn" onclick="switchTab('bounties', this)" data-permission="webapp.view.bounties">Bounties</button>
+                    <button class="nav-btn" onclick="switchTab('shops', this)" data-permission="webapp.view.shops">Player Shops</button>
+                    <button class="nav-btn" onclick="switchTab('quests', this)" data-permission="webapp.view.quests">Quests</button>
+                    <button class="nav-btn" onclick="switchTab('enchantments', this)" data-permission="webapp.view.enchantments">Custom Enchants</button>
                 </div>
             </div>
 
@@ -649,24 +649,6 @@
                 <tr><th>Player</th><th>Score</th><th>Warnings</th><th>Bans</th><th>Status</th><th>Actions</th></tr>
                 <tbody id="reputation-list"></tbody>
             </table>
-        </div>
-
-        <!-- PERMISSION GROUPS -->
-        <div id="permissions" class="tab">
-            <h2>🔐 Permission Groups</h2>
-            <div style="margin-bottom: 15px;">
-                <input type="text" id="group-name" placeholder="Group name..." style="width: 30%; margin-right: 2%;">
-                <button onclick="createGroup()" style="width: 20%;">Create Group</button>
-            </div>
-            <h3 style="color: #4ec9b0; margin-top: 20px;">Groups</h3>
-            <table>
-                <tr><th>Group</th><th>Members</th><th>Permissions</th><th>Actions</th></tr>
-                <tbody id="groups-list"></tbody>
-            </table>
-            <h3 style="color: #4ec9b0; margin-top: 30px;">Assign Player to Group</h3>
-            <input type="text" id="player-group-assign" placeholder="Player name..." list="players-datalist" style="width: 40%; margin-right: 2%;">
-            <select id="group-select" style="width: 40%;"><option value="">Select Group</option></select>
-            <button onclick="assignPlayerToGroup()" class="full-width" style="margin-top: 10px;">Assign</button>
         </div>
 
         <!-- CUSTOM PUNISHMENTS -->
@@ -1511,24 +1493,22 @@
         <div id="permissions" class="tab">
             <h2>🔐 Permission Groups</h2>
             <h3>Create Group</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 30px;">
                 <input type="text" placeholder="Group name..." id="perm-group-name">
+                <input type="text" placeholder="Chat prefix (optional)..." id="perm-group-prefix">
                 <input type="color" id="perm-group-color" value="#0e639c">
                 <button onclick="createPermissionGroup()" class="btn-success" style="grid-column: 1/-1;">➕ Create Group</button>
             </div>
+
+            <h3>Assign Player to Group</h3>
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 30px;">
+                <input type="text" id="player-group-assign" placeholder="Player name..." list="players-datalist" style="flex-grow: 1;">
+                <select id="group-select" style="flex-grow: 1;"><option value="">Select Group</option></select>
+                <button onclick="assignPlayerToGroup()">Assign to Group</button>
+            </div>
+
             <h3>Manage Groups</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Group Name</th>
-                        <th>Color</th>
-                        <th>Permissions</th>
-                        <th>Members</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="permissions-table"></tbody>
-            </table>
+            <div id="groups-container"></div>
         </div>
 
         <!-- LAND CLAIMS -->
@@ -1972,13 +1952,59 @@
 </div>
 
 <script>
-    // Authentication check - redirect to login if no API key stored
-    if (!localStorage.getItem('apiKey')) {
+    // Authentication check - redirect to login if no auth token is stored
+    if (!localStorage.getItem('authToken')) {
         window.location.href = 'login.html';
     }
 
-    const API_KEY = localStorage.getItem('apiKey');
+    const AUTH_TOKEN = localStorage.getItem('authToken');
     const API_URL = `/api`;
+    let userPermissions = new Set();
+    let currentUserName = "WebAdmin"; // Store username for API calls
+
+    async function loadUserDetails() {
+        try {
+            const userDetails = await apiCall('/me');
+            if (userDetails && userDetails.permissions) {
+                userPermissions = new Set(userDetails.permissions);
+                document.title = `Realm Tool - ${userDetails.username}`;
+                currentUserName = userDetails.username;
+                applyPermissions();
+            } else {
+                // If we can't get user details, the token is likely invalid
+                logout();
+            }
+        } catch (e) {
+            console.error("Failed to load user details", e);
+            logout();
+        }
+    }
+
+    function applyPermissions() {
+        const adminPermission = "webapp.admin";
+        if (userPermissions.has(adminPermission)) {
+            console.log("Admin user, all elements visible.");
+            return;
+        }
+
+        document.querySelectorAll('[data-permission]').forEach(elem => {
+            const requiredPermission = elem.getAttribute('data-permission');
+            if (!userPermissions.has(requiredPermission)) {
+                elem.style.display = 'none';
+            }
+        });
+
+        // Hide empty nav groups
+        document.querySelectorAll('.nav-group').forEach(group => {
+            const items = group.querySelector('.nav-group-items');
+            if (items) {
+                const visibleItems = Array.from(items.children).filter(child => child.style.display !== 'none');
+                if (visibleItems.length === 0) {
+                    group.style.display = 'none';
+                }
+            }
+        });
+    }
 
     function toggleNavGroup(button) {
         const items = button.nextElementSibling;
@@ -2080,7 +2106,7 @@
     }
 
     function logout() {
-        localStorage.removeItem('apiKey');
+        localStorage.removeItem('authToken');
         window.location.href = 'login.html';
     }
 
@@ -2088,7 +2114,7 @@
         const url = (method === 'GET' && params) ? `${API_URL}${endpoint}?${new URLSearchParams(params).toString()}` : `${API_URL}${endpoint}`;
         const options = {
             method,
-            headers: { 'Authorization': `Bearer ${API_KEY}` }
+            headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
         };
         
         // For POST/PUT/PATCH/DELETE requests, send params as JSON body
@@ -2099,6 +2125,10 @@
         
         try {
             const response = await fetch(url, options);
+            if (response.status === 401) {
+                logout(); // Token is invalid or expired
+                return null;
+            }
             return await response.json();
         } catch (e) {
             console.error('API Error:', e);
@@ -2633,7 +2663,7 @@
             const url = `${API_URL}/template/delete`;
             await fetch(url, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                headers: { 'Authorization': `Bearer ${AUTH_TOKEN}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
             });
             loadTemplates();
@@ -2723,8 +2753,9 @@
         document.getElementById('console-output').innerHTML += `<div>&gt; ${cmd}</div>`;
     }
 
-    // Auto-load overview on page load and refresh player datalist every 5 seconds
+    // Auto-load overview on page load
     (async () => {
+        await loadUserDetails();
         await updateOverview();
         const response = await apiCall('/players');
         if (response && response.players) {
@@ -3229,39 +3260,66 @@
     }
 
     async function loadPermissions() {
-        const groups = await apiCall('/groups');
-        const html = groups && groups.length ? groups.map(g => `
-            <tr>
-                <td>${g.name}</td>
-                <td>${g.members || 0}</td>
-                <td>${g.permissions ? g.permissions.join(', ') : 'None'}</td>
-                <td><button onclick="editGroup('${g.name}')" style="padding: 4px 8px; font-size: 11px;">Edit</button></td>
-            </tr>
-        `).join('') : '<tr><td colspan="4">No groups created</td></tr>';
-        document.getElementById('groups-list').innerHTML = html;
-        
-        // Load group select
-        if (groups && groups.length > 0) {
-            const selectHtml = groups.map(g => `<option value="${g.name}">${g.name}</option>`).join('');
-            document.getElementById('group-select').innerHTML = '<option value="">Select Group</option>' + selectHtml;
-        }
+        try {
+            const data = await apiCall('/groups');
+            const container = document.getElementById('groups-container');
+            const groupSelect = document.getElementById('group-select');
+            if (!data || !data.groups || data.groups.length === 0) {
+                container.innerHTML = '<p style="color:#888;">No groups created yet.</p>';
+                if (groupSelect) groupSelect.innerHTML = '<option value="">Select Group</option>';
+                return;
+            }
+            container.innerHTML = data.groups.map(g => {
+                const permsList = g.permissions && g.permissions.length > 0
+                    ? g.permissions.map(p => `<span style="display:inline-flex;align-items:center;background:#1e1e2e;padding:3px 8px;border-radius:4px;margin:2px;font-size:12px;">${p} <button onclick="removeGroupPermission('${g.name}','${p}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;margin-left:4px;font-size:14px;">&times;</button></span>`).join('')
+                    : '<span style="color:#888;font-size:12px;">No permissions</span>';
+                const membersList = g.members && g.members.length > 0
+                    ? g.members.map(m => `<span style="display:inline-flex;align-items:center;background:#1e1e2e;padding:3px 8px;border-radius:4px;margin:2px;font-size:12px;">${m.name} <button onclick="removeGroupMember('${g.name}','${m.uuid}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;margin-left:4px;font-size:14px;">&times;</button></span>`).join('')
+                    : '<span style="color:#888;font-size:12px;">No members</span>';
+                return `<div style="background:#1a1a2e;border-left:4px solid ${g.color};border-radius:8px;padding:15px;margin-bottom:15px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <h3 style="margin:0;color:${g.color};">${g.name}${g.prefix ? ' <span style="font-size:12px;color:#888;">Prefix: ' + g.prefix + '</span>' : ''}</h3>
+                        <button onclick="deleteGroup('${g.name}')" class="btn-danger" style="font-size:11px;padding:4px 10px;">🗑️ Delete</button>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <strong style="font-size:13px;">Permissions</strong>
+                        <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:2px;">${permsList}</div>
+                        <div style="margin-top:8px;display:flex;gap:8px;">
+                            <input type="text" placeholder="permission.node" id="add-perm-${g.name}" style="flex:1;padding:6px;font-size:12px;">
+                            <button onclick="addGroupPermission('${g.name}')" class="btn-success" style="font-size:11px;padding:4px 10px;">+ Add</button>
+                        </div>
+                    </div>
+                    <div>
+                        <strong style="font-size:13px;">Members</strong>
+                        <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:2px;">${membersList}</div>
+                        <div style="margin-top:8px;display:flex;gap:8px;">
+                            <input type="text" placeholder="Player name..." id="add-member-${g.name}" style="flex:1;padding:6px;font-size:12px;">
+                            <button onclick="addGroupMember('${g.name}')" class="btn-success" style="font-size:11px;padding:4px 10px;">+ Add</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+            // Update group-select dropdown
+            if (groupSelect) {
+                groupSelect.innerHTML = '<option value="">Select Group</option>' +
+                    data.groups.map(g => `<option value="${g.name}">${g.name}</option>`).join('');
+            }
+        } catch (e) { console.error('Failed to load groups:', e); }
     }
 
     async function createGroup() {
-        const name = document.getElementById('group-name').value;
+        const name = document.getElementById('group-name')?.value;
         if (!name) return alert('Enter group name');
-        await apiCall('/group/create', 'POST', { name });
+        await apiCall('/groups/create', 'POST', { name });
         document.getElementById('group-name').value = '';
-        alert('Group created!');
         loadPermissions();
     }
 
     async function assignPlayerToGroup() {
-        const player = document.getElementById('player-group-assign').value;
-        const group = document.getElementById('group-select').value;
+        const player = document.getElementById('player-group-assign')?.value;
+        const group = document.getElementById('group-select')?.value;
         if (!player || !group) return alert('Select player and group');
-        await apiCall('/group/assign', 'POST', { player, group });
-        alert('Player assigned!');
+        await apiCall('/groups/members/add', 'POST', { name: group, player });
         loadPermissions();
     }
 
@@ -3539,6 +3597,7 @@
                         <td>${memberCount}</td>
                         <td>${rank.description || '-'}</td>
                         <td>
+                            <button onclick="manageRankPermissions('${rank.name}')" class="btn-info" style="padding: 5px 10px; font-size: 11px; background: #0e639c; margin-right: 5px;">Permissions</button>
                             <button onclick="editRank('${rank.name}')" class="btn-small" style="padding: 5px 10px; font-size: 11px;">Edit</button>
                             <button onclick="deleteRank('${rank.name}')" class="btn-danger" style="padding: 5px 10px; font-size: 11px; background: #d32f2f;">Delete</button>
                         </td>
@@ -3579,6 +3638,21 @@
             console.error('Failed to load ranks:', { ranks, players });
             document.getElementById('ranks-list').innerHTML = '<tr><td colspan="6" style="text-align: center; color: #d32f2f; padding: 20px;">Failed to load ranks. Check console.</td></tr>';
         }
+    }
+
+    function manageRankPermissions(rankName) {
+        switchTab('permissions');
+        // Wait for groups to load, then scroll to the specific rank/group
+        setTimeout(() => {
+            const headers = document.querySelectorAll('#groups-container h3');
+            for (let h of headers) {
+                // Check if header starts with rank name (ignoring prefix span)
+                if (h.innerText.trim().startsWith(rankName)) {
+                    h.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    break;
+                }
+            }
+        }, 600);
     }
 
     async function createRank() {
@@ -3814,7 +3888,7 @@
             return;
         }
         try {
-            const response = await apiCall('/warnings', 'POST', { player, reason, issuedBy: API_KEY });
+            const response = await apiCall('/warnings', 'POST', { player, reason, issuedBy: currentUserName });
             if (response && response.status) {
                 document.getElementById('warn-player').value = '';
                 document.getElementById('warn-reason').value = '';
@@ -4055,9 +4129,58 @@
     async function createPermissionGroup() {
         const name = document.getElementById('perm-group-name').value;
         const color = document.getElementById('perm-group-color').value;
+        const prefix = document.getElementById('perm-group-prefix').value;
         if (!name) return;
-        console.log('Creating permission group', name, color);
-        // TODO: POST /api/permissions/groups/create
+        try {
+            await apiCall('/groups/create', 'POST', { name, color, prefix });
+            document.getElementById('perm-group-name').value = '';
+            document.getElementById('perm-group-prefix').value = '';
+            loadPermissions();
+        } catch (e) { alert('Failed to create group: ' + e.message); }
+    }
+
+    async function deleteGroup(name) {
+        if (!confirm('Delete group "' + name + '"? Members will lose their permissions.')) return;
+        try {
+            await apiCall('/groups/delete', 'POST', { name });
+            loadPermissions();
+        } catch (e) { alert('Failed to delete group'); }
+    }
+
+    async function addGroupPermission(groupName) {
+        const input = document.getElementById('add-perm-' + groupName);
+        const permission = input.value.trim();
+        if (!permission) return;
+        try {
+            await apiCall('/groups/permissions/add', 'POST', { name: groupName, permission });
+            input.value = '';
+            loadPermissions();
+        } catch (e) { alert('Failed to add permission'); }
+    }
+
+    async function removeGroupPermission(groupName, permission) {
+        try {
+            await apiCall('/groups/permissions/remove', 'POST', { name: groupName, permission });
+            loadPermissions();
+        } catch (e) { alert('Failed to remove permission'); }
+    }
+
+    async function addGroupMember(groupName) {
+        const input = document.getElementById('add-member-' + groupName);
+        const player = input.value.trim();
+        if (!player) return;
+        try {
+            await apiCall('/groups/members/add', 'POST', { name: groupName, player });
+            input.value = '';
+            loadPermissions();
+        } catch (e) { alert('Failed to add member'); }
+    }
+
+    async function removeGroupMember(groupName, uuid) {
+        try {
+            await apiCall('/groups/members/remove', 'POST', { name: groupName, uuid });
+            loadPermissions();
+        } catch (e) { alert('Failed to remove member'); }
     }
 
     async function loadLandClaims() {

@@ -1,5 +1,5 @@
 name: DrowsyManagementTool
-version: 6.0
+version: 11.5.4
 main: com.stuart.javarealmtool.JavaRealmTool
 api-version: 1.21
 commands:
@@ -62,3 +62,113 @@ permissions:
   dmt.admin:
     description: Allows use of admin tools
     default: op
+  webapp.access:
+    description: Allows login to the web interface
+    default: op
+  webapp.*:
+    description: Grants all webapp permissions
+    default: op
+    children:
+      webapp.access: true
+      webapp.view.players: true
+      webapp.view.console: true
+      webapp.view.history: true
+      webapp.view.tickets: true
+      webapp.view.notes: true
+      webapp.view.warnings: true
+      webapp.view.banned: true
+      webapp.view.chat: true
+      webapp.view.whitelist: true
+      webapp.view.mutes: true
+      webapp.view.ips: true
+      webapp.view.sessions: true
+      webapp.view.templates: true
+      webapp.view.worlds: true
+      webapp.view.plugins: true
+      webapp.view.gamerules: true
+      webapp.view.performance: true
+      webapp.view.discord: true
+      webapp.view.reports: true
+      webapp.view.claims: true
+      webapp.view.kits: true
+      webapp.view.maintenance: true
+      webapp.view.crates: true
+      webapp.view.bounties: true
+      webapp.view.shops: true
+      webapp.view.quests: true
+      webapp.view.applications: true
+      webapp.view.polls: true
+      webapp.view.automod: true
+      webapp.view.playtime-rewards: true
+      webapp.view.motd: true
+      webapp.view.enchantments: true
+      webapp.view.daily-login: true
+      webapp.view.auctions: true
+      webapp.view.nicknames: true
+      webapp.view.chat-tags: true
+      webapp.view.rules: true
+      webapp.view.player-warps: true
+      webapp.view.custom-recipes: true
+      webapp.view.pvp-stats: true
+      webapp.view.achievements: true
+      webapp.view.duels: true
+      webapp.view.welcome: true
+      webapp.view.inactive-players: true
+      webapp.view.announcements: true
+      webapp.view.reputation: true
+      webapp.view.afk: true
+      webapp.view.analytics: true
+      webapp.view.events: true
+      webapp.view.audit: true
+      webapp.view.groups: true
+      webapp.manage.groups: true
+      webapp.manage.tickets: true
+      webapp.manage.templates: true
+      webapp.manage.whitelist: true
+      webapp.manage.gamerules: true
+      webapp.manage.discord: true
+      webapp.manage.claims: true
+      webapp.manage.kits: true
+      webapp.manage.maintenance: true
+      webapp.manage.crates: true
+      webapp.manage.bounties: true
+      webapp.manage.shops: true
+      webapp.manage.quests: true
+      webapp.manage.applications: true
+      webapp.manage.polls: true
+      webapp.manage.automod: true
+      webapp.manage.playtime-rewards: true
+      webapp.manage.motd: true
+      webapp.manage.daily-login: true
+      webapp.manage.auctions: true
+      webapp.manage.chat-tags: true
+      webapp.manage.rules: true
+      webapp.manage.player-warps: true
+      webapp.manage.custom-recipes: true
+      webapp.manage.achievements: true
+      webapp.manage.welcome: true
+      webapp.manage.inactive-players: true
+      webapp.manage.announcements: true
+      webapp.manage.afk: true
+      webapp.manage.events: true
+      webapp.action.kick: true
+      webapp.action.ban: true
+      webapp.action.unban: true
+      webapp.action.warn: true
+      webapp.action.heal: true
+      webapp.action.punish: true
+      webapp.action.unpunish: true
+      webapp.action.addnote: true
+      webapp.action.runcmd: true
+      webapp.action.teleport: true
+      webapp.action.give: true
+      webapp.action.restart: true
+      webapp.action.backup: true
+      webapp.action.bulk: true
+      webapp.action.report: true
+      webapp.action.mute: true
+      webapp.action.unmute: true
+      webapp.action.enchant: true
+      webapp.action.nick: true
+      webapp.run.command: true
+      webapp.admin: true
