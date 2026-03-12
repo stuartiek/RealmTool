@@ -652,11 +652,21 @@ public class WebServer {
         app.post("/api/command", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.run.command")) return;
             
-            String cmd = ctx.queryParam("cmd");
+            String cmd = null;
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, Object> bodyMap = mapper.readValue(ctx.body(), java.util.Map.class);
+                cmd = (String) bodyMap.get("command");
+            } catch (Exception e) {
+                // Fallback to query param if body parsing fails
+                cmd = ctx.queryParam("cmd");
+            }
+
             if (cmd != null) {
+                final String finalCmd = cmd;
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
-                    plugin.logAction("WebAdmin", "executed command", cmd);
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), finalCmd);
+                    plugin.logAction("WebAdmin", "executed command", finalCmd);
                 });
             }
             ctx.result("OK");
@@ -2318,9 +2328,11 @@ public class WebServer {
             var data = plugin.getDataConfig();
             List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
             List<Map<String, Object>> announcements = new ArrayList<>();
+            int i = 0;
             for (Map<?, ?> r : raw) {
                 Map<String, Object> m = new HashMap<>();
                 for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                m.put("index", i++);
                 announcements.add(m);
             }
             ctx.json(Map.of("announcements", announcements));
@@ -2333,6 +2345,12 @@ public class WebServer {
             String time = (String) body.get("time");
             if (message == null || time == null || message.isEmpty() || time.isEmpty()) {
                 ctx.status(400).json(Map.of("error", "Missing message or time"));
+                return;
+            }
+            try {
+                java.time.LocalDateTime.parse(time);
+            } catch (Exception e) {
+                ctx.status(400).json(Map.of("error", "Invalid time format. Use ISO-8601 (yyyy-MM-ddTHH:mm)"));
                 return;
             }
             var data = plugin.getDataConfig();
@@ -2353,10 +2371,9 @@ public class WebServer {
             ctx.json(Map.of("success", true));
         });
 
-        app.delete("/api/announcements/schedule", ctx -> {
+        app.delete("/api/announcements/schedule/{index}", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            int index = ((Number) body.get("index")).intValue();
+            int index = Integer.parseInt(ctx.pathParam("index"));
             var data = plugin.getDataConfig();
             List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
             List<Map<String, Object>> scheduled = new ArrayList<>();
@@ -2479,7 +2496,11 @@ public class WebServer {
         // ========== AFK MANAGER ==========
         app.get("/api/afk", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.afk")) return;
-            Future<List<Map<String, Object>>> future2 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+            Future<Map<String, Object>> future2 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> result = new HashMap<>();
+                result.put("timeout", plugin.getAfkTimeoutMinutes());
+                result.put("enabled", plugin.getDataConfig().getBoolean("afk_autokick_enabled", true));
+
                 List<Map<String, Object>> afkPlayers = new ArrayList<>();
                 long now = System.currentTimeMillis();
                 int timeoutMinutes = plugin.getAfkTimeoutMinutes();
@@ -2498,7 +2519,8 @@ public class WebServer {
                     }
                 }
                 afkPlayers.sort((a, b) -> Long.compare((long) b.get("idleTime"), (long) a.get("idleTime")));
-                return afkPlayers;
+                result.put("players", afkPlayers);
+                return result;
             });
             ctx.json(future2.get());
         });
@@ -2506,10 +2528,23 @@ public class WebServer {
         app.post("/api/afk/settings", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.afk")) return;
             var body = ctx.bodyAsClass(Map.class);
+            
+            // Log request to console for debugging
+            Bukkit.getLogger().info("[WebAdmin] Received AFK settings update: " + body);
+            
             if (body.containsKey("timeout")) {
                 int timeout = Integer.parseInt(body.get("timeout").toString());
                 plugin.setAfkTimeoutMinutes(timeout);
+                plugin.logAction("WebAdmin", "updated AFK timeout", timeout + "m");
             }
+
+            if (body.containsKey("enabled")) {
+                boolean enabled = Boolean.parseBoolean(body.get("enabled").toString());
+                plugin.getDataConfig().set("afk_autokick_enabled", enabled);
+                plugin.saveDataFile();
+                plugin.logAction("WebAdmin", (enabled ? "enabled" : "disabled") + " AFK autokick", "");
+            }
+
             ctx.json(Map.of("success", true));
         });
 

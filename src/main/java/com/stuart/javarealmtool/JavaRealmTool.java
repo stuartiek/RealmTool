@@ -20,6 +20,7 @@ import org.bukkit.scoreboard.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class JavaRealmTool extends JavaPlugin implements Listener {
 
@@ -39,9 +40,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private final Map<UUID, String> pendingClaimAction = new HashMap<>();
     private final Map<UUID, String> pendingTrustAction = new HashMap<>();
     private final Map<UUID, Integer> menuPages = new HashMap<>();
-    private final Map<UUID, String> currentChunk = new HashMap<>();
+    private final Map<UUID, String> currentChunk = new ConcurrentHashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
-    private final Map<UUID, Long> lastActivity = new HashMap<>();
+    private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
     private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
@@ -3066,11 +3067,46 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
 
     // --- LISTENERS ---
     @EventHandler
-    public void onPunishMove(PlayerMoveEvent e) {
+    public void onPlayerMove(PlayerMoveEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) {
-            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) e.setCancelled(true);
-        } else {
-            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+            // Prevent punished players from moving
+            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) {
+                e.setCancelled(true);
+            }
+            return;
+        }
+        
+        // AFK Activity Tracking
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+
+        // Chunk Entry/Exit Logic
+        Player p = e.getPlayer();
+        if (e.getTo() == null) return;
+        
+        String newChunk = getChunkKey(e.getTo());
+        String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
+        
+        if (!newChunk.equals(oldChunk)) {
+            // Leaving a claimed chunk
+            if (isChunkClaimed(oldChunk)) {
+                UUID owner = getChunkOwner(oldChunk);
+                if (owner != null && !p.getUniqueId().equals(owner)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have left " + ownerName + "'s claim!");
+                }
+            }
+            
+            // Entering a claimed chunk
+            if (isChunkClaimed(newChunk)) {
+                UUID owner = getChunkOwner(newChunk);
+                if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
+                }
+            }
+            currentChunk.put(p.getUniqueId(), newChunk);
         }
     }
     @EventHandler
@@ -3124,6 +3160,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent e) {
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
         else {
             // Check chunk claims
@@ -3138,6 +3175,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
         else {
             // Check chunk claims
@@ -3155,7 +3193,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     }
     @EventHandler
     public void onChestAccess(InventoryOpenEvent e) {
-        if (e.getInventory().getType() == InventoryType.CHEST) saveLog(e.getInventory().getLocation(), ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
+        if (e.getPlayer() instanceof Player) {
+            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        }
+        if (e.getInventory().getType() == InventoryType.CHEST) {
+            saveLog(e.getInventory().getLocation(), ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
+        }
+    }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onInventoryClickForAfk(InventoryClickEvent e) {
+        lastActivity.put(e.getWhoClicked().getUniqueId(), System.currentTimeMillis());
     }
     @EventHandler
     public void onWandUse(PlayerInteractEvent e) {
@@ -3208,6 +3255,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 }
             }
         }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerGeneralActivity(PlayerInteractEvent e) {
+        // General activity tracking for any interaction
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
     }
 
     @EventHandler
@@ -3472,37 +3525,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         e.setFormat(prefix + displayName + ChatColor.WHITE + ": " + e.getMessage().replace("%", "%%"));
 
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
-    }
-
-    @EventHandler
-    public void onPlayerMove(PlayerMoveEvent e) {
-        Player p = e.getPlayer();
-        String newChunk = getChunkKey(e.getTo());
-        String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
-        
-        if (!newChunk.equals(oldChunk)) {
-            // Check if old chunk is claimed
-            if (!oldChunk.equals(newChunk) && isChunkClaimed(oldChunk)) {
-                UUID owner = getChunkOwner(oldChunk);
-                if (owner != null && !p.getUniqueId().equals(owner)) {
-                    Player ownerPlayer = Bukkit.getPlayer(owner);
-                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
-                    p.sendMessage(ChatColor.YELLOW + "You have left " + ownerName + "'s claim!");
-                }
-            }
-            
-            // Check if new chunk is claimed
-            if (isChunkClaimed(newChunk)) {
-                UUID owner = getChunkOwner(newChunk);
-                if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
-                    Player ownerPlayer = Bukkit.getPlayer(owner);
-                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
-                    p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
-                }
-            }
-            
-            currentChunk.put(p.getUniqueId(), newChunk);
-        }
     }
 
     public void setPunished(UUID u, long d) {
@@ -4041,8 +4063,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
             if (!dataConfig.getBoolean("afk_autokick_enabled", true)) return;
             int timeoutMinutes = getAfkTimeoutMinutes();
             long now = System.currentTimeMillis();
-            for (Player p : Bukkit.getOnlinePlayers()) {
-                if (p.hasPermission("dmt.afk.exempt")) continue;
+            for (Player p : new ArrayList<>(Bukkit.getOnlinePlayers())) {
                 Long lastAct = lastActivity.get(p.getUniqueId());
                 if (lastAct == null) {
                     lastActivity.put(p.getUniqueId(), now);
@@ -4051,10 +4072,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 long idleMs = now - lastAct;
                 long idleMinutes = idleMs / 60000;
                 if (idleMinutes >= timeoutMinutes) {
+                    if (p.hasPermission("dmt.afk.exempt")) {
+                        // Log only when they are near the threshold to avoid spamming console
+                        if (idleMinutes == timeoutMinutes) {
+                            getLogger().info("[AFK] Player " + p.getName() + " is AFK (" + idleMinutes + "m) but is exempt from kicking.");
+                        }
+                        continue;
+                    }
                     p.kickPlayer(ChatColor.RED + "You were kicked for being AFK.\n"
                         + ChatColor.YELLOW + "You were idle for " + idleMinutes + " minute" + (idleMinutes != 1 ? "s" : "") + ".\n"
                         + ChatColor.GRAY + "The server auto-kick threshold is " + timeoutMinutes + " minute" + (timeoutMinutes != 1 ? "s" : "") + ".");
                     logAction("System", "afk_kick", p.getName() + " (idle " + idleMinutes + "m)");
+                    getLogger().info("[AFK] Kicked " + p.getName() + " for being idle for " + idleMinutes + " minutes.");
                     lastActivity.remove(p.getUniqueId());
                 }
             }
@@ -4938,7 +4967,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         newYearTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 Location loc = p.getLocation();
-                for (int i = 0; i < 10; i++) {
+                
+                // Spawn actual fireworks
+                if (Math.random() < 0.4) {
+                    double offsetX = (Math.random() - 0.5) * 30;
+                    double offsetZ = (Math.random() - 0.5) * 30;
+                    Location fwLoc = loc.clone().add(offsetX, 0, offsetZ);
+                    
+                    try {
+                        org.bukkit.entity.Firework fw = (org.bukkit.entity.Firework) fwLoc.getWorld().spawnEntity(fwLoc, org.bukkit.entity.EntityType.FIREWORK_ROCKET);
+                        FireworkMeta fwm = fw.getFireworkMeta();
+                        
+                        Color[] colors = {Color.RED, Color.BLUE, Color.LIME, Color.YELLOW, Color.ORANGE, Color.PURPLE, Color.WHITE, Color.AQUA};
+                        Color c1 = colors[new Random().nextInt(colors.length)];
+                        Color c2 = colors[new Random().nextInt(colors.length)];
+                        
+                        FireworkEffect.Type[] types = {FireworkEffect.Type.BALL, FireworkEffect.Type.BALL_LARGE, FireworkEffect.Type.BURST, FireworkEffect.Type.STAR, FireworkEffect.Type.CREEPER};
+                        FireworkEffect.Type type = types[new Random().nextInt(types.length)];
+                        
+                        fwm.addEffect(FireworkEffect.builder().flicker(Math.random() < 0.5).trail(Math.random() < 0.5).with(type).withColor(c1).withFade(c2).build());
+                        fwm.setPower(1 + new Random().nextInt(2));
+                        fw.setFireworkMeta(fwm);
+                    } catch (Exception ignored) {}
+                }
+
+                for (int i = 0; i < 5; i++) {
                     double offsetX = (Math.random() - 0.5) * 30;
                     double offsetY = 3 + Math.random() * 20;
                     double offsetZ = (Math.random() - 0.5) * 30;
@@ -4946,16 +4999,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     // Firework sparks bursting in the sky
                     p.spawnParticle(org.bukkit.Particle.FIREWORK, particleLoc, 1, 1.5, 1.0, 1.5, 0.08);
                 }
-                // Occasional enchantment glint at ground level
-                for (int i = 0; i < 4; i++) {
-                    double offsetX = (Math.random() - 0.5) * 15;
-                    double offsetY = Math.random() * 3;
-                    double offsetZ = (Math.random() - 0.5) * 15;
-                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
-                    p.spawnParticle(org.bukkit.Particle.ENCHANT, particleLoc, 1, 0.5, 1.0, 0.5, 0.5);
-                }
             }
-        }, 0L, 10L);
+        }, 0L, 20L);
         getLogger().info("New Year effect started!");
     }
 
