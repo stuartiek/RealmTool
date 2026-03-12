@@ -58,8 +58,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     
     private final String GUI_MENU_SELECTOR = ChatColor.AQUA + "Menu Selection";
     private final String GUI_PLAYER_MENU = ChatColor.GREEN + "Player Menu";
+    private final String GUI_PLAYER_TICKET_MENU = ChatColor.AQUA + "Tickets";
     private final String GUI_PLAYER_LIST_TPA = ChatColor.GREEN + "Players (TPA)";
     private final String GUI_REPORT_PLAYER = ChatColor.RED + "Report Player";
+    
+    private final String GUI_PLAYER_TICKETS = ChatColor.GOLD + "Your Tickets";
+    private final String GUI_TICKET_CATEGORY = ChatColor.AQUA + "Select Ticket Category";
+    private final String GUI_MY_TICKET_OPTIONS = ChatColor.GOLD + "Ticket Options: ";
     private final String GUI_WARP_MANAGEMENT = ChatColor.BLUE + "Manage Warp: ";
     private final String GUI_CLAIMS = ChatColor.BLUE + "Chunk Claims";
     private final String GUI_CLAIM_CONFIRM = ChatColor.YELLOW + "Confirm Claim";
@@ -105,7 +110,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
     private int summerTaskId = -1;
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
-    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME, TICKET_RESPOND, TICKET_RESOLVE, REPORT }
+    private enum ActionType { KICK, BAN, WARN, ANNOUNCE, ADD_NOTE, SET_WARP, WORLD_CREATE_NAME, TICKET_RESPOND, TICKET_RESOLVE, TICKET_CREATE, REPORT }
     private static class PunishmentContext {
         String targetName;
         ActionType type;
@@ -1121,6 +1126,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     resolveTicket(Integer.parseInt(ctx.targetName), reason);
                     p.sendMessage(ChatColor.GREEN + "Ticket #" + ctx.targetName + " resolved: " + reason);
                     break;
+                case TICKET_CREATE:
+                    String cat = ctx.targetName != null ? ctx.targetName : "";
+                    if (!cat.isEmpty()) {
+                        createTicket(p, cat + " " + reason);
+                    } else {
+                        createTicket(p, reason);
+                    }
+                    break;
                 case REPORT:
                     // Cooldown check (60 seconds)
                     long now = System.currentTimeMillis();
@@ -1150,6 +1163,56 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 p.sendMessage(ChatColor.AQUA + "Action applied to " + ctx.targetName);
             }
         });
+    }
+
+    // --- ticket helpers ---
+    private String getWebPanelUrl() {
+        return "http://" + (Bukkit.getServer().getIp().isEmpty() ? "localhost" : Bukkit.getServer().getIp()) + ":8091/tickets";
+    }
+
+    private void createTicket(Player p, String text) {
+        long now = System.currentTimeMillis();
+        Long lastTicket = ticketCooldowns.get(p.getUniqueId());
+        if (lastTicket != null && (now - lastTicket) < 60000) {
+            long remaining = (60000 - (now - lastTicket)) / 1000;
+            p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before creating another ticket.");
+            return;
+        }
+        Set<String> validCategories = Set.of("bug", "griefing", "chat", "item_loss", "pvp", "other");
+        String category = "other";
+        String message = text;
+        String[] parts = text.split(" ");
+        if (parts.length > 1 && validCategories.contains(parts[0].toLowerCase())) {
+            category = parts[0].toLowerCase();
+            message = String.join(" ", Arrays.copyOfRange(parts, 1, parts.length));
+        }
+        if (message.isBlank()) {
+            p.sendMessage(ChatColor.RED + "Please provide a message for your ticket.");
+            return;
+        }
+        int id = dataConfig.getInt("tickets.next_id", 1);
+        String path = "tickets." + id;
+        dataConfig.set(path + ".player", p.getName());
+        dataConfig.set(path + ".uuid", p.getUniqueId().toString());
+        dataConfig.set(path + ".message", message);
+        dataConfig.set(path + ".status", "open");
+        dataConfig.set(path + ".priority", "medium");
+        dataConfig.set(path + ".category", category);
+        dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+        dataConfig.set(path + ".world", p.getWorld().getName());
+        dataConfig.set(path + ".x", p.getLocation().getBlockX());
+        dataConfig.set(path + ".y", p.getLocation().getBlockY());
+        dataConfig.set(path + ".z", p.getLocation().getBlockZ());
+        dataConfig.set("tickets.next_id", id + 1);
+        saveDataFile();
+        ticketCooldowns.put(p.getUniqueId(), now);
+        p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created (" + category + "). Staff will review it soon.");
+        for (Player staff : Bukkit.getOnlinePlayers()) {
+            if (staff.hasPermission("realmtool.admin")) {
+                staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + message);
+            }
+        }
+        p.sendMessage(ChatColor.AQUA + "View tickets: " + getWebPanelUrl());
     }
 
     // --- GUIS ---
@@ -1222,6 +1285,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         vwMeta.setDisplayName(ChatColor.BLUE + "View Warps");
         viewWarps.setItemMeta(vwMeta);
         gui.setItem(getNextGridSlot(), viewWarps);
+        
+        // Tickets (open ticket menu)
+        ItemStack tickets = new ItemStack(Material.PAPER);
+        ItemMeta tiMeta = tickets.getItemMeta();
+        tiMeta.setDisplayName(ChatColor.GOLD + "Tickets");
+        tiMeta.setLore(Arrays.asList(ChatColor.GRAY + "Open ticket menu"));
+        tickets.setItemMeta(tiMeta);
+        gui.setItem(getNextGridSlot(), tickets);
         
         // Chunk Claims
         ItemStack claims = new ItemStack(Material.CRYING_OBSIDIAN);
@@ -1605,6 +1676,70 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Directory"));
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
+        p.openInventory(gui);
+    }
+
+    private void openPlayerTicketMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 9, GUI_PLAYER_TICKET_MENU);
+        gui.setItem(2, createGuiItem(Material.PAPER, ChatColor.GREEN + "Create Ticket"));
+        gui.setItem(6, createGuiItem(Material.BOOK, ChatColor.GOLD + "View Your Tickets"));
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        p.openInventory(gui);
+    }
+
+    private void openCategoryMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 9, GUI_TICKET_CATEGORY);
+        gui.setItem(1, createGuiItem(Material.BOOK, ChatColor.YELLOW + "Bug"));
+        gui.setItem(2, createGuiItem(Material.OAK_LOG, ChatColor.YELLOW + "Griefing"));
+        gui.setItem(3, createGuiItem(Material.PINK_WOOL, ChatColor.YELLOW + "Chat"));
+        gui.setItem(4, createGuiItem(Material.BARRIER, ChatColor.YELLOW + "Item_Loss"));
+        gui.setItem(5, createGuiItem(Material.DIAMOND_SWORD, ChatColor.YELLOW + "PvP"));
+        gui.setItem(6, createGuiItem(Material.MAP, ChatColor.YELLOW + "Other"));
+        gui.setItem(8, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
+        p.openInventory(gui);
+    }
+
+    private void openMyTicketsMenu(Player p) {
+        Inventory gui = Bukkit.createInventory(null, 54, GUI_PLAYER_TICKETS);
+        resetGridSlots();
+        if (dataConfig.contains("tickets")) {
+            for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+                if (key.equals("next_id")) continue;
+                String player = dataConfig.getString("tickets." + key + ".player", "");
+                if (!player.equalsIgnoreCase(p.getName())) continue;
+                String priority = dataConfig.getString("tickets." + key + ".priority", "medium");
+                Material mat;
+                switch (priority) {
+                    case "critical": mat = Material.REDSTONE_BLOCK; break;
+                    case "high": mat = Material.ORANGE_WOOL; break;
+                    case "low": mat = Material.LIME_WOOL; break;
+                    default: mat = Material.YELLOW_WOOL; break;
+                }
+                List<String> lore = new ArrayList<>();
+                lore.add(ChatColor.YELLOW + "Status: " + dataConfig.getString("tickets." + key + ".status", "open"));
+                lore.add(ChatColor.GRAY + dataConfig.getString("tickets." + key + ".message", ""));
+                ItemStack item = createGuiItem(mat, ChatColor.GOLD + "Ticket #" + key, lore);
+                int slot = getNextGridSlot();
+                if (slot != -1) gui.setItem(slot, item);
+            }
+        }
+        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back"));
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+        p.openInventory(gui);
+    }
+
+    private void openMyTicketDetailMenu(Player p, String ticketId) {
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_MY_TICKET_OPTIONS + ticketId);
+        gui.setItem(11, createGuiItem(Material.PAPER, ChatColor.GREEN + "View Ticket"));
+        gui.setItem(13, createGuiItem(Material.REDSTONE_BLOCK, ChatColor.RED + "Delete Ticket"));
+        ItemStack outcome = createGuiItem(Material.BOOK, ChatColor.AQUA + "View Ticket Outcome");
+        ItemMeta om = outcome.getItemMeta();
+        om.setLore(Arrays.asList(ChatColor.GRAY + "Submitted", ChatColor.GRAY + "Pending", ChatColor.GRAY + "Processed"));
+        outcome.setItemMeta(om);
+        gui.setItem(15, outcome);
+        gui.setItem(26, createGuiItem(Material.BARRIER, ChatColor.RED + "Back"));
         p.openInventory(gui);
     }
 
@@ -2255,6 +2390,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         boolean relevant = title.equals(GUI_MAIN)
             || title.equals(GUI_PLAYER_LIST)
             || title.equals(GUI_TICKET_LIST)
+            || title.equals(GUI_PLAYER_TICKET_MENU)
+            || title.equals(GUI_PLAYER_TICKETS)
+            || title.startsWith(GUI_MY_TICKET_OPTIONS)
+            || title.equals(GUI_TICKET_CATEGORY)
             || title.startsWith(GUI_TICKET_DETAIL)
             || title.startsWith(GUI_PLAYER_ACTION)
             || title.startsWith(GUI_NOTES_VIEW)
@@ -2349,8 +2488,71 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 openKitListGUI(p);
             } else if (itemName.equals("Report Player")) {
                 openReportPlayerList(p);
+            } else if (itemName.equals("Tickets")) {
+                p.closeInventory();
+                openPlayerTicketMenu(p);
             } else if (type == Material.BARRIER) {
                 p.closeInventory();
+            }
+            return;
+        }
+
+        // Player ticket menu
+        if (title.equals(GUI_PLAYER_TICKET_MENU)) {
+            if (itemName.equals("Create Ticket")) {
+                p.closeInventory();
+                openCategoryMenu(p);
+            } else if (itemName.equals("View Your Tickets")) {
+                p.closeInventory();
+                openMyTicketsMenu(p);
+            } else if (type == Material.BARRIER) {
+                p.closeInventory();
+            }
+            return;
+        }
+
+        // Category selection menu
+        if (title.equals(GUI_TICKET_CATEGORY)) {
+            if (type == Material.BARRIER) {
+                openPlayerTicketMenu(p);
+            } else {
+                String category = itemName.toLowerCase().replace(" ", "_");
+                p.closeInventory();
+                pendingActions.put(p.getUniqueId(), new PunishmentContext(category, ActionType.TICKET_CREATE));
+                p.sendMessage(ChatColor.GOLD + "Type your ticket message:");
+            }
+            return;
+        }
+
+        // My tickets list
+        if (title.equals(GUI_PLAYER_TICKETS)) {
+            if (type == Material.REDSTONE) {
+                openPlayerTicketMenu(p);
+                return;
+            }
+            if (itemName.startsWith("Ticket #")) {
+                String id = itemName.replace("Ticket #", "").trim();
+                openMyTicketDetailMenu(p, id);
+            }
+            return;
+        }
+
+        // My ticket options detail menu
+        if (title.startsWith(GUI_MY_TICKET_OPTIONS)) {
+            String ticketId = title.replace(GUI_MY_TICKET_OPTIONS, "").trim();
+            if (itemName.equals("View Ticket")) {
+                p.closeInventory();
+                openTicketDetailMenu(p, ticketId);
+            } else if (itemName.equals("Delete Ticket")) {
+                p.closeInventory();
+                dataConfig.set("tickets." + ticketId, null);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " deleted.");
+                openMyTicketsMenu(p);
+            } else if (itemName.equals("View Ticket Outcome")) {
+                p.sendMessage(ChatColor.AQUA + "Status options: Submitted, Pending, Processed");
+            } else if (type == Material.BARRIER) {
+                openMyTicketsMenu(p);
             }
             return;
         }
