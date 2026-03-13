@@ -341,19 +341,6 @@ public class WebServer {
             ctx.result("OK");
         });
 
-        app.get("/api/warnings", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.warnings")) return;
-            String player = ctx.queryParam("player");
-            if (player == null) { ctx.result("[]"); return; }
-            
-            Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                List<String> warnings = plugin.getDataConfig().getStringList("warnings." + uuid);
-                return warnings == null ? new ArrayList<>() : warnings;
-            });
-            ctx.json(future.get());
-        });
-
         app.get("/api/history", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.history")) return;
             
@@ -448,14 +435,14 @@ public class WebServer {
                         String kickReason = val != null ? val : "No reason";
                         p.kickPlayer(ChatColor.RED + "Kicked by Web Admin: " + kickReason);
                         plugin.addChatLog("System", "[KICK] " + targetName + ": " + kickReason);
-                        plugin.logAction("WebAdmin", "kicked", targetName);
+                        plugin.logAction("WebAdmin", "kicked", targetName + " (" + kickReason + ")");
                     }
                     else if (action.equals("ban")) {
                         String banReason = val != null ? val : "No reason";
                         Bukkit.getBanList(org.bukkit.BanList.Type.NAME).addBan(targetName, banReason, null, "Web Admin");
                         if (p != null) p.kickPlayer(ChatColor.RED + "You have been banned: " + banReason);
                         plugin.addChatLog("System", "[BAN] " + targetName + ": " + banReason);
-                        plugin.logAction("WebAdmin", "banned", targetName);
+                        plugin.logAction("WebAdmin", "banned", targetName + " (" + banReason + ")");
                         plugin.fireDiscordEvent("bans", "Player Banned", "**" + targetName + "** was banned.\nReason: " + banReason, 0xe74c3c, targetName);
                     }
                     else if (action.equals("unban")) {
@@ -467,7 +454,7 @@ public class WebServer {
                         plugin.addWarning(uuid, warnReason);
                         if (p != null) p.sendMessage(ChatColor.YELLOW + "You have been warned: " + warnReason);
                         plugin.addChatLog("System", "[WARNING] " + targetName + ": " + warnReason);
-                        plugin.logAction("WebAdmin", "warned", targetName);
+                        plugin.logAction("WebAdmin", "warned", targetName + " (" + warnReason + ")");
                         plugin.fireDiscordEvent("warns", "Player Warned", "**" + targetName + "** was warned.\nReason: " + warnReason, 0xf1c40f, targetName);
                     }
                     else if (action.equals("heal") && p != null) {
@@ -482,7 +469,7 @@ public class WebServer {
                         plugin.getDataConfig().set("punishments." + uuid, System.currentTimeMillis() + duration);
                         plugin.saveDataFile();
                         if (p != null) p.sendMessage(ChatColor.RED + "You have been punished for " + val);
-                        plugin.logAction("WebAdmin", "punished (" + val + ")", targetName);
+                        plugin.logAction("WebAdmin", "punished", targetName + " (" + val + ")");
                     }
                     else if (action.equals("unpunish")) {
                         plugin.getDataConfig().set("punishments." + uuid, null);
@@ -580,6 +567,14 @@ public class WebServer {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 plugin.addTicketResponse(Integer.parseInt(id), fAdmin, fMessage);
                 plugin.logAction("WebAdmin", "added response to ticket", id);
+
+                // Notify player if online
+                String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
+                Player target = Bukkit.getPlayer(playerName);
+                if (target != null && target.isOnline()) {
+                    target.playSound(target.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1F, 2F);
+                    target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "New response from " + ChatColor.AQUA + fAdmin + ChatColor.YELLOW + ": " + ChatColor.WHITE + fMessage);
+                }
             });
             ctx.json(Map.of("success", true));
         });
@@ -2339,7 +2334,8 @@ public class WebServer {
         });
 
         app.post("/api/announcements/schedule", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
+            if (!auth(ctx)) return;
+            if (!hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) { ctx.status(403).result("Forbidden"); return; }
             var body = ctx.bodyAsClass(Map.class);
             String message = (String) body.get("message");
             String time = (String) body.get("time");
@@ -2372,7 +2368,8 @@ public class WebServer {
         });
 
         app.delete("/api/announcements/schedule/{index}", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
+            if (!auth(ctx)) return;
+            if (!hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) { ctx.status(403).result("Forbidden"); return; }
             int index = Integer.parseInt(ctx.pathParam("index"));
             var data = plugin.getDataConfig();
             List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());

@@ -1,11 +1,16 @@
 # --- CONFIGURATION ---
 $ServerIP = "132.145.47.61"  # <--- YOUR ORACLE CLOUD IP
 $User = "ubuntu"
-$KeyPath = "C:\Users\Stuart\Downloads\ssh-key-2026-03-06.key"
+$KeyPath = "C:\Users\Stuart\Documents\ssh-key-2026-03-06.key"
 $ProjectDir = "c:\Users\Stuart\Documents\RealmTool"
 $RemoteDir = "~/minecraft"
 
 $ErrorActionPreference = "Stop"
+
+if (-not (Test-Path $KeyPath)) {
+    Write-Host "Error: SSH Key file not found at: $KeyPath" -ForegroundColor Red
+    exit 1
+}
 
 # --- 1. GET VERSION & BUILD ---
 Write-Host "--- DrowsyTool Deployer ---" -ForegroundColor Cyan
@@ -36,11 +41,10 @@ Write-Host "Build Success!" -ForegroundColor Green
 Write-Host "`n[2/4] Stopping remote server and cleaning old plugins..." -ForegroundColor Yellow
 
 # Remote commands:
-# 1. Try to send 'stop' to a screen session named 'minecraft' (if it exists)
-# 2. Wait 10 seconds for graceful shutdown
-# 3. Force kill java if it's still running (cleanup)
-# 4. Delete any existing DrowsyManagementTool jars
-$RemoteStopCmd = "screen -S minecraft -p 0 -X stuff 'stop\n' 2>/dev/null; sleep 10; pkill -f server.jar; rm $RemoteDir/plugins/DrowsyManagementTool*.jar"
+# 1. Force kill any running java server processes (ensures session.lock is released)
+# 2. Wipe dead screen sessions from the registry
+# 3. Delete old plugin jars
+$RemoteStopCmd = "pkill -f server.jar; screen -wipe; echo 'Cleaning old plugin versions...'; rm -f $RemoteDir/plugins/DrowsyManagementTool*.jar"
 
 ssh -i $KeyPath -o StrictHostKeyChecking=no $User@$ServerIP $RemoteStopCmd
 
