@@ -1432,7 +1432,7 @@ public class WebServer {
 
             String name = (String) body.get("name");
             if (name == null || name.trim().isEmpty()) { ctx.status(400).result("Kit name required"); return; }
-            name = name.trim();
+            name = name.trim().replace(".", "_");
 
             final String kitName = name;
             final String icon = body.get("icon") != null ? ((String) body.get("icon")).toUpperCase() : "CHEST";

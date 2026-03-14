@@ -517,7 +517,48 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         }
 
         if (cmd.getName().equalsIgnoreCase("shop")) {
-            openShopListGUI(p);
+            if (args.length == 0) {
+                openShopListGUI(p);
+                return true;
+            }
+            if (args[0].equalsIgnoreCase("sell") && args.length >= 4) {
+                Material mat;
+                try {
+                    mat = Material.valueOf(args[1].toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    p.sendMessage(ChatColor.RED + "Invalid item material.");
+                    return true;
+                }
+                int amount, price;
+                try {
+                    amount = Integer.parseInt(args[2]);
+                    price = Integer.parseInt(args[3]);
+                } catch (NumberFormatException e) {
+                    p.sendMessage(ChatColor.RED + "Amount and price must be numbers.");
+                    return true;
+                }
+                if (amount < 1 || price < 0) {
+                    p.sendMessage(ChatColor.RED + "Amount must be >= 1, and price >= 0.");
+                    return true;
+                }
+                ItemStack hand = p.getInventory().getItemInMainHand();
+                if (hand.getType() != mat || hand.getAmount() < amount) {
+                    p.sendMessage(ChatColor.RED + "You must hold at least " + amount + "x " + mat.name() + " in your main hand.");
+                    return true;
+                }
+                hand.setAmount(hand.getAmount() - amount);
+                String shopId = String.valueOf(System.currentTimeMillis());
+                dataConfig.set("shops." + shopId + ".owner", p.getUniqueId().toString());
+                dataConfig.set("shops." + shopId + ".ownerName", p.getName());
+                dataConfig.set("shops." + shopId + ".item", mat.name());
+                dataConfig.set("shops." + shopId + ".amount", amount);
+                dataConfig.set("shops." + shopId + ".price", price);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Listed " + amount + "x " + mat.name() + " for " + price + " XP Levels.");
+                logAction(p.getName(), "shop_listed", amount + "x " + mat.name() + " for " + price + " XP");
+                return true;
+            }
+            p.sendMessage(ChatColor.RED + "Usage: /shop  or  /shop sell <item> <amount> <price>");
             return true;
         }
 
@@ -2634,10 +2675,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                             for (ItemStack drop : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
                             p.sendMessage(ChatColor.GREEN + "Purchased " + sAmt + "x " + mat.name().replace("_", " ") + "!");
                             String owner = dataConfig.getString("shops." + shopId + ".ownerName", "");
+                            String ownerUUID = dataConfig.getString("shops." + shopId + ".owner", "");
                             p.closeInventory();
                             // Notify seller if online
                             Player seller = Bukkit.getPlayer(owner);
-                            if (seller != null) seller.sendMessage(ChatColor.GREEN + p.getName() + " bought " + sAmt + "x " + mat.name().replace("_", " ") + " from your shop!");
+                            if (seller != null) {
+                                seller.setLevel(seller.getLevel() + price);
+                                seller.sendMessage(ChatColor.GREEN + p.getName() + " bought " + sAmt + "x " + mat.name().replace("_", " ") + " from your shop! (+" + price + " XP)");
+                            } else if (ownerUUID != null && !ownerUUID.isEmpty()) {
+                                int pending = dataConfig.getInt("pending_xp." + ownerUUID, 0);
+                                dataConfig.set("pending_xp." + ownerUUID, pending + price);
+                            }
                             // Remove listing
                             dataConfig.set("shops." + shopId, null);
                             saveDataFile();
@@ -3566,6 +3614,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         } catch (Exception ignored) {}
         this.trackSession(uuid, e.getPlayer().getName(), true);
         this.logAction("System", "player_joined", e.getPlayer().getName());
+
+        // Pending Shop XP
+        int pendingXp = dataConfig.getInt("pending_xp." + uuid, 0);
+        if (pendingXp > 0) {
+            e.getPlayer().setLevel(e.getPlayer().getLevel() + pendingXp);
+            e.getPlayer().sendMessage(ChatColor.GREEN + "You earned " + pendingXp + " XP levels from your shop while offline!");
+            dataConfig.set("pending_xp." + uuid, null);
+            saveDataFile();
+        }
 
         // Give admin tool if missing
         boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
