@@ -31,7 +31,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
+<<<<<<< HEAD
 import java.util.logging.Level;
+=======
+import java.util.concurrent.ConcurrentHashMap;
+>>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
 
 public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter {
 
@@ -51,9 +55,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> pendingClaimAction = new HashMap<>();
     private final Map<UUID, String> pendingTrustAction = new HashMap<>();
     private final Map<UUID, Integer> menuPages = new HashMap<>();
-    private final Map<UUID, String> currentChunk = new HashMap<>();
+    private final Map<UUID, String> currentChunk = new ConcurrentHashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
-    private final Map<UUID, Long> lastActivity = new HashMap<>();
+    private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
     private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
@@ -165,11 +169,62 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             ensureDefaultNpcLibrary();
             setupPunishTeam();
 
+<<<<<<< HEAD
             Bukkit.getPluginManager().registerEvents(this, this);
             registerCitizensClickListener();
             if (getCommand("dmt") != null) {
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
+=======
+        Bukkit.getPluginManager().registerEvents(this, this);
+        if (getCommand("dmt") != null) getCommand("dmt").setExecutor(this);
+        if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
+        if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
+        if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
+        if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
+        if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
+        if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
+        if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
+        if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
+        if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
+        if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
+        if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
+        if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
+        if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
+        if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
+        if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
+        if (getCommand("report") != null) getCommand("report").setExecutor(this);
+
+        webServer = new WebServer(this);
+        webServer.start();
+
+        // Start playtime tracker (every 60 seconds = 1200 ticks)
+        startPlaytimeTracker();
+        
+        // Start punishment expiry checker (every 1 second = 20 ticks)
+        startPunishmentChecker();
+
+        // Load auto-mod filter words
+        loadChatFilter();
+
+        // Start playtime rewards checker (every 5 min = 6000 ticks)
+        startPlaytimeRewardsChecker();
+
+        // Start scheduled announcements (every 60 seconds = 1200 ticks)
+        startScheduledAnnouncements();
+
+        // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
+        startAfkChecker();
+
+        // Start Maintenance mode checker (every 10 seconds = 200 ticks)
+        startMaintenanceChecker();
+
+        // Resume event effects if events were active before restart
+        var activeEvents = dataConfig.getConfigurationSection("events.active");
+        if (activeEvents != null) {
+            for (String eventName : activeEvents.getKeys(false)) {
+                startEventEffect(eventName);
+>>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
             }
             ensureDefaultEnchantQuests();
 
@@ -282,8 +337,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         try {
             dataConfig.save(dataFile);
         } catch (IOException e) {
-            getLogger().severe("Could not save data to " + dataFile);
-            e.printStackTrace();
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not save data to " + dataFile, e);
         }
     }
 
@@ -834,6 +888,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                     setPunished(target.getUniqueId(), durationMs);
                     p.sendMessage(ChatColor.GREEN + "Punished " + targetName + " for " + durationStr);
+                    logAction(p.getName(), "punished", targetName + " (" + durationStr + ")");
                     break;
                 case "menu":
                     if (!hasDmtCommandPermission(p, "menu")) {
@@ -844,8 +899,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         openMainMenu(p);
                     } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "An unexpected error occurred while opening the menu.");
-                        getLogger().severe("Failed to open admin menu: " + ex.getMessage());
-                        ex.printStackTrace();
+                        getLogger().log(java.util.logging.Level.SEVERE, "Failed to open admin menu: " + ex.getMessage(), ex);
                     }
                     break;
                 case "tp":
@@ -1938,7 +1992,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             created = Bukkit.createWorld(wc);
                         } catch (Exception ex) {
                             p.sendMessage(ChatColor.RED + "Failed to create world: " + ex.getMessage());
-                            ex.printStackTrace();
+                            getLogger().log(java.util.logging.Level.SEVERE, "Failed to create world", ex);
                         }
                         if (created != null) {
                             p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' created (" + type + ").");
@@ -1951,12 +2005,33 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     });
                     pendingActions.remove(p.getUniqueId());
                     break;
+<<<<<<< HEAD
                 case WARN: if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); pendingActions.remove(p.getUniqueId()); break;
                 case KICK: if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); pendingActions.remove(p.getUniqueId()); break;
+=======
+                case WARN: 
+                    if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); 
+                    if (ctx.targetName != null) addWarning(Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId(), reason);
+                    logAction(p.getName(), "warned", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[WARNING] " + ctx.targetName + ": " + reason);
+                    fireDiscordEvent("warns", "Player Warned", "**" + ctx.targetName + "** was warned by **" + p.getName() + "**.\nReason: " + reason, 0xf1c40f, ctx.targetName);
+                    break;
+                case KICK: 
+                    if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); 
+                    logAction(p.getName(), "kicked", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[KICK] " + ctx.targetName + ": " + reason);
+                    break;
+>>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
                 case BAN: 
-                    Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, null);
+                    Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, p.getName());
                     if (target != null) target.kickPlayer(ChatColor.RED + "Banned: " + reason);
+<<<<<<< HEAD
                     pendingActions.remove(p.getUniqueId());
+=======
+                    logAction(p.getName(), "banned", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[BAN] " + ctx.targetName + ": " + reason);
+                    fireDiscordEvent("bans", "Player Banned", "**" + ctx.targetName + "** was banned by **" + p.getName() + "**.\nReason: " + reason, 0xe74c3c, ctx.targetName);
+>>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
                     break;
                 case TICKET_RESPOND:
                     addTicketResponse(Integer.parseInt(ctx.targetName), p.getName(), reason);
@@ -4024,11 +4099,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.closeInventory();
                 if (type == Material.GRASS_BLOCK) {
                     try { openWorldListMenu(p); }
-                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world list"); ex.printStackTrace(); }
+                    catch (Exception ex) { 
+                        p.sendMessage(ChatColor.RED + "Error opening world list"); 
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world list", ex);
+                    }
                 }
                 else if (type == Material.NETHER_STAR) {
                     try { openCreateWorldTypeMenu(p); }
-                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world type chooser"); ex.printStackTrace(); }
+                    catch (Exception ex) { 
+                        p.sendMessage(ChatColor.RED + "Error opening world type chooser"); 
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world type chooser", ex);
+                    }
                 }
             } else if (type == Material.BARRIER) {
                 openMainMenu(p);
@@ -4266,7 +4347,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     p.sendMessage(ChatColor.YELLOW + "[DEBUG] main menu world utilities clicked slot=" + slot);
                     try { openWorldUtilitiesMenu(p); } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "Error opening world utilities menu");
-                        ex.printStackTrace();
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world utilities menu", ex);
                     }
                     break;
                 case 32:
@@ -4513,26 +4594,64 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 case IRON_BARS:
                     long d = itemName.contains("1hr") ? 3600000 : itemName.contains("3hr") ? 10800000 : 86400000;
                     setPunished(uuid, d);
-                    p.sendMessage(ChatColor.RED + "Punished " + targetName); break;
+                    p.sendMessage(ChatColor.RED + "Punished " + targetName);
+                    logAction(p.getName(), "punished", targetName + " (" + itemName.replace("Punish ", "") + ")");
+                    break;
                 case MILK_BUCKET: 
                     removePunishment(uuid); 
-                    p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName); break;
+                    p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName);
+                    logAction(p.getName(), "unpunished", targetName);
+                    break;
             }
         }
         } catch (Exception ex) {
-            getLogger().severe("Error handling GUI click (" + title + "): " + ex.getMessage());
-            ex.printStackTrace();
+            getLogger().log(java.util.logging.Level.SEVERE, "Error handling GUI click (" + title + "): " + ex.getMessage(), ex);
         }
     }
 
 
     // --- LISTENERS ---
     @EventHandler
-    public void onPunishMove(PlayerMoveEvent e) {
+    public void onPlayerMove(PlayerMoveEvent e) {
         if (isPunished(e.getPlayer().getUniqueId())) {
-            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) e.setCancelled(true);
-        } else {
-            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+            // Prevent punished players from moving
+            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) {
+                e.setCancelled(true);
+            }
+            return;
+        }
+        
+        // AFK Activity Tracking
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+
+        // Chunk Entry/Exit Logic
+        Player p = e.getPlayer();
+        if (e.getTo() == null) return;
+        
+        String newChunk = getChunkKey(e.getTo());
+        String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
+        
+        if (!newChunk.equals(oldChunk)) {
+            // Leaving a claimed chunk
+            if (isChunkClaimed(oldChunk)) {
+                UUID owner = getChunkOwner(oldChunk);
+                if (owner != null && !p.getUniqueId().equals(owner)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have left " + ownerName + "'s claim!");
+                }
+            }
+            
+            // Entering a claimed chunk
+            if (isChunkClaimed(newChunk)) {
+                UUID owner = getChunkOwner(newChunk);
+                if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
+                    Player ownerPlayer = Bukkit.getPlayer(owner);
+                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
+                    p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
+                }
+            }
+            currentChunk.put(p.getUniqueId(), newChunk);
         }
     }
     @EventHandler
@@ -4586,6 +4705,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent e) {
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
         else {
             // Check chunk claims
@@ -4600,6 +4720,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
+<<<<<<< HEAD
         Player p = e.getPlayer();
 
         // Anti-xray: block excessive ore mining in a short time window
@@ -4611,6 +4732,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (isPunished(p.getUniqueId())) {
             e.setCancelled(true);
         } else {
+=======
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
+        else {
+>>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
             // Check chunk claims
             String chunkKey = getChunkKey(e.getBlock().getLocation());
             if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
@@ -4629,7 +4755,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onChestAccess(InventoryOpenEvent e) {
-        if (e.getInventory().getType() == InventoryType.CHEST) saveLog(e.getInventory().getLocation(), ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
+        if (e.getPlayer() instanceof Player) {
+            lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        }
+        if (e.getInventory().getType() == InventoryType.CHEST) {
+            saveLog(e.getInventory().getLocation(), ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
+        }
+    }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onInventoryClickForAfk(InventoryClickEvent e) {
+        lastActivity.put(e.getWhoClicked().getUniqueId(), System.currentTimeMillis());
     }
     @EventHandler
     public void onWandUse(PlayerInteractEvent e) {
@@ -4760,6 +4895,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName + ".");
         }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerGeneralActivity(PlayerInteractEvent e) {
+        // General activity tracking for any interaction
+        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
     }
 
     @EventHandler
@@ -5052,37 +5193,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         e.setFormat(prefix + displayName + ChatColor.WHITE + ": " + e.getMessage().replace("%", "%%"));
 
         this.addChatLog(e.getPlayer().getName(), e.getMessage());
-    }
-
-    @EventHandler
-    public void onPlayerMove(PlayerMoveEvent e) {
-        Player p = e.getPlayer();
-        String newChunk = getChunkKey(e.getTo());
-        String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
-        
-        if (!newChunk.equals(oldChunk)) {
-            // Check if old chunk is claimed
-            if (!oldChunk.equals(newChunk) && isChunkClaimed(oldChunk)) {
-                UUID owner = getChunkOwner(oldChunk);
-                if (owner != null && !p.getUniqueId().equals(owner)) {
-                    Player ownerPlayer = Bukkit.getPlayer(owner);
-                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
-                    p.sendMessage(ChatColor.YELLOW + "You have left " + ownerName + "'s claim!");
-                }
-            }
-            
-            // Check if new chunk is claimed
-            if (isChunkClaimed(newChunk)) {
-                UUID owner = getChunkOwner(newChunk);
-                if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
-                    Player ownerPlayer = Bukkit.getPlayer(owner);
-                    String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
-                    p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
-                }
-            }
-            
-            currentChunk.put(p.getUniqueId(), newChunk);
-        }
     }
 
     public void setPunished(UUID u, long d) {
@@ -5626,8 +5736,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (!dataConfig.getBoolean("afk_autokick_enabled", true)) return;
             int timeoutMinutes = getAfkTimeoutMinutes();
             long now = System.currentTimeMillis();
-            for (Player p : Bukkit.getOnlinePlayers()) {
-                if (p.hasPermission("dmt.afk.exempt")) continue;
+            for (Player p : new ArrayList<>(Bukkit.getOnlinePlayers())) {
                 Long lastAct = lastActivity.get(p.getUniqueId());
                 if (lastAct == null) {
                     lastActivity.put(p.getUniqueId(), now);
@@ -5636,10 +5745,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 long idleMs = now - lastAct;
                 long idleMinutes = idleMs / 60000;
                 if (idleMinutes >= timeoutMinutes) {
+                    if (p.hasPermission("dmt.afk.exempt")) {
+                        // Log only when they are near the threshold to avoid spamming console
+                        if (idleMinutes == timeoutMinutes) {
+                            getLogger().info("[AFK] Player " + p.getName() + " is AFK (" + idleMinutes + "m) but is exempt from kicking.");
+                        }
+                        continue;
+                    }
                     p.kickPlayer(ChatColor.RED + "You were kicked for being AFK.\n"
                         + ChatColor.YELLOW + "You were idle for " + idleMinutes + " minute" + (idleMinutes != 1 ? "s" : "") + ".\n"
                         + ChatColor.GRAY + "The server auto-kick threshold is " + timeoutMinutes + " minute" + (timeoutMinutes != 1 ? "s" : "") + ".");
                     logAction("System", "afk_kick", p.getName() + " (idle " + idleMinutes + "m)");
+                    getLogger().info("[AFK] Kicked " + p.getName() + " for being idle for " + idleMinutes + " minutes.");
                     lastActivity.remove(p.getUniqueId());
                 }
             }
@@ -6872,6 +6989,80 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 saveDataFile();
             }
         }, 600L, 600L);
+
+        // Command scheduler checker (every 30 seconds = 600 ticks)
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) dataConfig.getList("scheduler.commands", new ArrayList<>());
+            if (raw.isEmpty()) return;
+            boolean changed = false;
+            long now = System.currentTimeMillis();
+            for (Map<?, ?> entry : raw) {
+                Object sentObj = entry.get("sent");
+                boolean sent = sentObj instanceof Boolean && (Boolean) sentObj;
+                if (sent) continue;
+                String timeStr = String.valueOf(entry.get("time"));
+                try {
+                    long targetMs = java.time.LocalDateTime.parse(timeStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= targetMs) {
+                        String command = String.valueOf(entry.get("command"));
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+                        ((Map) entry).put("sent", true);
+                        changed = true;
+                        logAction("System", "scheduled_cmd", command);
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (changed) {
+                dataConfig.set("scheduler.commands", raw);
+                saveDataFile();
+            }
+        }, 600L, 600L);
+    }
+
+    private void startMaintenanceChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            boolean changed = false;
+            boolean currentState = dataConfig.getBoolean("maintenance.enabled", false);
+            long now = System.currentTimeMillis();
+
+            String startStr = dataConfig.getString("maintenance.startTime", "");
+            if (startStr != null && !startStr.isEmpty()) {
+                try {
+                    long startMs = java.time.LocalDateTime.parse(startStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= startMs) {
+                        dataConfig.set("maintenance.startTime", "");
+                        changed = true;
+                        if (!currentState) {
+                            dataConfig.set("maintenance.enabled", true);
+                            currentState = true;
+                            String msg = dataConfig.getString("maintenance.message", "Server is under maintenance...");
+                            Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.RED + "Scheduled maintenance has started.");
+                            List<String> whitelist = dataConfig.getStringList("maintenance.whitelist");
+                            for (Player p : Bukkit.getOnlinePlayers()) {
+                                if (!whitelist.contains(p.getName())) p.kickPlayer(ChatColor.RED + msg);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            String endStr = dataConfig.getString("maintenance.endTime", "");
+            if (endStr != null && !endStr.isEmpty()) {
+                try {
+                    long endMs = java.time.LocalDateTime.parse(endStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= endMs) {
+                        dataConfig.set("maintenance.endTime", "");
+                        changed = true;
+                        if (currentState) {
+                            dataConfig.set("maintenance.enabled", false);
+                            Bukkit.broadcastMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.GREEN + "Maintenance mode has ended. The server is open!");
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (changed) saveDataFile();
+        }, 200L, 200L);
     }
 
     // ========== EVENT EFFECTS ==========
@@ -6983,7 +7174,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         newYearTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             for (Player p : Bukkit.getOnlinePlayers()) {
                 Location loc = p.getLocation();
-                for (int i = 0; i < 10; i++) {
+                
+                // Spawn actual fireworks
+                if (Math.random() < 0.4) {
+                    double offsetX = (Math.random() - 0.5) * 30;
+                    double offsetZ = (Math.random() - 0.5) * 30;
+                    Location fwLoc = loc.clone().add(offsetX, 0, offsetZ);
+                    
+                    try {
+                        org.bukkit.entity.Firework fw = (org.bukkit.entity.Firework) fwLoc.getWorld().spawnEntity(fwLoc, org.bukkit.entity.EntityType.FIREWORK_ROCKET);
+                        FireworkMeta fwm = fw.getFireworkMeta();
+                        
+                        Color[] colors = {Color.RED, Color.BLUE, Color.LIME, Color.YELLOW, Color.ORANGE, Color.PURPLE, Color.WHITE, Color.AQUA};
+                        Color c1 = colors[new Random().nextInt(colors.length)];
+                        Color c2 = colors[new Random().nextInt(colors.length)];
+                        
+                        FireworkEffect.Type[] types = {FireworkEffect.Type.BALL, FireworkEffect.Type.BALL_LARGE, FireworkEffect.Type.BURST, FireworkEffect.Type.STAR, FireworkEffect.Type.CREEPER};
+                        FireworkEffect.Type type = types[new Random().nextInt(types.length)];
+                        
+                        fwm.addEffect(FireworkEffect.builder().flicker(Math.random() < 0.5).trail(Math.random() < 0.5).with(type).withColor(c1).withFade(c2).build());
+                        fwm.setPower(1 + new Random().nextInt(2));
+                        fw.setFireworkMeta(fwm);
+                    } catch (Exception ignored) {}
+                }
+
+                for (int i = 0; i < 5; i++) {
                     double offsetX = (Math.random() - 0.5) * 30;
                     double offsetY = 3 + Math.random() * 20;
                     double offsetZ = (Math.random() - 0.5) * 30;
@@ -6991,16 +7206,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     // Firework sparks bursting in the sky
                     p.spawnParticle(org.bukkit.Particle.FIREWORK, particleLoc, 1, 1.5, 1.0, 1.5, 0.08);
                 }
-                // Occasional enchantment glint at ground level
-                for (int i = 0; i < 4; i++) {
-                    double offsetX = (Math.random() - 0.5) * 15;
-                    double offsetY = Math.random() * 3;
-                    double offsetZ = (Math.random() - 0.5) * 15;
-                    Location particleLoc = loc.clone().add(offsetX, offsetY, offsetZ);
-                    p.spawnParticle(org.bukkit.Particle.ENCHANT, particleLoc, 1, 0.5, 1.0, 0.5, 0.5);
-                }
             }
-        }, 0L, 10L);
+        }, 0L, 20L);
         getLogger().info("New Year effect started!");
     }
 

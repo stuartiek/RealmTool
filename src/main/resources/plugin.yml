@@ -1,5 +1,5 @@
 name: DrowsyManagementTool
-version: 11.5.4
+version: ${project.version}
 main: com.stuart.javarealmtool.JavaRealmTool
 api-version: 1.21
 commands:
@@ -68,6 +68,9 @@ permissions:
   dmt.admin:
     description: Allows use of admin tools
     default: op
+  dmt.afk.exempt:
+    description: Prevents player from being AFK kicked
+    default: false
   webapp.access:
     description: Allows login to the web interface
     default: op
