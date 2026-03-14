@@ -169,14 +169,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             ensureDefaultNpcLibrary();
             setupPunishTeam();
 
-<<<<<<< HEAD
             Bukkit.getPluginManager().registerEvents(this, this);
             registerCitizensClickListener();
             if (getCommand("dmt") != null) {
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
-=======
-        Bukkit.getPluginManager().registerEvents(this, this);
+        
         if (getCommand("dmt") != null) getCommand("dmt").setExecutor(this);
         if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
@@ -224,7 +222,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (activeEvents != null) {
             for (String eventName : activeEvents.getKeys(false)) {
                 startEventEffect(eventName);
->>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
             }
             ensureDefaultEnchantQuests();
 
@@ -2005,33 +2002,27 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     });
                     pendingActions.remove(p.getUniqueId());
                     break;
-<<<<<<< HEAD
-                case WARN: if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); pendingActions.remove(p.getUniqueId()); break;
-                case KICK: if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); pendingActions.remove(p.getUniqueId()); break;
-=======
                 case WARN: 
                     if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); 
                     if (ctx.targetName != null) addWarning(Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId(), reason);
                     logAction(p.getName(), "warned", ctx.targetName + " (" + reason + ")");
                     addChatLog("System", "[WARNING] " + ctx.targetName + ": " + reason);
                     fireDiscordEvent("warns", "Player Warned", "**" + ctx.targetName + "** was warned by **" + p.getName() + "**.\nReason: " + reason, 0xf1c40f, ctx.targetName);
+                    pendingActions.remove(p.getUniqueId());
                     break;
                 case KICK: 
                     if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); 
                     logAction(p.getName(), "kicked", ctx.targetName + " (" + reason + ")");
                     addChatLog("System", "[KICK] " + ctx.targetName + ": " + reason);
+                    pendingActions.remove(p.getUniqueId());
                     break;
->>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
                 case BAN: 
                     Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, p.getName());
                     if (target != null) target.kickPlayer(ChatColor.RED + "Banned: " + reason);
-<<<<<<< HEAD
-                    pendingActions.remove(p.getUniqueId());
-=======
                     logAction(p.getName(), "banned", ctx.targetName + " (" + reason + ")");
                     addChatLog("System", "[BAN] " + ctx.targetName + ": " + reason);
                     fireDiscordEvent("bans", "Player Banned", "**" + ctx.targetName + "** was banned by **" + p.getName() + "**.\nReason: " + reason, 0xe74c3c, ctx.targetName);
->>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
+                    pendingActions.remove(p.getUniqueId());
                     break;
                 case TICKET_RESPOND:
                     addTicketResponse(Integer.parseInt(ctx.targetName), p.getName(), reason);
