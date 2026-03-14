@@ -55,6 +55,12 @@ commands:
   stats:
     description: View PvP stats
     usage: /stats [player]
+  balance:
+    description: Show your XP level and coin balance
+    usage: /balance [player] [add|remove <amount>|reset]
+  economy:
+    description: Manage the server economy
+    usage: /economy reset
   report:
     description: Report a player
     usage: /report <player> <reason>
@@ -128,6 +134,8 @@ permissions:
       webapp.manage.gamerules: true
       webapp.manage.discord: true
       webapp.manage.claims: true
+      # permission to bypass trust lists on land claims (admin override)
+      claims.override: true
       webapp.manage.kits: true
       webapp.manage.maintenance: true
       webapp.manage.crates: true

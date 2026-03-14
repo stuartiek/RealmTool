@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RealmTool Plugin Documentation</title>
+  <style>
+    body { font-family: system-ui, sans-serif; line-height: 1.5; padding: 24px; max-width: 980px; margin: auto; background: #0f1116; color: #e5e5e5; }
+    h1, h2, h3 { color: #d1d5db; }
+    code { background: rgba(255,255,255,0.08); padding: 2px 4px; border-radius: 4px; }
+    pre { background: rgba(255,255,255,0.08); padding: 12px; border-radius: 6px; overflow-x: auto; }
+    a { color: #38bdf8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    section + section { margin-top: 32px; }
+    ul { margin-top: 0.25rem; }
+  </style>
+</head>
+<body>
+  <h1>RealmTool Plugin Documentation</h1>
+  <p>This document describes all features, commands, and user interfaces exposed by the <strong>RealmTool</strong> Minecraft plugin.</p>
+
+  <section>
+    <h2>1. Getting Started</h2>
+    <p><strong>Installation:</strong></p>
+    <ol>
+      <li>Drop the compiled JAR into your server's <code>plugins/</code> folder.</li>
+      <li>Start or restart the server to generate the default <code>data.yml</code> / config structure.</li>
+      <li>Adjust your permissions and configuration (if desired) using the generated <code>data.yml</code> file.</li>
+    </ol>
+    <p><strong>Note:</strong> The plugin stores persistent data in <code>data.yml</code> (rank definitions, NPC library, warp/home locations, etc.).</p>
+  </section>
+
+  <section>
+    <h2>2. Command Overview</h2>
+    <p>The primary command is <code>/dmt</code>. Many other commands are provided by the plugin as well.</p>
+
+    <h3>2.1 Core Commands</h3>
+    <p>Most <code>/dmt</code> subcommands can be secured using permission nodes in the form <code>dmt.command.&lt;subcommand&gt;</code> (e.g. <code>dmt.command.menu</code>).</p>
+    <p>Common permission nodes:</p>
+    <ul>
+      <li><code>dmt.command.menu</code> - open the main menu (player + admin panel)</li>
+      <li><code>dmt.command.sethub</code> - set the hub teleport location</li>
+      <li><code>dmt.command.unsethub</code> - remove the hub teleport location</li>
+      <li><code>dmt.command.antlag</code> - control automatic cleanup</li>
+      <li><code>dmt.command.rank</code> - manage ranks</li>
+      <li><code>dmt.command.npc</code> - manage NPC library and spawning</li>
+      <li><code>dmt.command.summon</code> - summon an NPC from the library</li>
+      <li><code>dmt.command.list</code> - list NPCs (<code>/dmt list npcs</code>)</li>
+      <li><code>dmt.command.documentation</code> - download the documentation PDF</li>
+    </ul>
+    <pre>
+/dmt help
+/dmt menu
+/dmt sethub
+/dmt unsethub
+/dmt antlag &lt;on|off|now&gt;
+/dmt rank &lt;create|remove|list|info|add|addprefix|addperm&gt; ...
+/dmt npc &lt;list|add|remove|summon&gt;
+/dmt summon &lt;library-name&gt;
+/dmt list npcs
+/dmt documentation
+    </pre>
+
+    <h3>2.2 Player Convenience Commands</h3>
+    <pre>
+/kit         - Open the kit browsing & purchasing interface
+/hub         - Teleport to the server hub (saved via /dmt sethub)
+/balance     - View your coin balance and XP level
+/balance &lt;player&gt;           - (admin) view another player's balance
+/balance &lt;player&gt; &lt;set|add|remove&gt; &lt;amount&gt; - (admin) modify balance
+    </pre>
+
+    <h3>2.3 Admin Commands (require permission <code>dmt.admin</code>)</h3>
+    <pre>
+/dmt menu           - Open the main menu (player + admin panel)
+/dmt setpunishloc   - Set the punishment teleport location
+/dmt setjailloc     - Set the jail teleport location
+/dmt unsethub       - Remove the stored hub teleport location
+/dmt tpjail         - Teleport yourself to the jail location
+/dmt punish &lt;player&gt; &lt;duration&gt; - Punish a player (teleport + temporary restrictions)
+/dmt tp world &lt;world&gt; - Teleport to another world (respects world lock)
+    </pre>
+
+    <h3>2.4 NPC Library</h3>
+    <p>RealmTool includes a small NPC skin library system used by <code>/dmt summon</code> and the menu NPC spawner.</p>
+    <pre>
+/dmt npc list                     - Show stored NPC skin names
+/dmt npc add &lt;username&gt;        - Add a player skin to the NPC library (uses skinstealer)
+/dmt npc remove &lt;username&gt;     - Remove a stored NPC skin
+/dmt npc summon &lt;library-name&gt; - Summon an NPC using a stored skin
+/dmt summon &lt;library-name&gt;     - Shortcut to summon a stored NPC
+    </pre>
+
+    <h3>2.5 Anti-lag Cleanup</h3>
+    <p>The plugin can periodically clear item drops to reduce lag.</p>
+    <pre>
+/dmt antlag on      - Enable automatic cleanup
+/dmt antlag off     - Disable automatic cleanup
+/dmt antlag now     - Run cleanup immediately
+    </pre>
+  </section>
+
+  <section>
+    <h2>3. User Interfaces</h2>
+
+    <h3>3.1 Main Menu</h3>
+    <p>Use <code>/dmt menu</code> to open the main menu. From here you can open either the <strong>Player Menu</strong> or the <strong>Admin Menu</strong>.</p>
+
+    <h3>3.2 Player Menu</h3>
+    <p>The player menu provides quick access to common utilities.</p>
+    <ul>
+      <li><strong>Set Home</strong> – Save your current location as a personal home.</li>
+      <li><strong>TP Home</strong> – Teleport to your saved home.</li>
+      <li><strong>Set Warp</strong> – Save a named warp location.</li>
+      <li><strong>View Warps</strong> – Browse and teleport to saved warps.</li>
+      <li><strong>Tickets</strong> – Open the ticket system to create support requests.</li>
+      <li><strong>Chunk Claims</strong> – Open the claim management UI.</li>
+      <li><strong>Players (TPA)</strong> – View online players and send TPA requests.</li>
+      <li><strong>Kits</strong> – Browse &amp; purchase kits (XP-cost based).</li>
+      <li><strong>Report Player</strong> – Create a report for staff.</li>
+      <li><strong>Custom Enchantments</strong> – View unlocked enchants (unlocked via quests).</li>
+    </ul>
+
+    <h3>3.3 Admin Menu</h3>
+    <p>The admin menu is gated by permissions and provides: weather control, world locking, player utilities, broadcasting, and more.</p>
+
+    <h4>Admin Menu Buttons &amp; Permissions</h4>
+    <ul>
+      <li><code>adminpanel.weather.clear</code> – Clear current weather.</li>
+      <li><code>adminpanel.weather.rain</code> – Force rain.</li>
+      <li><code>adminpanel.weather.thunder</code> – Force thunder.</li>
+      <li><code>adminpanel.world.lock.nether</code> – Toggle Nether world lock.</li>
+      <li><code>adminpanel.world.lock.end</code> – Toggle End world lock.</li>
+      <li><code>adminpanel.worldsettings</code> – Open world settings submenu.</li>
+      <li><code>adminpanel.playerdirectory</code> – View &amp; manage players (TPA list / actions).</li>
+      <li><code>adminpanel.gamemode.creative</code> – Set yourself to Creative.</li>
+      <li><code>adminpanel.gamemode.survival</code> – Set yourself to Survival.</li>
+      <li><code>adminpanel.gamemode.spectator</code> – Set yourself to Spectator.</li>
+      <li><code>adminpanel.heal</code> – Heal yourself (restore health + hunger).</li>
+      <li><code>adminpanel.punished</code> – View punished players list.</li>
+      <li><code>adminpanel.inspector</code> – Enable player inspector tools.</li>
+      <li><code>adminpanel.broadcast</code> – Send a broadcast message to all players.</li>
+      <li><code>adminpanel.tickets</code> – View and manage open tickets.</li>
+      <li><code>adminpanel.worldutilities</code> – Access world utilities (e.g., fast teleport, world actions).</li>
+      <li><code>adminpanel.events</code> – Trigger or manage server events.</li>
+      <li><code>adminpanel.hologram</code> – Open the hologram wand UI.</li>
+    </ul>
+
+    <h4>World Settings Submenu</h4>
+    <p>From the world settings submenu, admins can:</p>
+    <ul>
+      <li>Lock/unlock specific worlds (Nether/End).</li>
+      <li>Manage global world behavior (weather, time, etc.)</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>4. Rank System</h2>
+    <p>The plugin supports a flexible rank system with prefixes and permission sets. Ranks are stored in <code>data.yml</code> under <code>ranks</code>.</p>
+
+    <h3>Commands</h3>
+    <pre>
+/dmt rank list
+/dmt rank info &lt;rank&gt;
+/dmt rank create &lt;rank&gt;
+/dmt rank remove &lt;rank&gt;
+/dmt rank add &lt;rank&gt; &lt;player&gt;
+/dmt rank &lt;rank&gt; add &lt;player&gt;
+/dmt rank addprefix &lt;rank&gt; &lt;prefix&gt;
+/dmt rank &lt;rank&gt; addprefix &lt;prefix&gt;
+/dmt rank addperm &lt;rank&gt; &lt;permission&gt;
+/dmt rank &lt;rank&gt; addperm &lt;permission&gt;
+    </pre>
+
+    <p>Example:</p>
+    <pre>/dmt rank Admin addperm adminpanel.broadcast</pre>
+
+    <h3>Rank Behavior</h3>
+    <ul>
+      <li>Ranks can have a <strong>prefix</strong> which is shown in chat, player nametag, and tab list for members.</li>
+      <li>Ranks can include a list of permissions; those permissions are applied via a temporary attachment.</li>
+      <li>Players may be assigned a rank by UUID or by membership list in the rank definition.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>5. NPC / Hologram Utilities</h2>
+    <p>The plugin includes NPC summoning and hologram tools.</p>
+    <ul>
+      <li><strong>NPC Library</strong> – Use <code>/dmt npc add &lt;username&gt;</code> to store a player skin, then spawn it via <code>/dmt npc summon &lt;username&gt;</code>.</li>
+      <li><strong>Hologram Wand</strong> – Available from the admin menu (permission <code>adminpanel.hologram</code>).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>6. Anti-Xray &amp; Anti-Lag</h2>
+    <p>The plugin includes anti-Xray analysis and item cleanup features to help stabilize servers:</p>
+    <ul>
+      <li>Anti-Xray runs in the background and warns players breaking ores too fast.</li>
+      <li>Anti-lag cleanup periodically removes dropped items (configurable via <code>/dmt antlag</code>).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>7. Configuration / Data File</h2>
+    <p>All plugin state is stored in <code>data.yml</code>. Key sections include:</p>
+    <ul>
+      <li><code>ranks</code> – rank definitions (prefix, permissions, members)</li>
+      <li><code>npcLibrary</code> – stored NPC skins</li>
+      <li><code>homes</code>, <code>warps</code>, <code>hub_location</code> – teleport locations</li>
+      <li><code>appeals</code> – ticket system storage</li>
+      <li><code>anti_lag</code> – anti-lag enabled flag and timers</li>
+    </ul>
+
+    <p><strong>Tip:</strong> When editing <code>data.yml</code> manually, keep YAML structure intact and restart the server after changes.</p>
+  </section>
+
+  <footer>
+    <p>Generated documentation for the RealmTool plugin. Keep this file alongside the plugin JAR for reference.</p>
+  </footer>
+</body>
+</html>

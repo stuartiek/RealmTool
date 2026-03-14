@@ -15,6 +15,7 @@ import java.util.concurrent.Future;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.stream.Collectors;
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -155,6 +156,19 @@ public class WebServer {
             List<String> permissions = getPlayerPermissions(username);
             ctx.json(Map.of("username", username, "permissions", permissions));
         });
+
+        // Documentation / PDF download (generated on demand)
+        app.get("/docs.pdf", ctx -> {
+            File pdf = new File(plugin.getDataFolder(), "docs.pdf");
+            if (!pdf.exists()) {
+                ctx.status(404).result("Documentation not found. Generate it using /dmt documentation.");
+                return;
+            }
+            ctx.contentType("application/pdf");
+            try (var fis = new java.io.FileInputStream(pdf)) {
+                ctx.result(fis);
+            }
+        });
         
         // --- AUTHENTICATE ---
         app.get("/api/players", ctx -> {
@@ -177,6 +191,7 @@ public class WebServer {
                     m.put("warnings", plugin.getDataConfig().getStringList("warnings." + p.getUniqueId()).size());
                     m.put("playtime", plugin.getPlaytimeHours(p.getUniqueId()));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
+                    m.put("coins", plugin.getDataConfig().getLong("coins." + p.getUniqueId(), 0));
                     players.add(m);
                 }
                 res.put("players", players);
@@ -1531,6 +1546,8 @@ public class WebServer {
                     q.put("type", plugin.getDataConfig().getString(qp + ".type", "break_blocks"));
                     q.put("goal", plugin.getDataConfig().getInt(qp + ".goal", 1));
                     q.put("reward", plugin.getDataConfig().getInt(qp + ".reward", 0));
+                    q.put("reward_coins", plugin.getDataConfig().getInt(qp + ".reward_coins", 0));
+                    q.put("reward_enchant", plugin.getDataConfig().getString(qp + ".reward_enchant", ""));
                     q.put("reward_kit", plugin.getDataConfig().getString(qp + ".reward_kit", ""));
                     q.put("active", plugin.getDataConfig().getBoolean(qp + ".active", true));
                     result.put(qid, q);
@@ -1553,6 +1570,8 @@ public class WebServer {
                 plugin.getDataConfig().set(qp + ".type", body.getOrDefault("type", "break_blocks"));
                 plugin.getDataConfig().set(qp + ".goal", body.getOrDefault("goal", 1));
                 plugin.getDataConfig().set(qp + ".reward", body.getOrDefault("reward", 0));
+                plugin.getDataConfig().set(qp + ".reward_coins", body.getOrDefault("reward_coins", 0));
+                plugin.getDataConfig().set(qp + ".reward_enchant", body.getOrDefault("reward_enchant", ""));
                 plugin.getDataConfig().set(qp + ".reward_kit", body.getOrDefault("reward_kit", ""));
                 plugin.getDataConfig().set(qp + ".active", body.getOrDefault("active", true));
                 plugin.saveDataFile();
@@ -1714,6 +1733,7 @@ public class WebServer {
                     r.put("name", plugin.getDataConfig().getString(rp + ".name", ""));
                     r.put("minutes", plugin.getDataConfig().getInt(rp + ".minutes", 0));
                     r.put("xp", plugin.getDataConfig().getInt(rp + ".xp", 0));
+                    r.put("coins", plugin.getDataConfig().getInt(rp + ".coins", 0));
                     r.put("kit", plugin.getDataConfig().getString(rp + ".kit", ""));
                     result.put(id, r);
                 }
@@ -1733,6 +1753,7 @@ public class WebServer {
                 plugin.getDataConfig().set(rp + ".name", body.getOrDefault("name", fId));
                 plugin.getDataConfig().set(rp + ".minutes", body.getOrDefault("minutes", 60));
                 plugin.getDataConfig().set(rp + ".xp", body.getOrDefault("xp", 0));
+                plugin.getDataConfig().set(rp + ".coins", body.getOrDefault("coins", 0));
                 plugin.getDataConfig().set(rp + ".kit", body.getOrDefault("kit", ""));
                 plugin.saveDataFile();
             });
@@ -1811,6 +1832,8 @@ public class WebServer {
             result.put("enabled", data.getBoolean("daily_login_enabled", false));
             result.put("baseXp", data.getInt("daily_login_base_xp", 10));
             result.put("streakBonus", data.getInt("daily_login_streak_bonus", 2));
+            result.put("baseCoins", data.getInt("daily_login_base_coins", 0));
+            result.put("streakCoins", data.getInt("daily_login_streak_coins", 0));
             List<Map<String, Object>> players = new ArrayList<>();
             if (data.contains("daily_login")) {
                 for (String key : data.getConfigurationSection("daily_login").getKeys(false)) {
@@ -1837,6 +1860,8 @@ public class WebServer {
             if (body.containsKey("enabled")) data.set("daily_login_enabled", body.get("enabled"));
             if (body.containsKey("baseXp")) data.set("daily_login_base_xp", ((Number)body.get("baseXp")).intValue());
             if (body.containsKey("streakBonus")) data.set("daily_login_streak_bonus", ((Number)body.get("streakBonus")).intValue());
+            if (body.containsKey("baseCoins")) data.set("daily_login_base_coins", ((Number)body.get("baseCoins")).intValue());
+            if (body.containsKey("streakCoins")) data.set("daily_login_streak_coins", ((Number)body.get("streakCoins")).intValue());
             plugin.saveDataFile();
             ctx.json(Map.of("success", true));
         });
