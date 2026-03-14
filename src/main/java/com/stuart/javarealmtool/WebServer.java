@@ -17,6 +17,12 @@ import java.util.logging.LogRecord;
 import java.util.stream.Collectors;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class WebServer {
     private final JavaRealmTool plugin;
@@ -30,25 +36,39 @@ public class WebServer {
         ClassLoader pluginClassLoader = plugin.getClass().getClassLoader();
         Thread serverThread = new Thread(() -> {
             Thread.currentThread().setContextClassLoader(pluginClassLoader);
-            app = Javalin.create(config -> {
-                config.showJavalinBanner = false;
-                config.staticFiles.add(staticFiles -> {
-                    staticFiles.hostedPath = "/";
-                    staticFiles.directory = "webapp";
-                    staticFiles.location = Location.CLASSPATH;
-                });
-                config.bundledPlugins.enableCors(cors -> cors.addRule(it -> it.anyHost()));
-                config.router.mount(router -> {
-                    router.ws("/api/console", ws -> {
-                        ws.onConnect(ctx -> sessions.add(ctx));
-                        ws.onClose(ctx -> sessions.remove(ctx));
+            
+            // Temporarily suppress System.out/err to prevent Spigot from nagging 
+            // about SLF4J/Javalin's internal startup warnings
+            java.io.PrintStream originalOut = System.out;
+            java.io.PrintStream originalErr = System.err;
+            System.setOut(new java.io.PrintStream(new java.io.OutputStream() { @Override public void write(int b) {} }));
+            System.setErr(new java.io.PrintStream(new java.io.OutputStream() { @Override public void write(int b) {} }));
+            
+            try {
+                app = Javalin.create(config -> {
+                    config.showJavalinBanner = false;
+                    config.staticFiles.add(staticFiles -> {
+                        staticFiles.hostedPath = "/";
+                        staticFiles.directory = "webapp";
+                        staticFiles.location = Location.CLASSPATH;
+                    });
+                    config.bundledPlugins.enableCors(cors -> cors.addRule(it -> it.anyHost()));
+                    config.router.mount(router -> {
+                        router.ws("/api/console", ws -> {
+                            ws.onConnect(ctx -> sessions.add(ctx));
+                            ws.onClose(ctx -> sessions.remove(ctx));
+                        });
                     });
                 });
-            });
 
-            setupRoutes();
-            Bukkit.getLogger().addHandler(new WebLogHandler(sessions));
-            app.start(8091);
+                setupRoutes();
+                Bukkit.getLogger().addHandler(new WebLogHandler(sessions));
+                app.start(8091);
+            } finally {
+                // Restore the original console output streams immediately after startup
+                System.setOut(originalOut);
+                System.setErr(originalErr);
+            }
         });
         serverThread.start();
     }
@@ -344,11 +364,22 @@ public class WebServer {
         app.get("/api/history", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.history")) return;
             
-            Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<String> history = plugin.getDataConfig().getStringList("action_history");
-                List<String> recent = new ArrayList<>(history);
-                Collections.reverse(recent);
-                return recent.stream().limit(50).collect(Collectors.toList());
+                List<Map<String, String>> recent = new ArrayList<>();
+                for (int i = history.size() - 1; i >= Math.max(0, history.size() - 50); i--) {
+                    String entry = history.get(i);
+                    String[] parts = entry.split(" \\| ", 2);
+                    if (parts.length < 2) continue;
+                    String[] tokens = parts[1].trim().split(" ", 3);
+                    Map<String, String> map = new HashMap<>();
+                    map.put("timestamp", parts[0].trim());
+                    map.put("admin", tokens.length > 0 ? tokens[0] : "Unknown");
+                    map.put("action", tokens.length > 1 ? tokens[1] : "Unknown");
+                    map.put("target", tokens.length > 2 ? tokens[2] : "");
+                    recent.add(map);
+                }
+                return recent;
             });
             ctx.json(future.get());
         });
@@ -387,6 +418,23 @@ public class WebServer {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.banned")) return;
             List<String> banned = new ArrayList<>(Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getEntries());
             ctx.json(banned);
+        });
+
+        app.get("/api/logs", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.console")) return;
+            List<String> logs;
+            synchronized(WebLogHandler.recentLogs) {
+                logs = new ArrayList<>(WebLogHandler.recentLogs);
+            }
+            ctx.json(Map.of("logs", logs));
+        });
+
+        app.post("/api/logs/clear", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.console")) return;
+            synchronized(WebLogHandler.recentLogs) {
+                WebLogHandler.recentLogs.clear();
+            }
+            ctx.json(Map.of("success", true));
         });
 
         // --- ACTION API ---
@@ -699,13 +747,16 @@ public class WebServer {
                 for (int i = history.size() - 1; i >= 0 && joinHistory.size() < 50; i--) {
                     String entry = history.get(i);
                     if (entry.contains("player_joined")) {
-                        // Format: "timestamp | actor | action | target"
-                        String[] parts = entry.split(" \\| ", 4);
-                        if (parts.length >= 4) {
-                            Map<String, String> j = new HashMap<>();
-                            j.put("player", parts[3].trim());
-                            j.put("time", parts[0].trim());
-                            joinHistory.add(j);
+                        // Format: "timestamp | actor action target"
+                        String[] parts = entry.split(" \\| ", 2);
+                        if (parts.length >= 2) {
+                            String[] tokens = parts[1].trim().split(" ", 3);
+                            if (tokens.length >= 3) {
+                                Map<String, String> j = new HashMap<>();
+                                j.put("player", tokens[2].trim());
+                                j.put("time", parts[0].trim());
+                                joinHistory.add(j);
+                            }
                         }
                     }
                 }
@@ -791,7 +842,7 @@ public class WebServer {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(targetPlayer).getUniqueId();
                 plugin.mutePlayer(uuid, targetPlayer, finalReason != null ? finalReason : "No reason");
-                plugin.logAction("WebAdmin", "muted", targetPlayer);
+                plugin.logAction("WebAdmin", "muted", targetPlayer + " (" + (finalReason != null ? finalReason : "No reason") + ")");
             });
             ctx.result("OK");
         });
@@ -962,6 +1013,96 @@ public class WebServer {
             ctx.result("OK");
         });
 
+        // ========== BACKUPS API (FULL FILE BACKUP) ==========
+        app.get("/api/backups", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.backup")) return;
+            File backupDir = new File(plugin.getDataFolder(), "backups");
+            if (!backupDir.exists()) backupDir.mkdirs();
+            List<Map<String, Object>> backups = new ArrayList<>();
+            File[] files = backupDir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.isFile() && f.getName().endsWith(".zip")) {
+                        Map<String, Object> m = new HashMap<>();
+                        m.put("name", f.getName());
+                        m.put("size", f.length());
+                        m.put("date", f.lastModified());
+                        backups.add(m);
+                    }
+                }
+            }
+            backups.sort((a, b) -> Long.compare((Long) b.get("date"), (Long) a.get("date")));
+            ctx.json(backups);
+        });
+
+        app.post("/api/backups/create", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.backup")) return;
+            
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "save-off");
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "save-all");
+                Bukkit.broadcastMessage(ChatColor.GOLD + "[System] " + ChatColor.YELLOW + "Starting server backup... Expect minor lag.");
+                
+                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                    try {
+                        File backupDir = new File(plugin.getDataFolder(), "backups");
+                        if (!backupDir.exists()) backupDir.mkdirs();
+                        
+                        String dateStr = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
+                        File zipFile = new File(backupDir, "world_backup_" + dateStr + ".zip");
+                        
+                        World defaultWorld = Bukkit.getWorlds().get(0);
+                        File worldDir = defaultWorld.getWorldFolder();
+                        
+                        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipFile))) {
+                            zipDirectory(worldDir, worldDir.getName(), zos);
+                        }
+                        
+                        plugin.logAction("WebAdmin", "created backup", zipFile.getName());
+                        Bukkit.getScheduler().runTask(plugin, () -> Bukkit.broadcastMessage(ChatColor.GOLD + "[System] " + ChatColor.GREEN + "Server backup completed successfully!"));
+                        
+                    } catch (Exception e) {
+                        plugin.getLogger().severe("Backup failed: " + e.getMessage());
+                        Bukkit.getScheduler().runTask(plugin, () -> Bukkit.broadcastMessage(ChatColor.GOLD + "[System] " + ChatColor.RED + "Server backup failed!"));
+                    } finally {
+                        Bukkit.getScheduler().runTask(plugin, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "save-on"));
+                    }
+                });
+            });
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/backups/{name}", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.backup")) return;
+            String name = ctx.pathParam("name");
+            File backupDir = new File(plugin.getDataFolder(), "backups");
+            File target = new File(backupDir, name);
+            if (target.exists() && target.getParentFile().getAbsolutePath().equals(backupDir.getAbsolutePath())) {
+                target.delete();
+                plugin.logAction("WebAdmin", "deleted backup", name);
+            }
+            ctx.json(Map.of("success", true));
+        });
+
+        app.get("/api/backups/download/{name}", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.backup")) return;
+            String name = ctx.pathParam("name");
+            File backupDir = new File(plugin.getDataFolder(), "backups");
+            File target = new File(backupDir, name);
+            if (target.exists() && target.getParentFile().getAbsolutePath().equals(backupDir.getAbsolutePath())) {
+                try {
+                    ctx.result(new java.io.FileInputStream(target));
+                    ctx.contentType("application/zip");
+                    ctx.header("Content-Disposition", "attachment; filename=\"" + target.getName() + "\"");
+                    plugin.logAction("WebAdmin", "downloaded backup", name);
+                } catch (Exception e) {
+                    ctx.status(500).result("Error reading file");
+                }
+            } else {
+                ctx.status(404).result("File not found");
+            }
+        });
+
         // --- WORLDS ---
         app.get("/api/worlds", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.worlds")) return;
@@ -1015,20 +1156,44 @@ public class WebServer {
             String action = ctx.queryParam("action");
             String players = ctx.queryParam("players");
             String reason = ctx.queryParam("reason");
+            
+            // Try to get params from JSON body
+            try {
+                String body = ctx.body();
+                if (body != null && !body.isEmpty()) {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
+                    if (action == null) action = (String) bodyMap.get("action");
+                    if (players == null) players = (String) bodyMap.get("players");
+                    if (reason == null) reason = (String) bodyMap.get("reason");
+                }
+            } catch (Exception ignored) {}
+
             if (players != null && action != null) {
                 String[] playerList = players.split(",");
+                final String fAction = action;
+                final String fReason = reason;
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     for (String p : playerList) {
-                        UUID uuid = Bukkit.getOfflinePlayer(p.trim()).getUniqueId();
-                        if ("ban".equals(action)) {
-                            Bukkit.getBanList(org.bukkit.BanList.Type.NAME).addBan(p.trim(), reason, null, "WebAdmin");
-                            Player pl = Bukkit.getPlayer(p.trim());
-                            if (pl != null) pl.kickPlayer(ChatColor.RED + "Banned: " + (reason != null ? reason : ""));
-                        } else if ("kick".equals(action)) {
-                            Player pl = Bukkit.getPlayer(p.trim());
-                            if (pl != null) pl.kickPlayer(ChatColor.RED + (reason != null ? reason : "Kicked"));
+                        String target = p.trim();
+                        if (target.isEmpty()) continue;
+                        UUID uuid = Bukkit.getOfflinePlayer(target).getUniqueId();
+                        if ("ban".equals(fAction)) {
+                            Bukkit.getBanList(org.bukkit.BanList.Type.NAME).addBan(target, fReason, null, "WebAdmin");
+                            Player pl = Bukkit.getPlayer(target);
+                            if (pl != null) pl.kickPlayer(ChatColor.RED + "Banned: " + (fReason != null ? fReason : ""));
+                        } else if ("kick".equals(fAction)) {
+                            Player pl = Bukkit.getPlayer(target);
+                            if (pl != null) pl.kickPlayer(ChatColor.RED + (fReason != null ? fReason : "Kicked"));
+                        } else if ("warn".equals(fAction)) {
+                            plugin.addWarning(uuid, fReason != null ? fReason : "No reason");
+                            Player pl = Bukkit.getPlayer(target);
+                            if (pl != null) pl.sendMessage(ChatColor.YELLOW + "You have been warned: " + fReason);
+                            plugin.addChatLog("System", "[WARNING] " + target + ": " + fReason);
+                        } else if ("mute".equals(fAction)) {
+                            plugin.mutePlayer(uuid, target, fReason != null ? fReason : "No reason");
                         }
-                        plugin.logAction("WebAdmin", "bulk " + action, p.trim());
+                        plugin.logAction("WebAdmin", "bulk_" + fAction, target + (fReason != null && !fReason.isEmpty() ? " (" + fReason + ")" : ""));
                     }
                 });
             }
@@ -1310,6 +1475,7 @@ public class WebServer {
                 Map<String, Object> res = new HashMap<>();
                 res.put("enabled", plugin.getDataConfig().getBoolean("maintenance.enabled", false));
                 res.put("message", plugin.getDataConfig().getString("maintenance.message", "Server is under maintenance..."));
+                res.put("startTime", plugin.getDataConfig().getString("maintenance.startTime", ""));
                 res.put("endTime", plugin.getDataConfig().getString("maintenance.endTime", ""));
                 res.put("whitelist", plugin.getDataConfig().getStringList("maintenance.whitelist"));
                 return res;
@@ -1322,29 +1488,27 @@ public class WebServer {
 
             String status = null;
             String message = null;
+            String startTime = null;
             String endTime = null;
 
             // Parse JSON body first
             try {
                 String body = ctx.body();
-                Bukkit.getLogger().info("[Maintenance] Received body: " + body);
                 if (body != null && !body.isEmpty()) {
                     com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                     java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
                     status = (String) bodyMap.get("status");
                     message = (String) bodyMap.get("message");
+                    startTime = (String) bodyMap.get("startTime");
                     endTime = (String) bodyMap.get("endTime");
                 }
-            } catch (Exception e) {
-                Bukkit.getLogger().warning("[Maintenance] Failed to parse body: " + e.getMessage());
-            }
+            } catch (Exception e) {}
 
             // Fallback to query params
             if (status == null) status = ctx.queryParam("status");
             if (message == null) message = ctx.queryParam("message");
+            if (startTime == null) startTime = ctx.queryParam("startTime");
             if (endTime == null) endTime = ctx.queryParam("endTime");
-
-            Bukkit.getLogger().info("[Maintenance] status=" + status + " message=" + message + " endTime=" + endTime);
 
             if (status == null) {
                 ctx.status(400).result("Missing status parameter");
@@ -1353,26 +1517,38 @@ public class WebServer {
 
             final boolean enabled = "on".equalsIgnoreCase(status);
             final String fMessage = (message != null && !message.isEmpty()) ? message : "Server is under maintenance...";
+            final String fStartTime = startTime;
             final String fEndTime = endTime;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getDataConfig().set("maintenance.enabled", enabled);
+                boolean wasEnabled = plugin.getDataConfig().getBoolean("maintenance.enabled", false);
+                boolean changedNow = false;
+
+                // Only manually toggle if no start time is provided
+                if (fStartTime == null || fStartTime.isEmpty()) {
+                    plugin.getDataConfig().set("maintenance.enabled", enabled);
+                    if (enabled && !wasEnabled) changedNow = true;
+                    if (!enabled && wasEnabled) changedNow = true;
+                }
+
                 plugin.getDataConfig().set("maintenance.message", fMessage);
+                plugin.getDataConfig().set("maintenance.startTime", fStartTime != null ? fStartTime : "");
                 if (fEndTime != null) plugin.getDataConfig().set("maintenance.endTime", fEndTime);
                 plugin.saveDataFile();
                 plugin.logAction("WebAdmin", enabled ? "enabled" : "disabled", "maintenance mode");
-                Bukkit.getLogger().info("[Maintenance] Mode set to " + (enabled ? "ON" : "OFF"));
 
-                if (enabled) {
-                    Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.RED + fMessage);
-                    List<String> whitelist = plugin.getDataConfig().getStringList("maintenance.whitelist");
-                    for (Player p : Bukkit.getOnlinePlayers()) {
-                        if (!whitelist.contains(p.getName())) {
-                            p.kickPlayer(ChatColor.RED + fMessage);
+                if (changedNow) {
+                    if (enabled) {
+                        Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.RED + fMessage);
+                        List<String> whitelist = plugin.getDataConfig().getStringList("maintenance.whitelist");
+                        for (Player p : Bukkit.getOnlinePlayers()) {
+                            if (!whitelist.contains(p.getName())) {
+                                p.kickPlayer(ChatColor.RED + fMessage);
+                            }
                         }
+                    } else {
+                        Bukkit.broadcastMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.GREEN + "Maintenance mode has been disabled.");
                     }
-                } else {
-                    Bukkit.broadcastMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.GREEN + "Maintenance mode has been disabled.");
                 }
             });
             ctx.result("OK");
@@ -2387,6 +2563,74 @@ public class WebServer {
             ctx.json(Map.of("success", true));
         });
 
+        // ========== COMMAND SCHEDULER ==========
+        app.get("/api/scheduler", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
+            List<Map<String, Object>> commands = new ArrayList<>();
+            int i = 0;
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                m.put("index", i++);
+                commands.add(m);
+            }
+            ctx.json(Map.of("tasks", commands));
+        });
+
+        app.post("/api/scheduler", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
+            var body = ctx.bodyAsClass(Map.class);
+            String command = (String) body.get("command");
+            String time = (String) body.get("time");
+            if (command == null || time == null || command.isEmpty() || time.isEmpty()) {
+                ctx.status(400).json(Map.of("error", "Missing command or time"));
+                return;
+            }
+            try {
+                java.time.LocalDateTime.parse(time);
+            } catch (Exception e) {
+                ctx.status(400).json(Map.of("error", "Invalid time format. Use ISO-8601 (yyyy-MM-ddTHH:mm)"));
+                return;
+            }
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
+            List<Map<String, Object>> scheduled = new ArrayList<>();
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                scheduled.add(m);
+            }
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("command", command);
+            entry.put("time", time);
+            entry.put("sent", false);
+            scheduled.add(entry);
+            data.set("scheduler.commands", scheduled);
+            plugin.saveDataFile();
+            ctx.json(Map.of("success", true));
+        });
+
+        app.delete("/api/scheduler/{index}", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
+            int index = Integer.parseInt(ctx.pathParam("index"));
+            var data = plugin.getDataConfig();
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
+            List<Map<String, Object>> scheduled = new ArrayList<>();
+            for (Map<?, ?> r : raw) {
+                Map<String, Object> m = new HashMap<>();
+                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                scheduled.add(m);
+            }
+            if (index >= 0 && index < scheduled.size()) {
+                scheduled.remove(index);
+                data.set("scheduler.commands", scheduled);
+                plugin.saveDataFile();
+            }
+            ctx.json(Map.of("success", true));
+        });
+
         // ========== PLAYER REPUTATION ==========
         app.get("/api/reputation", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.reputation")) return;
@@ -3181,12 +3425,37 @@ public class WebServer {
 
     public void stop() { if (app != null) app.stop(); }
 
+    private void zipDirectory(File folder, String parentFolder, ZipOutputStream zos) throws IOException {
+        File[] files = folder.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (file.getName().equals("session.lock")) continue; // Skip active lock files
+            if (file.isDirectory()) {
+                zipDirectory(file, parentFolder + "/" + file.getName(), zos);
+                continue;
+            }
+            try {
+                zos.putNextEntry(new ZipEntry(parentFolder + "/" + file.getName()));
+                Files.copy(file.toPath(), zos);
+                zos.closeEntry();
+            } catch (Exception e) {
+                // Ignore individual locked file read errors to ensure zip succeeds
+            }
+        }
+    }
+
     private static class WebLogHandler extends Handler {
         private final ConcurrentLinkedQueue<WsContext> sessions;
+        public static final LinkedList<String> recentLogs = new LinkedList<>();
+
         public WebLogHandler(ConcurrentLinkedQueue<WsContext> s) { this.sessions = s; }
         @Override
         public void publish(LogRecord record) {
             String msg = "[" + record.getLevel() + "] " + record.getMessage();
+            synchronized(recentLogs) {
+                recentLogs.add(msg);
+                if (recentLogs.size() > 1000) recentLogs.removeFirst();
+            }
             for (WsContext s : sessions) { 
                 try { if (s.session.isOpen()) s.send(msg); } catch(Exception ignored) {} 
             }

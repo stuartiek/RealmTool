@@ -165,6 +165,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
         startAfkChecker();
 
+        // Start Maintenance mode checker (every 10 seconds = 200 ticks)
+        startMaintenanceChecker();
+
         // Resume event effects if events were active before restart
         var activeEvents = dataConfig.getConfigurationSection("events.active");
         if (activeEvents != null) {
@@ -222,8 +225,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
         try {
             dataConfig.save(dataFile);
         } catch (IOException e) {
-            getLogger().severe("Could not save data to " + dataFile);
-            e.printStackTrace();
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not save data to " + dataFile, e);
         }
     }
 
@@ -424,14 +426,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     }
                     setPunished(target.getUniqueId(), durationMs);
                     p.sendMessage(ChatColor.GREEN + "Punished " + targetName + " for " + durationStr);
+                    logAction(p.getName(), "punished", targetName + " (" + durationStr + ")");
                     break;
                 case "menu":
                     try {
                         openMainMenu(p);
                     } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "An unexpected error occurred while opening the menu.");
-                        getLogger().severe("Failed to open admin menu: " + ex.getMessage());
-                        ex.printStackTrace();
+                        getLogger().log(java.util.logging.Level.SEVERE, "Failed to open admin menu: " + ex.getMessage(), ex);
                     }
                     break;
                 case "tp":
@@ -1101,7 +1103,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                             created = Bukkit.createWorld(wc);
                         } catch (Exception ex) {
                             p.sendMessage(ChatColor.RED + "Failed to create world: " + ex.getMessage());
-                            ex.printStackTrace();
+                            getLogger().log(java.util.logging.Level.SEVERE, "Failed to create world", ex);
                         }
                         if (created != null) {
                             p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' created (" + type + ").");
@@ -1113,11 +1115,24 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                         }
                     });
                     break;
-                case WARN: if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); break;
-                case KICK: if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); break;
+                case WARN: 
+                    if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); 
+                    if (ctx.targetName != null) addWarning(Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId(), reason);
+                    logAction(p.getName(), "warned", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[WARNING] " + ctx.targetName + ": " + reason);
+                    fireDiscordEvent("warns", "Player Warned", "**" + ctx.targetName + "** was warned by **" + p.getName() + "**.\nReason: " + reason, 0xf1c40f, ctx.targetName);
+                    break;
+                case KICK: 
+                    if (target != null) target.kickPlayer(ChatColor.RED + "Kicked: " + reason); 
+                    logAction(p.getName(), "kicked", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[KICK] " + ctx.targetName + ": " + reason);
+                    break;
                 case BAN: 
-                    Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, null);
+                    Bukkit.getBanList(BanList.Type.NAME).addBan(ctx.targetName, reason, null, p.getName());
                     if (target != null) target.kickPlayer(ChatColor.RED + "Banned: " + reason);
+                    logAction(p.getName(), "banned", ctx.targetName + " (" + reason + ")");
+                    addChatLog("System", "[BAN] " + ctx.targetName + ": " + reason);
+                    fireDiscordEvent("bans", "Player Banned", "**" + ctx.targetName + "** was banned by **" + p.getName() + "**.\nReason: " + reason, 0xe74c3c, ctx.targetName);
                     break;
                 case TICKET_RESPOND:
                     addTicketResponse(Integer.parseInt(ctx.targetName), p.getName(), reason);
@@ -2851,11 +2866,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 p.closeInventory();
                 if (type == Material.GRASS_BLOCK) {
                     try { openWorldListMenu(p); }
-                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world list"); ex.printStackTrace(); }
+                    catch (Exception ex) { 
+                        p.sendMessage(ChatColor.RED + "Error opening world list"); 
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world list", ex);
+                    }
                 }
                 else if (type == Material.NETHER_STAR) {
                     try { openCreateWorldTypeMenu(p); }
-                    catch (Exception ex) { p.sendMessage(ChatColor.RED + "Error opening world type chooser"); ex.printStackTrace(); }
+                    catch (Exception ex) { 
+                        p.sendMessage(ChatColor.RED + "Error opening world type chooser"); 
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world type chooser", ex);
+                    }
                 }
             } else if (type == Material.BARRIER) {
                 openMainMenu(p);
@@ -3079,7 +3100,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                     p.sendMessage(ChatColor.YELLOW + "[DEBUG] main menu world utilities clicked slot=" + slot);
                     try { openWorldUtilitiesMenu(p); } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "Error opening world utilities menu");
-                        ex.printStackTrace();
+                        getLogger().log(java.util.logging.Level.SEVERE, "Error opening world utilities menu", ex);
                     }
                     break;
                 case 16: openPunishedPlayersMenu(p); break;
@@ -3254,15 +3275,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 case IRON_BARS:
                     long d = itemName.contains("1hr") ? 3600000 : itemName.contains("3hr") ? 10800000 : 86400000;
                     setPunished(uuid, d);
-                    p.sendMessage(ChatColor.RED + "Punished " + targetName); break;
+                    p.sendMessage(ChatColor.RED + "Punished " + targetName);
+                    logAction(p.getName(), "punished", targetName + " (" + itemName.replace("Punish ", "") + ")");
+                    break;
                 case MILK_BUCKET: 
                     removePunishment(uuid); 
-                    p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName); break;
+                    p.sendMessage(ChatColor.GREEN + "Unpunished " + targetName);
+                    logAction(p.getName(), "unpunished", targetName);
+                    break;
             }
         }
         } catch (Exception ex) {
-            getLogger().severe("Error handling GUI click (" + title + "): " + ex.getMessage());
-            ex.printStackTrace();
+            getLogger().log(java.util.logging.Level.SEVERE, "Error handling GUI click (" + title + "): " + ex.getMessage(), ex);
         }
     }
 
@@ -5058,6 +5082,80 @@ public class JavaRealmTool extends JavaPlugin implements Listener {
                 saveDataFile();
             }
         }, 600L, 600L);
+
+        // Command scheduler checker (every 30 seconds = 600 ticks)
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            List<Map<?, ?>> raw = (List<Map<?, ?>>) dataConfig.getList("scheduler.commands", new ArrayList<>());
+            if (raw.isEmpty()) return;
+            boolean changed = false;
+            long now = System.currentTimeMillis();
+            for (Map<?, ?> entry : raw) {
+                Object sentObj = entry.get("sent");
+                boolean sent = sentObj instanceof Boolean && (Boolean) sentObj;
+                if (sent) continue;
+                String timeStr = String.valueOf(entry.get("time"));
+                try {
+                    long targetMs = java.time.LocalDateTime.parse(timeStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= targetMs) {
+                        String command = String.valueOf(entry.get("command"));
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+                        ((Map) entry).put("sent", true);
+                        changed = true;
+                        logAction("System", "scheduled_cmd", command);
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (changed) {
+                dataConfig.set("scheduler.commands", raw);
+                saveDataFile();
+            }
+        }, 600L, 600L);
+    }
+
+    private void startMaintenanceChecker() {
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            boolean changed = false;
+            boolean currentState = dataConfig.getBoolean("maintenance.enabled", false);
+            long now = System.currentTimeMillis();
+
+            String startStr = dataConfig.getString("maintenance.startTime", "");
+            if (startStr != null && !startStr.isEmpty()) {
+                try {
+                    long startMs = java.time.LocalDateTime.parse(startStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= startMs) {
+                        dataConfig.set("maintenance.startTime", "");
+                        changed = true;
+                        if (!currentState) {
+                            dataConfig.set("maintenance.enabled", true);
+                            currentState = true;
+                            String msg = dataConfig.getString("maintenance.message", "Server is under maintenance...");
+                            Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.RED + "Scheduled maintenance has started.");
+                            List<String> whitelist = dataConfig.getStringList("maintenance.whitelist");
+                            for (Player p : Bukkit.getOnlinePlayers()) {
+                                if (!whitelist.contains(p.getName())) p.kickPlayer(ChatColor.RED + msg);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            String endStr = dataConfig.getString("maintenance.endTime", "");
+            if (endStr != null && !endStr.isEmpty()) {
+                try {
+                    long endMs = java.time.LocalDateTime.parse(endStr).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    if (now >= endMs) {
+                        dataConfig.set("maintenance.endTime", "");
+                        changed = true;
+                        if (currentState) {
+                            dataConfig.set("maintenance.enabled", false);
+                            Bukkit.broadcastMessage(ChatColor.GREEN + "" + ChatColor.BOLD + "[Maintenance] " + ChatColor.RESET + ChatColor.GREEN + "Maintenance mode has ended. The server is open!");
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (changed) saveDataFile();
+        }, 200L, 200L);
     }
 
     // ========== EVENT EFFECTS ==========
