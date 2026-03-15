@@ -31,11 +31,8 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
-<<<<<<< HEAD
-import java.util.logging.Level;
-=======
 import java.util.concurrent.ConcurrentHashMap;
->>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
+import java.util.logging.Level;
 
 public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter {
 
@@ -174,9 +171,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("dmt") != null) {
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
-        
-        if (getCommand("dmt") != null) getCommand("dmt").setExecutor(this);
-        if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
+            }
+
+            if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
         if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
         if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
@@ -249,39 +246,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
             if (getCommand("report") != null) getCommand("report").setExecutor(this);
 
-            webServer = new WebServer(this);
-            webServer.start();
-
-            // Start playtime tracker (every 60 seconds = 1200 ticks)
-            startPlaytimeTracker();
-            
-            // Start punishment expiry checker (every 1 second = 20 ticks)
-            startPunishmentChecker();
-
-            // Load auto-mod filter words
-            loadChatFilter();
-
-            // Start playtime rewards checker (every 5 min = 6000 ticks)
-            startPlaytimeRewardsChecker();
-
-            // Start scheduled announcements (every 60 seconds = 1200 ticks)
-            startScheduledAnnouncements();
-
-            // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
-            startAfkChecker();
-
             // Start anti-lag ground item cleanup (configurable)
             startAntiLagCleanup();
+        }
 
-            // Resume event effects if events were active before restart
-            var activeEvents = dataConfig.getConfigurationSection("events.active");
-            if (activeEvents != null) {
-                for (String eventName : activeEvents.getKeys(false)) {
-                    startEventEffect(eventName);
-                }
-            }
-
-            getLogger().info("Drowsy Management Tool Fully Loaded!");
+        getLogger().info("Drowsy Management Tool Fully Loaded!");
         } catch (Throwable t) {
             getLogger().severe("Failed to enable DrowsyManagementTool: " + t.getClass().getName() + ": " + t.getMessage());
             t.printStackTrace();
@@ -3863,7 +3832,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             // Notify seller if online
                             Player seller = Bukkit.getPlayer(owner);
                             if (seller != null) {
-                                seller.setLevel(seller.getLevel() + price);
+                                int xpToAdd = price > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) price;
+                                seller.setLevel(seller.getLevel() + xpToAdd);
                                 seller.sendMessage(ChatColor.GREEN + p.getName() + " bought " + sAmt + "x " + mat.name().replace("_", " ") + " from your shop! (+" + price + " XP)");
                             } else if (ownerUUID != null && !ownerUUID.isEmpty()) {
                                 int pending = dataConfig.getInt("pending_xp." + ownerUUID, 0);
@@ -4718,8 +4688,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
-<<<<<<< HEAD
         Player p = e.getPlayer();
+        lastActivity.put(p.getUniqueId(), System.currentTimeMillis());
 
         // Anti-xray: block excessive ore mining in a short time window
         if (checkXray(p, e.getBlock())) {
@@ -4730,11 +4700,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (isPunished(p.getUniqueId())) {
             e.setCancelled(true);
         } else {
-=======
-        lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
-        if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
-        else {
->>>>>>> 04a39f4ebb203639cde050df2cefe1a83857c600
             // Check chunk claims
             String chunkKey = getChunkKey(e.getBlock().getLocation());
             if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {

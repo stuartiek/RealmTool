@@ -1,0 +1,200 @@
+ 150:         String targetName;
+ 151:         ActionType type;
+ 152:         int expectedLines = 0;
+ 153:         int currentLine = 0;
+ 154:         List<String> lines;
+ 155: 
+ 156:         PunishmentContext(String n, ActionType t) { this.targetName = n; this.type = t; }
+ 157:     }
+ 158: 
+ 159:     @Override
+ 160:     public void onEnable() {
+ 161:         try {
+ 162:             saveDefaultConfig();
+ 163:             setupConfig();
+ 164:             createDataFile();
+ 165:             ensureDefaultNpcLibrary();
+ 166:             setupPunishTeam();
+ 167: 
+ 168:             Bukkit.getPluginManager().registerEvents(this, this);
+ 169:             registerCitizensClickListener();
+ 170:             if (getCommand("dmt") != null) {
+ 171:                 getCommand("dmt").setExecutor(this);
+ 172:                 getCommand("dmt").setTabCompleter(this);
+ 173:             }
+ 174: 
+ 175:             if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
+ 176:         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
+ 177:         if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
+ 178:         if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
+ 179:         if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
+ 180:         if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
+ 181:         if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
+ 182:         if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
+ 183:         if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
+ 184:         if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
+ 185:         if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
+ 186:         if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
+ 187:         if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
+ 188:         if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
+ 189:         if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
+ 190:         if (getCommand("report") != null) getCommand("report").setExecutor(this);
+ 191: 
+ 192:         webServer = new WebServer(this);
+ 193:         webServer.start();
+ 194: 
+ 195:         // Start playtime tracker (every 60 seconds = 1200 ticks)
+ 196:         startPlaytimeTracker();
+ 197:         
+ 198:         // Start punishment expiry checker (every 1 second = 20 ticks)
+ 199:         startPunishmentChecker();
+ 200: 
+ 201:         // Load auto-mod filter words
+ 202:         loadChatFilter();
+ 203: 
+ 204:         // Start playtime rewards checker (every 5 min = 6000 ticks)
+ 205:         startPlaytimeRewardsChecker();
+ 206: 
+ 207:         // Start scheduled announcements (every 60 seconds = 1200 ticks)
+ 208:         startScheduledAnnouncements();
+ 209: 
+ 210:         // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
+ 211:         startAfkChecker();
+ 212: 
+ 213:         // Start Maintenance mode checker (every 10 seconds = 200 ticks)
+ 214:         startMaintenanceChecker();
+ 215: 
+ 216:         // Resume event effects if events were active before restart
+ 217:         var activeEvents = dataConfig.getConfigurationSection("events.active");
+ 218:         if (activeEvents != null) {
+ 219:             for (String eventName : activeEvents.getKeys(false)) {
+ 220:                 startEventEffect(eventName);
+ 221:             }
+ 222:             ensureDefaultEnchantQuests();
+ 223: 
+ 224:             // Apply ranks + permissions for online players in case of reload
+ 225:             for (Player p : Bukkit.getOnlinePlayers()) {
+ 226:                 applyRankToPlayer(p);
+ 227:                 applyPermissionGroup(p);
+ 228:             }
+ 229:             // register remaining commands
+ 230:             if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
+ 231:             if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
+ 232:             if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
+ 233:             if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
+ 234:             if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
+ 235:             if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
+ 236:             if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
+ 237:             if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
+ 238:             if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
+ 239:             if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
+ 240:             if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
+ 241:             if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
+ 242:             if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
+ 243:             if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
+ 244:             if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
+ 245:             if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
+ 246:             if (getCommand("report") != null) getCommand("report").setExecutor(this);
+ 247: 
+ 248:             webServer = new WebServer(this);
+ 249:             webServer.start();
+ 250: 
+ 251:             // Start playtime tracker (every 60 seconds = 1200 ticks)
+ 252:             startPlaytimeTracker();
+ 253:             
+ 254:             // Start punishment expiry checker (every 1 second = 20 ticks)
+ 255:             startPunishmentChecker();
+ 256: 
+ 257:             // Load auto-mod filter words
+ 258:             loadChatFilter();
+ 259: 
+ 260:             // Start playtime rewards checker (every 5 min = 6000 ticks)
+ 261:             startPlaytimeRewardsChecker();
+ 262: 
+ 263:             // Start scheduled announcements (every 60 seconds = 1200 ticks)
+ 264:             startScheduledAnnouncements();
+ 265: 
+ 266:             // Start AFK auto-kick checker (every 30 seconds = 600 ticks)
+ 267:             startAfkChecker();
+ 268: 
+ 269:             // Start anti-lag ground item cleanup (configurable)
+ 270:             startAntiLagCleanup();
+ 271: 
+ 272:             // Resume event effects if events were active before restart
+ 273:             var activeEvents = dataConfig.getConfigurationSection("events.active");
+ 274:             if (activeEvents != null) {
+ 275:                 for (String eventName : activeEvents.getKeys(false)) {
+ 276:                     startEventEffect(eventName);
+ 277:                 }
+ 278:             }
+ 279: 
+ 280:             getLogger().info("Drowsy Management Tool Fully Loaded!");
+ 281:         } catch (Throwable t) {
+ 282:             getLogger().severe("Failed to enable DrowsyManagementTool: " + t.getClass().getName() + ": " + t.getMessage());
+ 283:             t.printStackTrace();
+ 284:         }
+ 285:     }
+ 286: 
+ 287:     @Override
+ 288:     public void onDisable() {
+ 289:         if (webServer != null) {
+ 290:             webServer.stop();
+ 291:         }
+ 292:         saveDataFile();
+ 293:         getLogger().info("DrowsyManagementTool has been disabled.");
+ 294:     }
+ 295: 
+ 296:     public FileConfiguration getDataConfig() { return dataConfig; }
+ 297:     public String fetchApiKey() { return apiKey; }
+ 298: 
+ 299:     public boolean isPunished(UUID u) {
+ 300:         if (!dataConfig.contains("punishments." + u)) return false;
+ 301:         long expiry = dataConfig.getLong("punishments." + u);
+ 302:         if (System.currentTimeMillis() > expiry) {
+ 303:             removePunishment(u);
+ 304:             return false;
+ 305:         }
+ 306:         return true;
+ 307:     }
+ 308: 
+ 309:     private void setupConfig() {
+ 310:         FileConfiguration config = getConfig();
+ 311:         if (!config.contains("api-key")) {
+ 312:             config.set("api-key", UUID.randomUUID().toString());
+ 313:             saveConfig();
+ 314:         }
+ 315:         this.apiKey = config.getString("api-key");
+ 316:     }
+ 317: 
+ 318:     public String getApiKey() { return apiKey; }
+ 319: 
+ 320:     private void createDataFile() {
+ 321:         dataFile = new File(getDataFolder(), "data.yml");
+ 322:         if (!dataFile.exists()) {
+ 323:             dataFile.getParentFile().mkdirs();
+ 324:             try { dataFile.createNewFile(); } catch (IOException ignored) {}
+ 325:         }
+ 326:         dataConfig = YamlConfiguration.loadConfiguration(dataFile);
+ 327:     }
+ 328: 
+ 329:     public void saveDataFile() {
+ 330:         try {
+ 331:             dataConfig.save(dataFile);
+ 332:         } catch (IOException e) {
+ 333:             getLogger().log(java.util.logging.Level.SEVERE, "Could not save data to " + dataFile, e);
+ 334:         }
+ 335:     }
+ 336: 
+ 337:     // ========== CUSTOM ENCHANTMENTS GUI ==========
+ 338:     private void openCustomEnchantGUI(Player p) {
+ 339:         Inventory gui = Bukkit.createInventory(null, 27, GUI_CUSTOM_ENCHANTS);
+ 340:         fillGUIBorders(gui);
+ 341:         fillGUIEmpty(gui);
+ 342:         resetGridSlots();
+ 343: 
+ 344:         List<String> enchants = dataConfig.getStringList("enchants.unlocked." + p.getUniqueId());
+ 345:         for (String ench : enchants) {
+ 346:             if (ench == null || ench.isEmpty()) continue;
+ 347:             ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
+ 348:             ItemMeta meta = book.getItemMeta();
+ 349:             meta.setDisplayName(ChatColor.LIGHT_PURPLE + ench);
