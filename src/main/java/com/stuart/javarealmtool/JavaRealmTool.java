@@ -1031,6 +1031,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                     handleRankCommand(p, Arrays.copyOfRange(args, 1, args.length));
                     break;
+                case "gencloud":
+                    if (!hasDmtCommandPermission(p, "gencloud")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length < 4) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt gencloud <width> <length> <depth>");
+                        return true;
+                    }
+                    int width, length, depth;
+                    try {
+                        width = Integer.parseInt(args[1]);
+                        length = Integer.parseInt(args[2]);
+                        depth = Integer.parseInt(args[3]);
+                    } catch (NumberFormatException ignored) {
+                        p.sendMessage(ChatColor.RED + "Invalid dimensions. Usage: /dmt gencloud <width> <length> <depth>");
+                        return true;
+                    }
+                    if (width <= 0 || length <= 0 || depth <= 0) {
+                        p.sendMessage(ChatColor.RED + "Width, length and depth must be positive numbers.");
+                        return true;
+                    }
+                    int cloudY = p.getEyeLocation().getBlockY();
+                    generateCloudLayer(p.getWorld(), p.getLocation().getBlockX(), p.getLocation().getBlockZ(), width, length, depth, cloudY);
+                    p.sendMessage(ChatColor.GREEN + "Generated cloud around you (" + width + "x" + length + "x" + depth + ") with bottom at your head height (Y=" + cloudY + ").");
+                    break;
                 default:
                     p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /dmt help");
             }
@@ -5903,6 +5929,131 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         }
         path.delete();
+    }
+
+    private void generateCloudLayer(World world, int centerX, int centerZ, int width, int length, int depth, int y) {
+        // Generate a cloud volume that is rounded (no straight lines), shrinks as it descends,
+        // has a flat grass top, and matches its baseplate shape.
+
+        int halfWidth = width / 2;
+        int halfLength = length / 2;
+        double maxRadius = Math.min(halfWidth, halfLength);
+
+        // Height map: number of cloud blocks (vertical) at each column.
+        int[][] heightMap = new int[width][length];
+
+        Random rand = new Random(world.getSeed() ^ ((long) centerX * 341873128712L) ^ ((long) centerZ * 132897987541L));
+        double phaseA = rand.nextDouble() * Math.PI * 2;
+        double phaseB = rand.nextDouble() * Math.PI * 2;
+
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < length; z++) {
+                int dx = x - halfWidth;
+                int dz = z - halfLength;
+                double dist = Math.hypot(dx, dz);
+
+                // Outside footprint -> no cloud
+                if (Math.abs(dx) > halfWidth || Math.abs(dz) > halfLength) continue;
+
+                // Base spherical falloff
+                double base = 1.0 - (dist / maxRadius);
+                if (base <= 0) continue;
+
+                // Add directional noise for a more organic outline (no straight lines)
+                double angle = Math.atan2(dz, dx);
+                double noise = 1.0 + 0.2 * Math.sin(angle * 4 + phaseA) + 0.15 * Math.cos(angle * 6 + phaseB);
+                noise = Math.max(0.7, Math.min(1.3, noise));
+
+                // Trim the shape near footprint edges to avoid flat cuts
+                int distToBorder = Math.min(halfWidth - Math.abs(dx), halfLength - Math.abs(dz));
+                if (distToBorder < 5) {
+                    double borderFactor = distToBorder / 5.0;
+                    noise *= 0.6 + 0.4 * borderFactor;
+                }
+
+                double heightFactor = Math.pow(base * noise, 1.2);
+                int h = (int) Math.ceil(depth * heightFactor);
+                heightMap[x][z] = Math.max(0, Math.min(depth, h));
+            }
+        }
+
+        // Fill small holes: if surrounded by cloud, fill it in.
+        for (int pass = 0; pass < 2; pass++) {
+            for (int x = 1; x < width - 1; x++) {
+                for (int z = 1; z < length - 1; z++) {
+                    if (heightMap[x][z] > 0) continue;
+                    int neighbors = 0;
+                    int sum = 0;
+                    for (int ox = -1; ox <= 1; ox++) {
+                        for (int oz = -1; oz <= 1; oz++) {
+                            if (ox == 0 && oz == 0) continue;
+                            int h = heightMap[x + ox][z + oz];
+                            if (h > 0) {
+                                neighbors++;
+                                sum += h;
+                            }
+                        }
+                    }
+                    if (neighbors >= 5) {
+                        heightMap[x][z] = Math.max(1, sum / neighbors);
+                    }
+                }
+            }
+        }
+
+        // Baseplate matching cloud footprint (grass, with white wool outline)
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < length; z++) {
+                if (heightMap[x][z] <= 0) continue;
+                int wx = centerX + (x - halfWidth);
+                int wz = centerZ + (z - halfLength);
+                world.getBlockAt(wx, y - 1, wz).setType(Material.GRASS_BLOCK, false);
+            }
+        }
+
+        // Outline baseplate
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < length; z++) {
+                if (heightMap[x][z] <= 0) continue;
+                boolean isEdge = false;
+                for (int ox = -1; ox <= 1 && !isEdge; ox++) {
+                    for (int oz = -1; oz <= 1; oz++) {
+                        if (ox == 0 && oz == 0) continue;
+                        int nx = x + ox;
+                        int nz = z + oz;
+                        if (nx < 0 || nx >= width || nz < 0 || nz >= length || heightMap[nx][nz] == 0) {
+                            isEdge = true;
+                            break;
+                        }
+                    }
+                }
+                if (isEdge) {
+                    int wx = centerX + (x - halfWidth);
+                    int wz = centerZ + (z - halfLength);
+                    world.getBlockAt(wx, y - 1, wz).setType(Material.WHITE_WOOL, false);
+                }
+            }
+        }
+
+        // Build the cloud volume
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < length; z++) {
+                int h = heightMap[x][z];
+                if (h <= 0) continue;
+                int wx = centerX + (x - halfWidth);
+                int wz = centerZ + (z - halfLength);
+                for (int dy = 0; dy < h; dy++) {
+                    Material mat;
+                    double rel = (double) dy / Math.max(1, h - 1);
+                    if (rel < 0.25) mat = Material.WHITE_WOOL;
+                    else if (rel < 0.65) mat = Material.WHITE_STAINED_GLASS;
+                    else mat = Material.WHITE_STAINED_GLASS_PANE;
+                    world.getBlockAt(wx, y + dy, wz).setType(mat, false);
+                }
+                // flat grass top
+                world.getBlockAt(wx, y + h - 1, wz).setType(Material.GRASS_BLOCK, false);
+            }
+        }
     }
 
     // ========== CRATES SYSTEM ==========
