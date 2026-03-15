@@ -116,12 +116,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> pendingShopAction = new HashMap<>();
     private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
     private final List<String> chatFilterWords = new ArrayList<>();
-    private final Map<UUID, Integer> spamCounter = new HashMap<>();
-    private final Map<UUID, Long> lastChatTime = new HashMap<>();
-    private final Map<UUID, UUID> duelRequests = new HashMap<>();
-    final Map<UUID, Integer> duelWagers = new HashMap<>();
-    final Map<UUID, UUID> activeDuels = new HashMap<>();
-    private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
+    private final Map<UUID, Integer> spamCounter = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastChatTime = new ConcurrentHashMap<>();
+    private final Map<UUID, UUID> duelRequests = new ConcurrentHashMap<>();
+    final Map<UUID, Integer> duelWagers = new ConcurrentHashMap<>();
+    final Map<UUID, UUID> activeDuels = new ConcurrentHashMap<>();
+    private final Map<UUID, Location> duelReturnLocations = new ConcurrentHashMap<>();
+    private final Map<UUID, Location> pendingDuelRespawn = new ConcurrentHashMap<>();
     private final Map<UUID, Long> ticketCooldowns = new HashMap<>();
     private final String GUI_TICKET_DETAIL = ChatColor.GOLD + "Ticket #";
     private int christmasSnowTaskId = -1;
@@ -132,6 +133,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private int summerTaskId = -1;
     private int antiLagWarningTaskId = -1;
     private int antiLagClearTaskId = -1;
+    private int recurringAnnouncementsTask = -1;
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
 
@@ -622,7 +624,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             List<String> perms = dataConfig.getStringList(RANKS_PATH + "." + rank + ".permissions");
             List<String> members = dataConfig.getStringList(RANKS_PATH + "." + rank + ".members");
 
-            p.sendMessage(ChatColor.AQUA + rank + ChatColor.GRAY + " " + prefix);
+            p.sendMessage(ChatColor.AQUA + rank + ChatColor.GRAY + " " + ChatColor.translateAlternateColorCodes('&', prefix));
             p.sendMessage(ChatColor.GRAY + "  Permissions: " + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
             p.sendMessage(ChatColor.GRAY + "  Members: " + (members.isEmpty() ? "<none>" : String.join(", ", members)));
         }
@@ -640,7 +642,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         List<String> members = dataConfig.getStringList(key + ".members");
 
         p.sendMessage(ChatColor.GOLD + "--- Rank: " + rank + " ---");
-        p.sendMessage(ChatColor.AQUA + "Prefix: " + ChatColor.RESET + prefix);
+        p.sendMessage(ChatColor.AQUA + "Prefix: " + ChatColor.RESET + ChatColor.translateAlternateColorCodes('&', prefix));
         p.sendMessage(ChatColor.AQUA + "Permissions: " + ChatColor.RESET + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
         p.sendMessage(ChatColor.AQUA + "Members: " + ChatColor.RESET + (members.isEmpty() ? "<none>" : String.join(", ", members)));
     }
@@ -4640,6 +4642,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onRespawn(PlayerRespawnEvent e) {
         Location loc = e.getRespawnLocation();
+
+        // Handle Duel Respawn
+        Location duelReturn = pendingDuelRespawn.remove(e.getPlayer().getUniqueId());
+        if (duelReturn != null) {
+            e.setRespawnLocation(duelReturn);
+            e.getPlayer().sendMessage(ChatColor.GREEN + "You have been returned to your previous location.");
+            loc = duelReturn;
+        }
+
         if (loc == null) return;
         World.Environment env = loc.getWorld().getEnvironment();
         if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
@@ -5083,6 +5094,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }, 40L);
             }
         }
+
+        // --- POLL NOTIFICATIONS ON JOIN ---
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (e.getPlayer().isOnline()) {
+                if (dataConfig.contains("polls")) {
+                    for (String pollId : dataConfig.getConfigurationSection("polls").getKeys(false)) {
+                        if (dataConfig.getBoolean("polls." + pollId + ".active", false)) {
+                            List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
+                            if (!voters.contains(uuid.toString())) {
+                                e.getPlayer().sendMessage(ChatColor.GOLD + "🗳️ There is an active poll waiting for your vote! Type " + ChatColor.YELLOW + "/vote" + ChatColor.GOLD + " to participate.");
+                                break; // Only need to notify them once
+                            }
+                        }
+                    }
+                }
+            }
+        }, 60L); // Send 3 seconds after joining
     }
 
     @EventHandler
@@ -5104,51 +5132,53 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Auto-moderation
-        if (dataConfig.getBoolean("automod.enabled", false) && !e.getPlayer().hasPermission("dmt.admin")) {
+        boolean bypass = dataConfig.getBoolean("automod.bypass_admins", true) && e.getPlayer().hasPermission("dmt.admin");
+        if (dataConfig.getBoolean("automod.enabled", false) && !bypass) {
             String msg = e.getMessage().toLowerCase();
             // Word filter
-            if (dataConfig.getBoolean("automod.filter_enabled", true)) {
+            if (dataConfig.getBoolean("automod.filter_enabled", false)) {
                 for (String word : chatFilterWords) {
+                    if (word == null || word.trim().isEmpty()) continue;
                     if (msg.contains(word.toLowerCase())) {
                         e.setCancelled(true);
                         e.getPlayer().sendMessage(ChatColor.RED + "Your message was blocked by the chat filter.");
-                        int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
-                        dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
-                        int maxViolations = dataConfig.getInt("automod.max_violations", 5);
-                        if (violations >= maxViolations) {
-                            Bukkit.getScheduler().runTask(this, () -> {
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
+                            dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
+                            int maxViolations = dataConfig.getInt("automod.violation_mute_threshold", 3);
+                            if (violations >= maxViolations) {
                                 mutePlayer(e.getPlayer().getUniqueId(), e.getPlayer().getName(), "Auto-muted: chat filter (" + violations + " violations)");
                                 e.getPlayer().sendMessage(ChatColor.RED + "You have been auto-muted for repeated filter violations.");
-                            });
-                        }
-                        Bukkit.getScheduler().runTask(this, this::saveDataFile);
+                            }
+                            saveDataFile();
+                        });
                         return;
                     }
                 }
             }
             // Spam detection
-            if (dataConfig.getBoolean("automod.antispam_enabled", true)) {
+            if (dataConfig.getBoolean("automod.antispam_enabled", false)) {
                 long now = System.currentTimeMillis();
                 long lastTime = lastChatTime.getOrDefault(e.getPlayer().getUniqueId(), 0L);
-                int cooldownMs = dataConfig.getInt("automod.spam_cooldown_ms", 1000);
+                int cooldownMs = dataConfig.getInt("automod.spam_cooldown", 2) * 1000;
                 if (now - lastTime < cooldownMs) {
                     int count = spamCounter.getOrDefault(e.getPlayer().getUniqueId(), 0) + 1;
                     spamCounter.put(e.getPlayer().getUniqueId(), count);
-                    if (count >= dataConfig.getInt("automod.spam_threshold", 4)) {
+                    if (count >= dataConfig.getInt("automod.spam_threshold", 3)) {
                         e.setCancelled(true);
                         e.getPlayer().sendMessage(ChatColor.RED + "Slow down! You are sending messages too fast.");
-                        spamCounter.put(e.getPlayer().getUniqueId(), 0);
                         return;
                     }
                 } else {
-                    spamCounter.put(e.getPlayer().getUniqueId(), 0);
+                    spamCounter.put(e.getPlayer().getUniqueId(), 1);
                 }
                 lastChatTime.put(e.getPlayer().getUniqueId(), now);
             }
             // Caps filter
-            if (dataConfig.getBoolean("automod.caps_filter", true) && e.getMessage().length() > 6) {
+            if (dataConfig.getBoolean("automod.caps_filter", false) && e.getMessage().length() > 6) {
                 long caps = e.getMessage().chars().filter(Character::isUpperCase).count();
-                if (caps > e.getMessage().length() * 0.7) {
+                int threshold = dataConfig.getInt("automod.caps_threshold", 70);
+                if (caps * 100 / e.getMessage().length() > threshold) {
                     e.setMessage(e.getMessage().toLowerCase());
                     e.getPlayer().sendMessage(ChatColor.YELLOW + "Please don't use excessive caps.");
                 }
@@ -5987,6 +6017,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // Return to pre-duel locations
             Location killerReturn = duelReturnLocations.remove(killerUUID);
             Location victimReturn = duelReturnLocations.remove(victimUUID);
+            if (victimReturn != null) pendingDuelRespawn.put(victimUUID, victimReturn);
             if (wager > 0) {
                 killer.setLevel(killer.getLevel() + wager);
                 victim.setLevel(Math.max(0, victim.getLevel() - wager));
@@ -5998,12 +6029,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             duelWagers.remove(killerUUID);
             duelWagers.remove(victimUUID);
+            killer.sendMessage(ChatColor.AQUA + "Teleporting back to your previous location in 3 seconds...");
             // Teleport back after delay
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (killer.isOnline() && killerReturn != null) killer.teleport(killerReturn);
-            }, 60L);
-            Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (victim.isOnline() && victimReturn != null) victim.teleport(victimReturn);
+                if (killer.isOnline() && killerReturn != null) {
+                    killer.teleport(killerReturn);
+                    killer.sendMessage(ChatColor.GREEN + "Teleported back.");
+                }
             }, 60L);
             logAction(killer.getName(), "duel_won", "vs " + victim.getName() + (wager > 0 ? " wager:" + wager : ""));
         }
@@ -6919,19 +6951,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     // ========== SCHEDULED ANNOUNCEMENTS ==========
     private void startScheduledAnnouncements() {
-        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
-        if (intervalTicks <= 0) intervalTicks = 6000;
-        Bukkit.getScheduler().runTaskTimer(this, () -> {
-            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
-            List<String> messages = dataConfig.getStringList("announcements.messages");
-            if (messages.isEmpty()) return;
-            int index = dataConfig.getInt("announcements.current_index", 0);
-            if (index >= messages.size()) index = 0;
-            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
-            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
-            Bukkit.broadcastMessage(prefix + msg);
-            dataConfig.set("announcements.current_index", index + 1);
-        }, intervalTicks, intervalTicks);
+        restartScheduledAnnouncements();
 
         // One-time scheduled announcements checker (every 30 seconds = 600 ticks)
         Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
@@ -6989,6 +7009,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 saveDataFile();
             }
         }, 600L, 600L);
+    }
+
+    public void restartScheduledAnnouncements() {
+        if (recurringAnnouncementsTask != -1) {
+            Bukkit.getScheduler().cancelTask(recurringAnnouncementsTask);
+            recurringAnnouncementsTask = -1;
+        }
+        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
+        if (intervalTicks <= 0) intervalTicks = 6000;
+        recurringAnnouncementsTask = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
+            List<String> messages = dataConfig.getStringList("announcements.messages");
+            if (messages.isEmpty()) return;
+            int index = dataConfig.getInt("announcements.current_index", 0);
+            if (index >= messages.size()) index = 0;
+            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
+            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            Bukkit.broadcastMessage(prefix + msg);
+            dataConfig.set("announcements.current_index", index + 1);
+        }, intervalTicks, intervalTicks);
     }
 
     private void startMaintenanceChecker() {

@@ -1776,12 +1776,13 @@ public class WebServer {
             List<Map<String, Object>> list = new ArrayList<>();
             if (plugin.getDataConfig().contains("applications")) {
                 for (String id : plugin.getDataConfig().getConfigurationSection("applications").getKeys(false)) {
+                    if (id.equals("next_id")) continue;
                     Map<String, Object> a = new HashMap<>();
                     String ap = "applications." + id;
                     a.put("id", id);
                     a.put("player", plugin.getDataConfig().getString(ap + ".player", ""));
                     a.put("message", plugin.getDataConfig().getString(ap + ".message", ""));
-                    a.put("date", plugin.getDataConfig().getString(ap + ".date", ""));
+                    a.put("date", plugin.getDataConfig().getString(ap + ".timestamp", ""));
                     a.put("status", plugin.getDataConfig().getString(ap + ".status", "pending"));
                     list.add(a);
                 }
@@ -1855,10 +1856,19 @@ public class WebServer {
             String pp = "polls." + id;
             final String fpp = pp;
             Future<?> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                boolean wasActive = plugin.getDataConfig().getBoolean(fpp + ".active", false);
                 plugin.getDataConfig().set(fpp + ".question", body.getOrDefault("question", ""));
                 plugin.getDataConfig().set(fpp + ".options", body.getOrDefault("options", new ArrayList<>()));
-                plugin.getDataConfig().set(fpp + ".active", body.getOrDefault("active", true));
+                Object activeObj = body.getOrDefault("active", true);
+                boolean isActive = activeObj instanceof Boolean ? (Boolean) activeObj : Boolean.parseBoolean(activeObj.toString());
+                plugin.getDataConfig().set(fpp + ".active", isActive);
                 plugin.saveDataFile();
+
+                if (isActive && !wasActive) {
+                    String question = (String) body.getOrDefault("question", "");
+                    Bukkit.broadcastMessage(ChatColor.GOLD + "🗳️ " + ChatColor.YELLOW + "A new poll is open: " + ChatColor.WHITE + question);
+                    Bukkit.broadcastMessage(ChatColor.GOLD + "Type " + ChatColor.YELLOW + "/vote" + ChatColor.GOLD + " to cast your vote!");
+                }
                 return null;
             });
             future.get();
@@ -1881,10 +1891,16 @@ public class WebServer {
         app.get("/api/automod", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.automod")) return;
             Map<String, Object> res = new HashMap<>();
+            res.put("enabled", plugin.getDataConfig().getBoolean("automod.enabled", false));
+            res.put("filter_enabled", plugin.getDataConfig().getBoolean("automod.filter_enabled", false));
+            res.put("antispam_enabled", plugin.getDataConfig().getBoolean("automod.antispam_enabled", false));
+            res.put("caps_filter", plugin.getDataConfig().getBoolean("automod.caps_filter", false));
             res.put("filter_words", plugin.getDataConfig().getStringList("automod.filter_words"));
             res.put("spam_cooldown", plugin.getDataConfig().getInt("automod.spam_cooldown", 2));
+            res.put("spam_threshold", plugin.getDataConfig().getInt("automod.spam_threshold", 4));
             res.put("caps_threshold", plugin.getDataConfig().getInt("automod.caps_threshold", 70));
             res.put("violation_mute_threshold", plugin.getDataConfig().getInt("automod.violation_mute_threshold", 3));
+            res.put("bypass_admins", plugin.getDataConfig().getBoolean("automod.bypass_admins", true));
             ctx.json(res);
         });
 
@@ -1893,10 +1909,16 @@ public class WebServer {
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
             Bukkit.getScheduler().runTask(plugin, () -> {
+                if (body.containsKey("enabled")) plugin.getDataConfig().set("automod.enabled", body.get("enabled"));
+                if (body.containsKey("filter_enabled")) plugin.getDataConfig().set("automod.filter_enabled", body.get("filter_enabled"));
+                if (body.containsKey("antispam_enabled")) plugin.getDataConfig().set("automod.antispam_enabled", body.get("antispam_enabled"));
+                if (body.containsKey("caps_filter")) plugin.getDataConfig().set("automod.caps_filter", body.get("caps_filter"));
                 if (body.containsKey("filter_words")) plugin.getDataConfig().set("automod.filter_words", body.get("filter_words"));
                 if (body.containsKey("spam_cooldown")) plugin.getDataConfig().set("automod.spam_cooldown", body.get("spam_cooldown"));
+                if (body.containsKey("spam_threshold")) plugin.getDataConfig().set("automod.spam_threshold", body.get("spam_threshold"));
                 if (body.containsKey("caps_threshold")) plugin.getDataConfig().set("automod.caps_threshold", body.get("caps_threshold"));
                 if (body.containsKey("violation_mute_threshold")) plugin.getDataConfig().set("automod.violation_mute_threshold", body.get("violation_mute_threshold"));
+                if (body.containsKey("bypass_admins")) plugin.getDataConfig().set("automod.bypass_admins", body.get("bypass_admins"));
                 plugin.saveDataFile();
                 plugin.loadChatFilter();
             });
@@ -2394,35 +2416,45 @@ public class WebServer {
         // ========== DUELS ==========
         app.get("/api/duels", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.duels")) return;
-            var data = plugin.getDataConfig();
-            Map<String, Object> result = new HashMap<>();
-            // Active duels from plugin memory
-            List<Map<String, Object>> active = new ArrayList<>();
-            for (Map.Entry<java.util.UUID, java.util.UUID> entry : plugin.activeDuels.entrySet()) {
-                org.bukkit.OfflinePlayer p1 = Bukkit.getOfflinePlayer(entry.getKey());
-                org.bukkit.OfflinePlayer p2 = Bukkit.getOfflinePlayer(entry.getValue());
-                Map<String, Object> d = new HashMap<>();
-                d.put("player1", p1.getName() != null ? p1.getName() : entry.getKey().toString());
-                d.put("player2", p2.getName() != null ? p2.getName() : entry.getValue().toString());
-                d.put("wager", plugin.duelWagers.getOrDefault(entry.getKey(), 0));
-                active.add(d);
-            }
-            result.put("active", active);
-            // Duel stats from pvpstats
-            List<Map<String, Object>> stats = new ArrayList<>();
-            if (data.contains("pvpstats")) {
-                for (String uuid : data.getConfigurationSection("pvpstats").getKeys(false)) {
-                    Map<String, Object> s = new HashMap<>();
-                    s.put("uuid", uuid);
-                    s.put("kills", data.getInt("pvpstats." + uuid + ".kills", 0));
-                    s.put("deaths", data.getInt("pvpstats." + uuid + ".deaths", 0));
-                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(java.util.UUID.fromString(uuid));
-                    s.put("name", op.getName() != null ? op.getName() : uuid);
-                    stats.add(s);
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                var data = plugin.getDataConfig();
+                Map<String, Object> result = new HashMap<>();
+                // Active duels from plugin memory
+                List<Map<String, Object>> active = new ArrayList<>();
+                Set<UUID> seen = new HashSet<>();
+                for (Map.Entry<java.util.UUID, java.util.UUID> entry : plugin.activeDuels.entrySet()) {
+                    if (seen.contains(entry.getKey())) continue;
+                    seen.add(entry.getKey());
+                    seen.add(entry.getValue());
+                    org.bukkit.OfflinePlayer p1 = Bukkit.getOfflinePlayer(entry.getKey());
+                    org.bukkit.OfflinePlayer p2 = Bukkit.getOfflinePlayer(entry.getValue());
+                    Map<String, Object> d = new HashMap<>();
+                    d.put("player1", p1.getName() != null ? p1.getName() : entry.getKey().toString());
+                    d.put("player2", p2.getName() != null ? p2.getName() : entry.getValue().toString());
+                    d.put("wager", plugin.duelWagers.getOrDefault(entry.getKey(), 0));
+                    active.add(d);
                 }
-            }
-            result.put("stats", stats);
-            ctx.json(result);
+                result.put("active", active);
+                // Duel stats from pvpstats
+                List<Map<String, Object>> stats = new ArrayList<>();
+                if (data.contains("pvpstats")) {
+                    for (String uuidStr : data.getConfigurationSection("pvpstats").getKeys(false)) {
+                        Map<String, Object> s = new HashMap<>();
+                        s.put("uuid", uuidStr);
+                        s.put("kills", data.getInt("pvpstats." + uuidStr + ".kills", 0));
+                        s.put("deaths", data.getInt("pvpstats." + uuidStr + ".deaths", 0));
+                        try {
+                            UUID u = UUID.fromString(uuidStr);
+                            String name = data.getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(u).getName());
+                            s.put("name", name != null ? name : uuidStr);
+                        } catch (Exception e) { s.put("name", uuidStr); }
+                        stats.add(s);
+                    }
+                }
+                result.put("stats", stats);
+                return result;
+            });
+            ctx.json(future.get());
         });
 
         // ========== FIRST JOIN / WELCOME ==========
@@ -2509,12 +2541,15 @@ public class WebServer {
         app.post("/api/announcements", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
             var body = ctx.bodyAsClass(Map.class);
-            var data = plugin.getDataConfig();
-            if (body.containsKey("enabled")) data.set("announcements.enabled", body.get("enabled"));
-            if (body.containsKey("intervalMinutes")) data.set("announcements.interval_minutes", ((Number)body.get("intervalMinutes")).intValue());
-            if (body.containsKey("prefix")) data.set("announcements.prefix", body.get("prefix"));
-            if (body.containsKey("messages")) data.set("announcements.messages", body.get("messages"));
-            plugin.saveDataFile();
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                var data = plugin.getDataConfig();
+                if (body.containsKey("enabled")) data.set("announcements.enabled", body.get("enabled"));
+                if (body.containsKey("intervalMinutes")) data.set("announcements.interval_minutes", ((Number)body.get("intervalMinutes")).intValue());
+                if (body.containsKey("prefix")) data.set("announcements.prefix", body.get("prefix"));
+                if (body.containsKey("messages")) data.set("announcements.messages", body.get("messages"));
+                plugin.saveDataFile();
+                plugin.restartScheduledAnnouncements();
+            });
             ctx.json(Map.of("success", true));
         });
 
@@ -2550,21 +2585,23 @@ public class WebServer {
                 ctx.status(400).json(Map.of("error", "Invalid time format. Use ISO-8601 (yyyy-MM-ddTHH:mm)"));
                 return;
             }
-            var data = plugin.getDataConfig();
-            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
-            List<Map<String, Object>> scheduled = new ArrayList<>();
-            for (Map<?, ?> r : raw) {
-                Map<String, Object> m = new HashMap<>();
-                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
-                scheduled.add(m);
-            }
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("message", message);
-            entry.put("time", time);
-            entry.put("sent", false);
-            scheduled.add(entry);
-            data.set("announcements.scheduled", scheduled);
-            plugin.saveDataFile();
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
+                List<Map<String, Object>> scheduled = new ArrayList<>();
+                for (Map<?, ?> r : raw) {
+                    Map<String, Object> m = new HashMap<>();
+                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    scheduled.add(m);
+                }
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("message", message);
+                entry.put("time", time);
+                entry.put("sent", false);
+                scheduled.add(entry);
+                data.set("announcements.scheduled", scheduled);
+                plugin.saveDataFile();
+            });
             ctx.json(Map.of("success", true));
         });
 
@@ -2572,19 +2609,21 @@ public class WebServer {
             if (!auth(ctx)) return;
             if (!hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) { ctx.status(403).result("Forbidden"); return; }
             int index = Integer.parseInt(ctx.pathParam("index"));
-            var data = plugin.getDataConfig();
-            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
-            List<Map<String, Object>> scheduled = new ArrayList<>();
-            for (Map<?, ?> r : raw) {
-                Map<String, Object> m = new HashMap<>();
-                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
-                scheduled.add(m);
-            }
-            if (index >= 0 && index < scheduled.size()) {
-                scheduled.remove(index);
-                data.set("announcements.scheduled", scheduled);
-                plugin.saveDataFile();
-            }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("announcements.scheduled", new ArrayList<>());
+                List<Map<String, Object>> scheduled = new ArrayList<>();
+                for (Map<?, ?> r : raw) {
+                    Map<String, Object> m = new HashMap<>();
+                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    scheduled.add(m);
+                }
+                if (index >= 0 && index < scheduled.size()) {
+                    scheduled.remove(index);
+                    data.set("announcements.scheduled", scheduled);
+                    plugin.saveDataFile();
+                }
+            });
             ctx.json(Map.of("success", true));
         });
 
@@ -2619,40 +2658,44 @@ public class WebServer {
                 ctx.status(400).json(Map.of("error", "Invalid time format. Use ISO-8601 (yyyy-MM-ddTHH:mm)"));
                 return;
             }
-            var data = plugin.getDataConfig();
-            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
-            List<Map<String, Object>> scheduled = new ArrayList<>();
-            for (Map<?, ?> r : raw) {
-                Map<String, Object> m = new HashMap<>();
-                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
-                scheduled.add(m);
-            }
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("command", command);
-            entry.put("time", time);
-            entry.put("sent", false);
-            scheduled.add(entry);
-            data.set("scheduler.commands", scheduled);
-            plugin.saveDataFile();
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
+                List<Map<String, Object>> scheduled = new ArrayList<>();
+                for (Map<?, ?> r : raw) {
+                    Map<String, Object> m = new HashMap<>();
+                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    scheduled.add(m);
+                }
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("command", command);
+                entry.put("time", time);
+                entry.put("sent", false);
+                scheduled.add(entry);
+                data.set("scheduler.commands", scheduled);
+                plugin.saveDataFile();
+            });
             ctx.json(Map.of("success", true));
         });
 
         app.delete("/api/scheduler/{index}", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.announcements")) return;
             int index = Integer.parseInt(ctx.pathParam("index"));
-            var data = plugin.getDataConfig();
-            List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
-            List<Map<String, Object>> scheduled = new ArrayList<>();
-            for (Map<?, ?> r : raw) {
-                Map<String, Object> m = new HashMap<>();
-                for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
-                scheduled.add(m);
-            }
-            if (index >= 0 && index < scheduled.size()) {
-                scheduled.remove(index);
-                data.set("scheduler.commands", scheduled);
-                plugin.saveDataFile();
-            }
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                var data = plugin.getDataConfig();
+                List<Map<?, ?>> raw = (List<Map<?, ?>>) data.getList("scheduler.commands", new ArrayList<>());
+                List<Map<String, Object>> scheduled = new ArrayList<>();
+                for (Map<?, ?> r : raw) {
+                    Map<String, Object> m = new HashMap<>();
+                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    scheduled.add(m);
+                }
+                if (index >= 0 && index < scheduled.size()) {
+                    scheduled.remove(index);
+                    data.set("scheduler.commands", scheduled);
+                    plugin.saveDataFile();
+                }
+            });
             ctx.json(Map.of("success", true));
         });
 
@@ -3256,16 +3299,16 @@ public class WebServer {
             ctx.json(future11.get());
         });
 
-        // ========== RANKS API (Backed by Groups) ==========
+        // ========== RANKS API (Synced with In-Game Ranks) ==========
         app.get("/api/ranks", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.groups")) return;
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> ranks = new ArrayList<>();
-                var section = plugin.getDataConfig().getConfigurationSection("groups");
+                var section = plugin.getDataConfig().getConfigurationSection("ranks");
                 if (section != null) {
                     for (String name : section.getKeys(false)) {
                         Map<String, Object> r = new HashMap<>();
-                        String path = "groups." + name;
+                        String path = "ranks." + name;
                         r.put("name", name);
                         r.put("color", plugin.getDataConfig().getString(path + ".color", "#ffffff"));
                         r.put("prefix", plugin.getDataConfig().getString(path + ".prefix", ""));
@@ -3287,11 +3330,23 @@ public class WebServer {
             String finalName = name.replaceAll("[^a-zA-Z0-9_-]", "");
             
             Bukkit.getScheduler().runTask(plugin, () -> {
-                String path = "groups." + finalName;
+                String path = "ranks." + finalName;
                 if (!plugin.getDataConfig().contains(path)) {
-                    plugin.getDataConfig().set(path + ".color", body.getOrDefault("color", "#ffffff"));
+                    String hexColor = (String) body.getOrDefault("color", "#ffffff");
+                    plugin.getDataConfig().set(path + ".color", hexColor);
                     plugin.getDataConfig().set(path + ".level", body.getOrDefault("level", 1));
                     plugin.getDataConfig().set(path + ".description", body.getOrDefault("description", ""));
+                    
+                    String spigotColor = "";
+                    if (hexColor.startsWith("#") && hexColor.length() == 7) {
+                        spigotColor = "&x";
+                        for (char c : hexColor.substring(1).toCharArray()) {
+                            spigotColor += "&" + c;
+                        }
+                    } else {
+                        spigotColor = "&7";
+                    }
+                    plugin.getDataConfig().set(path + ".prefix", spigotColor + "[" + finalName + "] &r");
                     plugin.getDataConfig().set(path + ".permissions", new ArrayList<String>());
                     plugin.getDataConfig().set(path + ".members", new ArrayList<String>());
                     plugin.saveDataFile();
@@ -3308,12 +3363,27 @@ public class WebServer {
             if (name == null) { ctx.status(400).json(Map.of("error", "Name required")); return; }
             
             Bukkit.getScheduler().runTask(plugin, () -> {
-                String path = "groups." + name;
+                String path = "ranks." + name;
                 if (plugin.getDataConfig().contains(path)) {
                     if (body.containsKey("description")) plugin.getDataConfig().set(path + ".description", body.get("description"));
                     if (body.containsKey("level")) plugin.getDataConfig().set(path + ".level", body.get("level"));
-                    if (body.containsKey("color")) plugin.getDataConfig().set(path + ".color", body.get("color"));
+                    if (body.containsKey("color")) {
+                        String hexColor = (String) body.get("color");
+                        plugin.getDataConfig().set(path + ".color", hexColor);
+                        
+                        String spigotColor = "";
+                        if (hexColor.startsWith("#") && hexColor.length() == 7) {
+                            spigotColor = "&x";
+                            for (char c : hexColor.substring(1).toCharArray()) {
+                                spigotColor += "&" + c;
+                            }
+                        } else {
+                            spigotColor = "&7";
+                        }
+                        plugin.getDataConfig().set(path + ".prefix", spigotColor + "[" + name + "] &r");
+                    }
                     plugin.saveDataFile();
+                    plugin.refreshAllPermissions();
                     plugin.logAction("WebAdmin", "updated rank", name);
                 }
             });
@@ -3326,7 +3396,16 @@ public class WebServer {
             String name = (String) body.get("name");
             
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getDataConfig().set("groups." + name, null);
+                plugin.getDataConfig().set("ranks." + name, null);
+                // Remove from player assignments
+                if (plugin.getDataConfig().contains("player_rank")) {
+                    for (String uuidKey : plugin.getDataConfig().getConfigurationSection("player_rank").getKeys(false)) {
+                        String assigned = plugin.getDataConfig().getString("player_rank." + uuidKey);
+                        if (assigned != null && assigned.equals(name)) {
+                            plugin.getDataConfig().set("player_rank." + uuidKey, null);
+                        }
+                    }
+                }
                 plugin.saveDataFile();
                 plugin.refreshAllPermissions();
                 plugin.logAction("WebAdmin", "deleted rank", name);
@@ -3344,21 +3423,7 @@ public class WebServer {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
                 String uuidStr = uuid.toString();
                 
-                // Remove from all other groups first
-                var groups = plugin.getDataConfig().getConfigurationSection("groups");
-                if (groups != null) {
-                    for (String g : groups.getKeys(false)) {
-                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
-                        if (members.remove(uuidStr)) {
-                            plugin.getDataConfig().set("groups." + g + ".members", members);
-                        }
-                    }
-                }
-                
-                // Add to new group
-                List<String> members = plugin.getDataConfig().getStringList("groups." + rank + ".members");
-                if (!members.contains(uuidStr)) members.add(uuidStr);
-                plugin.getDataConfig().set("groups." + rank + ".members", members);
+                plugin.setPlayerRank(uuid, rank);
                 
                 plugin.getDataConfig().set("users." + uuidStr + ".promotedBy", "WebAdmin");
                 plugin.getDataConfig().set("users." + uuidStr + ".promotionDate", System.currentTimeMillis());
@@ -3380,21 +3445,12 @@ public class WebServer {
             
             Bukkit.getScheduler().runTask(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                String uuidStr = uuid.toString();
                 
-                var groups = plugin.getDataConfig().getConfigurationSection("groups");
-                if (groups != null) {
-                    for (String g : groups.getKeys(false)) {
-                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
-                        if (members.remove(uuidStr)) {
-                            plugin.getDataConfig().set("groups." + g + ".members", members);
-                        }
-                    }
-                }
+                plugin.setPlayerRank(uuid, null);
                 plugin.saveDataFile();
                 
                 Player p = Bukkit.getPlayer(uuid);
-                if (p != null) plugin.removePermissionAttachment(p);
+                if (p != null) plugin.applyPermissionGroup(p);
                 
                 plugin.logAction("WebAdmin", "demoted", player);
             });
@@ -3413,17 +3469,38 @@ public class WebServer {
                     Map<String, Object> m = new HashMap<>();
                     m.put("name", p.getName());
                     m.put("uuid", p.getUniqueId().toString());
-                    m.put("rank", plugin.getPlayerGroup(p.getUniqueId()));
+                    m.put("rank", plugin.getPlayerRank(p.getUniqueId()));
                     m.put("promotedBy", plugin.getDataConfig().getString("users." + p.getUniqueId() + ".promotedBy"));
                     m.put("promotionDate", plugin.getDataConfig().getLong("users." + p.getUniqueId() + ".promotionDate"));
                     players.add(m);
                 }
                 
-                // Offline (from groups)
-                var groups = plugin.getDataConfig().getConfigurationSection("groups");
-                if (groups != null) {
-                    for (String g : groups.getKeys(false)) {
-                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                // Offline (from player_rank assignment)
+                var playerRankSection = plugin.getDataConfig().getConfigurationSection("player_rank");
+                if (playerRankSection != null) {
+                    for (String uuidStr : playerRankSection.getKeys(false)) {
+                        try {
+                            UUID uuid = UUID.fromString(uuidStr);
+                            if (seen.contains(uuid)) continue;
+                            seen.add(uuid);
+                            String rank = plugin.getDataConfig().getString("player_rank." + uuidStr);
+                            String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                            Map<String, Object> m = new HashMap<>();
+                            m.put("name", name != null ? name : uuidStr);
+                            m.put("uuid", uuidStr);
+                            m.put("rank", rank);
+                            m.put("promotedBy", plugin.getDataConfig().getString("users." + uuidStr + ".promotedBy"));
+                            m.put("promotionDate", plugin.getDataConfig().getLong("users." + uuidStr + ".promotionDate"));
+                            players.add(m);
+                        } catch (Exception ignored) {}
+                    }
+                }
+                
+                // Offline (from ranks membership lists)
+                var ranksSection = plugin.getDataConfig().getConfigurationSection("ranks");
+                if (ranksSection != null) {
+                    for (String g : ranksSection.getKeys(false)) {
+                        List<String> members = plugin.getDataConfig().getStringList("ranks." + g + ".members");
                         for (String uuidStr : members) {
                             try {
                                 UUID uuid = UUID.fromString(uuidStr);
