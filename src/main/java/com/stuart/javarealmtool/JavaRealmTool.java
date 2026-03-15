@@ -868,6 +868,24 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         getLogger().log(java.util.logging.Level.SEVERE, "Failed to open admin menu: " + ex.getMessage(), ex);
                     }
                     break;
+                case "gencloud":
+                    if (!hasDmtCommandPermission(p, "gencloud")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length != 4) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt gencloud <width> <depth> <length>");
+                        return true;
+                    }
+                    try {
+                        int width = Integer.parseInt(args[1]);
+                        int depth = Integer.parseInt(args[2]);
+                        int length = Integer.parseInt(args[3]);
+                        generateCloud(p, width, depth, length);
+                    } catch (NumberFormatException e) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt gencloud <width> <depth> <length> (all integers)");
+                    }
+                    break;
                 case "tp":
                     if (!hasDmtCommandPermission(p, "tp")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
@@ -1701,6 +1719,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt npc summon <username>" + ChatColor.WHITE + " - Spawn an NPC from the library");
             p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
             p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
+            p.sendMessage(ChatColor.AQUA + "/dmt gencloud <w> <d> <l>" + ChatColor.WHITE + " - Generate a floating cloud platform (w=width, d=height, l=length)");
             p.sendMessage(ChatColor.AQUA + "/dmt antlag <on|off|now>" + ChatColor.WHITE + " - Enable/disable or run anti-lag cleanup (drops)");
             p.sendMessage(ChatColor.AQUA + "/balance <player> add <amount>" + ChatColor.WHITE + " - Add coins to a player");
             p.sendMessage(ChatColor.AQUA + "/balance <player> remove <amount>" + ChatColor.WHITE + " - Remove coins from a player");
@@ -1709,12 +1728,130 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
     }
 
+    private void generateCloud(Player p, int width, int depth, int length) {
+        if (width < 5 || length < 5 || depth < 3) {
+            p.sendMessage(ChatColor.RED + "Cloud dimensions too small. Minimum: 5x3x5.");
+            return;
+        }
+
+        World world = p.getWorld();
+        // Base the cloud bottom at the player's head height so it appears to originate from where they stand.
+        int baseY = (int) Math.floor(p.getEyeLocation().getY());
+        Location origin = p.getLocation().getBlock().getLocation();
+        origin.setY(baseY);
+
+        int halfW = width / 2;
+        int halfL = length / 2;
+        int maxHeight = depth;
+        int midY = baseY + (maxHeight / 2);
+
+        Random rand = new Random();
+
+        // Precompute an irregular edge profile (like a racetrack outline) so the cloud isn't perfectly round
+        int edgePoints = 16;
+        double[] edgeOffsets = new double[edgePoints];
+        for (int i = 0; i < edgePoints; i++) {
+            edgeOffsets[i] = (rand.nextDouble() * 0.7 - 0.35); // -0.35..0.35
+        }
+
+        // Generate a cloud volume that shrinks toward the bottom, with a solid core and airy edges
+        for (int dx = -halfW; dx <= halfW; dx++) {
+            for (int dz = -halfL; dz <= halfL; dz++) {
+                double nx = dx / (double) halfW;
+                double nz = dz / (double) halfL;
+
+                double angle = Math.atan2(nz, nx);
+                if (angle < 0) angle += Math.PI * 2;
+                double sector = angle / (Math.PI * 2) * edgePoints;
+                int i0 = (int) Math.floor(sector) % edgePoints;
+                int i1 = (i0 + 1) % edgePoints;
+                double t = sector - Math.floor(sector);
+                double edgeRadius = 1.0 + (edgeOffsets[i0] * (1 - t) + edgeOffsets[i1] * t);
+
+                double distXZ = Math.sqrt(nx * nx + nz * nz);
+
+                // Add noise to the footprint edge so it curves instead of clipping straight.
+                double edgeNoise = (Math.sin(dx * 0.6 + dz * 0.9) + Math.cos(dx * 0.4 - dz * 0.7)) * 0.25;
+                double maxRadius = edgeRadius + edgeNoise;
+                if (distXZ > maxRadius + 0.25) continue; // outside the rough footprint
+
+                // For each vertical slice, build the cloud volume
+                for (int dy = 0; dy <= maxHeight; dy++) {
+                    double ny = (dy - (maxHeight / 2.0)) / (maxHeight / 2.0); // -1..1
+
+                    // Shrink inwards as we go down (and up) like a sphere cross-section
+                    if (Math.abs(ny) > 1) continue;
+                    double sliceRadius = maxRadius * Math.sqrt(1 - ny * ny);
+
+                    // Add some randomness to the very bottom and edges to avoid perfect symmetry
+                    double edgeFactor = distXZ / sliceRadius;
+                    if (edgeFactor > 1.15) continue;
+                    if (edgeFactor > 0.8 && rand.nextDouble() < 0.33) continue;
+
+                    // Make the bottom (near origin) denser/solid, and edges more airy
+                    double heightFade = Math.abs(ny);
+                    if (heightFade > 0.9 && rand.nextDouble() < 0.55) continue;
+
+                    int y = origin.getBlockY() + dy;
+                    Location blockLoc = new Location(world, origin.getX() + dx, y, origin.getZ() + dz);
+
+                    // Solid core (wool) near center, glass/pane toward the edge of the slice
+                    Material mat;
+                    if (edgeFactor < 0.4 && heightFade < 0.6) {
+                        mat = Material.WHITE_WOOL;
+                    } else {
+                        double r = rand.nextDouble();
+                        if (r < 0.6) mat = Material.WHITE_WOOL;
+                        else if (r < 0.85) mat = Material.WHITE_STAINED_GLASS;
+                        else mat = Material.WHITE_STAINED_GLASS_PANE;
+                    }
+                    blockLoc.getBlock().setType(mat);
+                }
+            }
+        }
+
+        // Remove top half (leave a flat surface)
+        for (int dx = -halfW; dx <= halfW; dx++) {
+            for (int dz = -halfL; dz <= halfL; dz++) {
+                for (int y = midY + 1; y <= origin.getBlockY() + maxHeight; y++) {
+                    world.getBlockAt(origin.getBlockX() + dx, y, origin.getBlockZ() + dz).setType(Material.AIR);
+                }
+            }
+        }
+
+        // Flat grass surface matching the cloud footprint at midY
+        for (int dx = -halfW; dx <= halfW; dx++) {
+            for (int dz = -halfL; dz <= halfL; dz++) {
+                double nx = dx / (double) halfW;
+                double nz = dz / (double) halfL;
+
+                double angle = Math.atan2(nz, nx);
+                if (angle < 0) angle += Math.PI * 2;
+                double sector = angle / (Math.PI * 2) * edgePoints;
+                int i0 = (int) Math.floor(sector) % edgePoints;
+                int i1 = (i0 + 1) % edgePoints;
+                double t = sector - Math.floor(sector);
+                double edgeRadius = 1.0 + (edgeOffsets[i0] * (1 - t) + edgeOffsets[i1] * t);
+
+                double distXZ = Math.sqrt(nx * nx + nz * nz);
+                double edgeNoise = (Math.sin(dx * 0.6 + dz * 0.9) + Math.cos(dx * 0.4 - dz * 0.7)) * 0.25;
+                double maxRadius = edgeRadius + edgeNoise;
+                if (distXZ > maxRadius + 0.15) continue;
+                if (distXZ > maxRadius && rand.nextDouble() < 0.35) continue;
+
+                world.getBlockAt(origin.getBlockX() + dx, midY, origin.getBlockZ() + dz).setType(Material.GRASS_BLOCK);
+            }
+        }
+
+        p.sendMessage(ChatColor.GREEN + "Generated cloud at " + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ());
+    }
+
     // tab completion support (registers itself as TabCompleter)
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
         if (cmd.getName().equalsIgnoreCase("dmt")) {
             if (args.length == 1) {
-                List<String> subs = Arrays.asList("help","setpunishloc","setjailloc","tpjail","punish","menu","tp","summon","list","npc","sethub");
+                List<String> subs = Arrays.asList("help","setpunishloc","setjailloc","tpjail","punish","menu","tp","summon","list","npc","sethub","gencloud");
                 String start = args[0].toLowerCase();
                 List<String> out = new ArrayList<>();
                 for (String s : subs) {
