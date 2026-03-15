@@ -116,13 +116,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> pendingShopAction = new HashMap<>();
     private final Map<UUID, Integer> pendingBountyTarget = new HashMap<>();
     private final List<String> chatFilterWords = new ArrayList<>();
-    private final Map<UUID, Integer> spamCounter = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> lastChatTime = new ConcurrentHashMap<>();
-    private final Map<UUID, UUID> duelRequests = new ConcurrentHashMap<>();
-    final Map<UUID, Integer> duelWagers = new ConcurrentHashMap<>();
-    final Map<UUID, UUID> activeDuels = new ConcurrentHashMap<>();
-    private final Map<UUID, Location> duelReturnLocations = new ConcurrentHashMap<>();
-    private final Map<UUID, Location> pendingDuelRespawn = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> spamCounter = new HashMap<>();
+    private final Map<UUID, Long> lastChatTime = new HashMap<>();
+    private final Map<UUID, UUID> duelRequests = new HashMap<>();
+    final Map<UUID, Integer> duelWagers = new HashMap<>();
+    final Map<UUID, UUID> activeDuels = new HashMap<>();
+    private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
     private final Map<UUID, Long> ticketCooldowns = new HashMap<>();
     private final String GUI_TICKET_DETAIL = ChatColor.GOLD + "Ticket #";
     private int christmasSnowTaskId = -1;
@@ -133,7 +132,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private int summerTaskId = -1;
     private int antiLagWarningTaskId = -1;
     private int antiLagClearTaskId = -1;
-    private int recurringAnnouncementsTask = -1;
+
+    // Scheduled announcements task IDs (used for reloading config without restart)
+    private int scheduledAnnouncementsTaskId = -1;
+    private int scheduledAnnouncementsOneTimeCheckTaskId = -1;
+    private int scheduledCommandsTaskId = -1;
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
 
@@ -624,7 +627,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             List<String> perms = dataConfig.getStringList(RANKS_PATH + "." + rank + ".permissions");
             List<String> members = dataConfig.getStringList(RANKS_PATH + "." + rank + ".members");
 
-            p.sendMessage(ChatColor.AQUA + rank + ChatColor.GRAY + " " + ChatColor.translateAlternateColorCodes('&', prefix));
+            p.sendMessage(ChatColor.AQUA + rank + ChatColor.GRAY + " " + prefix);
             p.sendMessage(ChatColor.GRAY + "  Permissions: " + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
             p.sendMessage(ChatColor.GRAY + "  Members: " + (members.isEmpty() ? "<none>" : String.join(", ", members)));
         }
@@ -642,7 +645,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         List<String> members = dataConfig.getStringList(key + ".members");
 
         p.sendMessage(ChatColor.GOLD + "--- Rank: " + rank + " ---");
-        p.sendMessage(ChatColor.AQUA + "Prefix: " + ChatColor.RESET + ChatColor.translateAlternateColorCodes('&', prefix));
+        p.sendMessage(ChatColor.AQUA + "Prefix: " + ChatColor.RESET + prefix);
         p.sendMessage(ChatColor.AQUA + "Permissions: " + ChatColor.RESET + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
         p.sendMessage(ChatColor.AQUA + "Members: " + ChatColor.RESET + (members.isEmpty() ? "<none>" : String.join(", ", members)));
     }
@@ -868,24 +871,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "An unexpected error occurred while opening the menu.");
                         getLogger().log(java.util.logging.Level.SEVERE, "Failed to open admin menu: " + ex.getMessage(), ex);
-                    }
-                    break;
-                case "gencloud":
-                    if (!hasDmtCommandPermission(p, "gencloud")) {
-                        p.sendMessage(ChatColor.RED + "No permission.");
-                        return true;
-                    }
-                    if (args.length != 4) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt gencloud <width> <depth> <length>");
-                        return true;
-                    }
-                    try {
-                        int width = Integer.parseInt(args[1]);
-                        int depth = Integer.parseInt(args[2]);
-                        int length = Integer.parseInt(args[3]);
-                        generateCloud(p, width, depth, length);
-                    } catch (NumberFormatException e) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt gencloud <width> <depth> <length> (all integers)");
                     }
                     break;
                 case "tp":
@@ -1721,7 +1706,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt npc summon <username>" + ChatColor.WHITE + " - Spawn an NPC from the library");
             p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
             p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
-            p.sendMessage(ChatColor.AQUA + "/dmt gencloud <w> <d> <l>" + ChatColor.WHITE + " - Generate a floating cloud platform (w=width, d=height, l=length)");
             p.sendMessage(ChatColor.AQUA + "/dmt antlag <on|off|now>" + ChatColor.WHITE + " - Enable/disable or run anti-lag cleanup (drops)");
             p.sendMessage(ChatColor.AQUA + "/balance <player> add <amount>" + ChatColor.WHITE + " - Add coins to a player");
             p.sendMessage(ChatColor.AQUA + "/balance <player> remove <amount>" + ChatColor.WHITE + " - Remove coins from a player");
@@ -1730,130 +1714,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
     }
 
-    private void generateCloud(Player p, int width, int depth, int length) {
-        if (width < 5 || length < 5 || depth < 3) {
-            p.sendMessage(ChatColor.RED + "Cloud dimensions too small. Minimum: 5x3x5.");
-            return;
-        }
-
-        World world = p.getWorld();
-        // Base the cloud bottom at the player's head height so it appears to originate from where they stand.
-        int baseY = (int) Math.floor(p.getEyeLocation().getY());
-        Location origin = p.getLocation().getBlock().getLocation();
-        origin.setY(baseY);
-
-        int halfW = width / 2;
-        int halfL = length / 2;
-        int maxHeight = depth;
-        int midY = baseY + (maxHeight / 2);
-
-        Random rand = new Random();
-
-        // Precompute an irregular edge profile (like a racetrack outline) so the cloud isn't perfectly round
-        int edgePoints = 16;
-        double[] edgeOffsets = new double[edgePoints];
-        for (int i = 0; i < edgePoints; i++) {
-            edgeOffsets[i] = (rand.nextDouble() * 0.7 - 0.35); // -0.35..0.35
-        }
-
-        // Generate a cloud volume that shrinks toward the bottom, with a solid core and airy edges
-        for (int dx = -halfW; dx <= halfW; dx++) {
-            for (int dz = -halfL; dz <= halfL; dz++) {
-                double nx = dx / (double) halfW;
-                double nz = dz / (double) halfL;
-
-                double angle = Math.atan2(nz, nx);
-                if (angle < 0) angle += Math.PI * 2;
-                double sector = angle / (Math.PI * 2) * edgePoints;
-                int i0 = (int) Math.floor(sector) % edgePoints;
-                int i1 = (i0 + 1) % edgePoints;
-                double t = sector - Math.floor(sector);
-                double edgeRadius = 1.0 + (edgeOffsets[i0] * (1 - t) + edgeOffsets[i1] * t);
-
-                double distXZ = Math.sqrt(nx * nx + nz * nz);
-
-                // Add noise to the footprint edge so it curves instead of clipping straight.
-                double edgeNoise = (Math.sin(dx * 0.6 + dz * 0.9) + Math.cos(dx * 0.4 - dz * 0.7)) * 0.25;
-                double maxRadius = edgeRadius + edgeNoise;
-                if (distXZ > maxRadius + 0.25) continue; // outside the rough footprint
-
-                // For each vertical slice, build the cloud volume
-                for (int dy = 0; dy <= maxHeight; dy++) {
-                    double ny = (dy - (maxHeight / 2.0)) / (maxHeight / 2.0); // -1..1
-
-                    // Shrink inwards as we go down (and up) like a sphere cross-section
-                    if (Math.abs(ny) > 1) continue;
-                    double sliceRadius = maxRadius * Math.sqrt(1 - ny * ny);
-
-                    // Add some randomness to the very bottom and edges to avoid perfect symmetry
-                    double edgeFactor = distXZ / sliceRadius;
-                    if (edgeFactor > 1.15) continue;
-                    if (edgeFactor > 0.8 && rand.nextDouble() < 0.33) continue;
-
-                    // Make the bottom (near origin) denser/solid, and edges more airy
-                    double heightFade = Math.abs(ny);
-                    if (heightFade > 0.9 && rand.nextDouble() < 0.55) continue;
-
-                    int y = origin.getBlockY() + dy;
-                    Location blockLoc = new Location(world, origin.getX() + dx, y, origin.getZ() + dz);
-
-                    // Solid core (wool) near center, glass/pane toward the edge of the slice
-                    Material mat;
-                    if (edgeFactor < 0.4 && heightFade < 0.6) {
-                        mat = Material.WHITE_WOOL;
-                    } else {
-                        double r = rand.nextDouble();
-                        if (r < 0.6) mat = Material.WHITE_WOOL;
-                        else if (r < 0.85) mat = Material.WHITE_STAINED_GLASS;
-                        else mat = Material.WHITE_STAINED_GLASS_PANE;
-                    }
-                    blockLoc.getBlock().setType(mat);
-                }
-            }
-        }
-
-        // Remove top half (leave a flat surface)
-        for (int dx = -halfW; dx <= halfW; dx++) {
-            for (int dz = -halfL; dz <= halfL; dz++) {
-                for (int y = midY + 1; y <= origin.getBlockY() + maxHeight; y++) {
-                    world.getBlockAt(origin.getBlockX() + dx, y, origin.getBlockZ() + dz).setType(Material.AIR);
-                }
-            }
-        }
-
-        // Flat grass surface matching the cloud footprint at midY
-        for (int dx = -halfW; dx <= halfW; dx++) {
-            for (int dz = -halfL; dz <= halfL; dz++) {
-                double nx = dx / (double) halfW;
-                double nz = dz / (double) halfL;
-
-                double angle = Math.atan2(nz, nx);
-                if (angle < 0) angle += Math.PI * 2;
-                double sector = angle / (Math.PI * 2) * edgePoints;
-                int i0 = (int) Math.floor(sector) % edgePoints;
-                int i1 = (i0 + 1) % edgePoints;
-                double t = sector - Math.floor(sector);
-                double edgeRadius = 1.0 + (edgeOffsets[i0] * (1 - t) + edgeOffsets[i1] * t);
-
-                double distXZ = Math.sqrt(nx * nx + nz * nz);
-                double edgeNoise = (Math.sin(dx * 0.6 + dz * 0.9) + Math.cos(dx * 0.4 - dz * 0.7)) * 0.25;
-                double maxRadius = edgeRadius + edgeNoise;
-                if (distXZ > maxRadius + 0.15) continue;
-                if (distXZ > maxRadius && rand.nextDouble() < 0.35) continue;
-
-                world.getBlockAt(origin.getBlockX() + dx, midY, origin.getBlockZ() + dz).setType(Material.GRASS_BLOCK);
-            }
-        }
-
-        p.sendMessage(ChatColor.GREEN + "Generated cloud at " + origin.getBlockX() + "," + origin.getBlockY() + "," + origin.getBlockZ());
-    }
-
     // tab completion support (registers itself as TabCompleter)
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
         if (cmd.getName().equalsIgnoreCase("dmt")) {
             if (args.length == 1) {
-                List<String> subs = Arrays.asList("help","setpunishloc","setjailloc","tpjail","punish","menu","tp","summon","list","npc","sethub","gencloud");
+                List<String> subs = Arrays.asList("help","setpunishloc","setjailloc","tpjail","punish","menu","tp","summon","list","npc","sethub");
                 String start = args[0].toLowerCase();
                 List<String> out = new ArrayList<>();
                 for (String s : subs) {
@@ -2082,12 +1948,68 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         if ("flat".equals(type)) {
                             wc.type(WorldType.FLAT);
                         } else if ("void".equals(type)) {
-                            // use a custom chunk generator to avoid JSON parsing errors
+                            // Custom void world generator that creates a solid grass baseplate and a smooth cloud layer
                             wc.generator(new org.bukkit.generator.ChunkGenerator() {
+                                private static final int BASE_Y = 64;
+                                private static final int BASE_RADIUS = 40;
+                                private static final int CLOUD_Y = 120;
+                                private static final int CLOUD_RADIUS = 40;
+                                private static final int CLOUD_CORE_RADIUS = 30;
+
                                 @Override
-                                public ChunkData generateChunkData(World world, Random random, int x, int z, org.bukkit.generator.ChunkGenerator.BiomeGrid biome) {
-                                    // return an empty chunk (void) using the helper provided by ChunkGenerator
-                                    return super.createChunkData(world);
+                                public ChunkData generateChunkData(World world, Random random, int chunkX, int chunkZ, org.bukkit.generator.ChunkGenerator.BiomeGrid biome) {
+                                    ChunkData data = createChunkData(world);
+                                    int baseStartX = chunkX * 16;
+                                    int baseStartZ = chunkZ * 16;
+
+                                    // Precompute cloud puff centers for this chunk (deterministic by world + chunk coords)
+                                    Random cloudRand = new Random(world.getSeed() ^ ((long)chunkX * 341873128712L) ^ ((long)chunkZ * 132897987541L));
+                                    int puffCount = 3;
+                                    int[][] puffs = new int[puffCount][3]; // centerX, centerZ, radius
+                                    for (int i = 0; i < puffCount; i++) {
+                                        double angle = cloudRand.nextDouble() * Math.PI * 2;
+                                        double dist = cloudRand.nextDouble() * (CLOUD_RADIUS * 0.7);
+                                        int centerX = (int) Math.round(Math.cos(angle) * dist);
+                                        int centerZ = (int) Math.round(Math.sin(angle) * dist);
+                                        int radius = 8 + cloudRand.nextInt(6);
+                                        puffs[i][0] = centerX;
+                                        puffs[i][1] = centerZ;
+                                        puffs[i][2] = radius;
+                                    }
+
+                                    for (int dx = 0; dx < 16; dx++) {
+                                        int wx = baseStartX + dx;
+                                        for (int dz = 0; dz < 16; dz++) {
+                                            int wz = baseStartZ + dz;
+
+                                            // Grass baseplate with a white wool outline (no holes)
+                                            if (Math.abs(wx) <= BASE_RADIUS && Math.abs(wz) <= BASE_RADIUS) {
+                                                boolean onBorder = Math.abs(wx) == BASE_RADIUS || Math.abs(wz) == BASE_RADIUS;
+                                                data.setBlock(dx, BASE_Y, dz, onBorder ? Material.WHITE_WOOL : Material.GRASS_BLOCK);
+                                            }
+
+                                            // Cloud layer: cartoony, solid puffs that fade at the edges (no holes)
+                                            double bestDist = Double.MAX_VALUE;
+                                            int bestRadius = 0;
+                                            for (int[] puff : puffs) {
+                                                int cx = puff[0];
+                                                int cz = puff[1];
+                                                int r = puff[2];
+                                                double d = Math.sqrt((double)(wx - cx) * (wx - cx) + (double)(wz - cz) * (wz - cz));
+                                                if (d < bestDist && d <= r) {
+                                                    bestDist = d;
+                                                    bestRadius = r;
+                                                }
+                                            }
+                                            if (bestDist <= bestRadius) {
+                                                Material cloudMat = bestDist <= (bestRadius - 2) ? Material.WHITE_WOOL : Material.WHITE_STAINED_GLASS;
+                                                // make cloud thicker for a cartoony volume
+                                                data.setBlock(dx, CLOUD_Y, dz, cloudMat);
+                                                data.setBlock(dx, CLOUD_Y + 1, dz, Material.WHITE_WOOL);
+                                            }
+                                        }
+                                    }
+                                    return data;
                                 }
                             });
                             wc.generateStructures(false);
@@ -4779,15 +4701,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onRespawn(PlayerRespawnEvent e) {
         Location loc = e.getRespawnLocation();
-
-        // Handle Duel Respawn
-        Location duelReturn = pendingDuelRespawn.remove(e.getPlayer().getUniqueId());
-        if (duelReturn != null) {
-            e.setRespawnLocation(duelReturn);
-            e.getPlayer().sendMessage(ChatColor.GREEN + "You have been returned to your previous location.");
-            loc = duelReturn;
-        }
-
         if (loc == null) return;
         World.Environment env = loc.getWorld().getEnvironment();
         if (env == World.Environment.NETHER && dataConfig.getBoolean("locks.nether", false)) {
@@ -5178,7 +5091,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             welcomeMsg = welcomeMsg.replace("{player}", e.getPlayer().getName());
             String finalMsg = ChatColor.translateAlternateColorCodes('&', welcomeMsg);
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (e.getPlayer().isOnline()) {
+                    if (e.getPlayer().isOnline()) {
                     e.getPlayer().sendMessage(finalMsg);
                     // Give starter items
                     List<String> starterItems = dataConfig.getStringList("welcome_starter_items");
@@ -5231,23 +5144,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }, 40L);
             }
         }
-
-        // --- POLL NOTIFICATIONS ON JOIN ---
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (e.getPlayer().isOnline()) {
-                if (dataConfig.contains("polls")) {
-                    for (String pollId : dataConfig.getConfigurationSection("polls").getKeys(false)) {
-                        if (dataConfig.getBoolean("polls." + pollId + ".active", false)) {
-                            List<String> voters = dataConfig.getStringList("polls." + pollId + ".voters");
-                            if (!voters.contains(uuid.toString())) {
-                                e.getPlayer().sendMessage(ChatColor.GOLD + "🗳️ There is an active poll waiting for your vote! Type " + ChatColor.YELLOW + "/vote" + ChatColor.GOLD + " to participate.");
-                                break; // Only need to notify them once
-                            }
-                        }
-                    }
-                }
-            }
-        }, 60L); // Send 3 seconds after joining
     }
 
     @EventHandler
@@ -5269,53 +5165,51 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Auto-moderation
-        boolean bypass = dataConfig.getBoolean("automod.bypass_admins", true) && e.getPlayer().hasPermission("dmt.admin");
-        if (dataConfig.getBoolean("automod.enabled", false) && !bypass) {
+        if (dataConfig.getBoolean("automod.enabled", false) && !e.getPlayer().hasPermission("dmt.admin")) {
             String msg = e.getMessage().toLowerCase();
             // Word filter
-            if (dataConfig.getBoolean("automod.filter_enabled", false)) {
+            if (dataConfig.getBoolean("automod.filter_enabled", true)) {
                 for (String word : chatFilterWords) {
-                    if (word == null || word.trim().isEmpty()) continue;
                     if (msg.contains(word.toLowerCase())) {
                         e.setCancelled(true);
                         e.getPlayer().sendMessage(ChatColor.RED + "Your message was blocked by the chat filter.");
-                        Bukkit.getScheduler().runTask(this, () -> {
-                            int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
-                            dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
-                            int maxViolations = dataConfig.getInt("automod.violation_mute_threshold", 3);
-                            if (violations >= maxViolations) {
+                        int violations = dataConfig.getInt("automod.violations." + e.getPlayer().getUniqueId(), 0) + 1;
+                        dataConfig.set("automod.violations." + e.getPlayer().getUniqueId(), violations);
+                        int maxViolations = dataConfig.getInt("automod.max_violations", 5);
+                        if (violations >= maxViolations) {
+                            Bukkit.getScheduler().runTask(this, () -> {
                                 mutePlayer(e.getPlayer().getUniqueId(), e.getPlayer().getName(), "Auto-muted: chat filter (" + violations + " violations)");
                                 e.getPlayer().sendMessage(ChatColor.RED + "You have been auto-muted for repeated filter violations.");
-                            }
-                            saveDataFile();
-                        });
+                            });
+                        }
+                        Bukkit.getScheduler().runTask(this, this::saveDataFile);
                         return;
                     }
                 }
             }
             // Spam detection
-            if (dataConfig.getBoolean("automod.antispam_enabled", false)) {
+            if (dataConfig.getBoolean("automod.antispam_enabled", true)) {
                 long now = System.currentTimeMillis();
                 long lastTime = lastChatTime.getOrDefault(e.getPlayer().getUniqueId(), 0L);
-                int cooldownMs = dataConfig.getInt("automod.spam_cooldown", 2) * 1000;
+                int cooldownMs = dataConfig.getInt("automod.spam_cooldown_ms", 1000);
                 if (now - lastTime < cooldownMs) {
                     int count = spamCounter.getOrDefault(e.getPlayer().getUniqueId(), 0) + 1;
                     spamCounter.put(e.getPlayer().getUniqueId(), count);
-                    if (count >= dataConfig.getInt("automod.spam_threshold", 3)) {
+                    if (count >= dataConfig.getInt("automod.spam_threshold", 4)) {
                         e.setCancelled(true);
                         e.getPlayer().sendMessage(ChatColor.RED + "Slow down! You are sending messages too fast.");
+                        spamCounter.put(e.getPlayer().getUniqueId(), 0);
                         return;
                     }
                 } else {
-                    spamCounter.put(e.getPlayer().getUniqueId(), 1);
+                    spamCounter.put(e.getPlayer().getUniqueId(), 0);
                 }
                 lastChatTime.put(e.getPlayer().getUniqueId(), now);
             }
             // Caps filter
-            if (dataConfig.getBoolean("automod.caps_filter", false) && e.getMessage().length() > 6) {
+            if (dataConfig.getBoolean("automod.caps_filter", true) && e.getMessage().length() > 6) {
                 long caps = e.getMessage().chars().filter(Character::isUpperCase).count();
-                int threshold = dataConfig.getInt("automod.caps_threshold", 70);
-                if (caps * 100 / e.getMessage().length() > threshold) {
+                if (caps > e.getMessage().length() * 0.7) {
                     e.setMessage(e.getMessage().toLowerCase());
                     e.getPlayer().sendMessage(ChatColor.YELLOW + "Please don't use excessive caps.");
                 }
@@ -6154,7 +6048,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // Return to pre-duel locations
             Location killerReturn = duelReturnLocations.remove(killerUUID);
             Location victimReturn = duelReturnLocations.remove(victimUUID);
-            if (victimReturn != null) pendingDuelRespawn.put(victimUUID, victimReturn);
             if (wager > 0) {
                 killer.setLevel(killer.getLevel() + wager);
                 victim.setLevel(Math.max(0, victim.getLevel() - wager));
@@ -6166,13 +6059,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             duelWagers.remove(killerUUID);
             duelWagers.remove(victimUUID);
-            killer.sendMessage(ChatColor.AQUA + "Teleporting back to your previous location in 3 seconds...");
             // Teleport back after delay
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (killer.isOnline() && killerReturn != null) {
-                    killer.teleport(killerReturn);
-                    killer.sendMessage(ChatColor.GREEN + "Teleported back.");
-                }
+                if (killer.isOnline() && killerReturn != null) killer.teleport(killerReturn);
+            }, 60L);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (victim.isOnline() && victimReturn != null) victim.teleport(victimReturn);
             }, 60L);
             logAction(killer.getName(), "duel_won", "vs " + victim.getName() + (wager > 0 ? " wager:" + wager : ""));
         }
@@ -7088,10 +6980,25 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     // ========== SCHEDULED ANNOUNCEMENTS ==========
     private void startScheduledAnnouncements() {
-        restartScheduledAnnouncements();
+        // Ensure only one set of announcement tasks is running at a time
+        stopScheduledAnnouncements();
+
+        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
+        if (intervalTicks <= 0) intervalTicks = 6000;
+        scheduledAnnouncementsTaskId = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
+            List<String> messages = dataConfig.getStringList("announcements.messages");
+            if (messages.isEmpty()) return;
+            int index = dataConfig.getInt("announcements.current_index", 0);
+            if (index >= messages.size()) index = 0;
+            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
+            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
+            Bukkit.broadcastMessage(prefix + msg);
+            dataConfig.set("announcements.current_index", index + 1);
+        }, intervalTicks, intervalTicks).getTaskId();
 
         // One-time scheduled announcements checker (every 30 seconds = 600 ticks)
-        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+        scheduledAnnouncementsOneTimeCheckTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             List<Map<?, ?>> raw = (List<Map<?, ?>>) dataConfig.getList("announcements.scheduled", new ArrayList<>());
             if (raw.isEmpty()) return;
             boolean changed = false;
@@ -7120,7 +7027,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }, 600L, 600L);
 
         // Command scheduler checker (every 30 seconds = 600 ticks)
-        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+        scheduledCommandsTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             List<Map<?, ?>> raw = (List<Map<?, ?>>) dataConfig.getList("scheduler.commands", new ArrayList<>());
             if (raw.isEmpty()) return;
             boolean changed = false;
@@ -7148,24 +7055,24 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }, 600L, 600L);
     }
 
-    public void restartScheduledAnnouncements() {
-        if (recurringAnnouncementsTask != -1) {
-            Bukkit.getScheduler().cancelTask(recurringAnnouncementsTask);
-            recurringAnnouncementsTask = -1;
+    private void stopScheduledAnnouncements() {
+        if (scheduledAnnouncementsTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(scheduledAnnouncementsTaskId);
+            scheduledAnnouncementsTaskId = -1;
         }
-        int intervalTicks = dataConfig.getInt("announcements.interval_minutes", 5) * 20 * 60;
-        if (intervalTicks <= 0) intervalTicks = 6000;
-        recurringAnnouncementsTask = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
-            if (!dataConfig.getBoolean("announcements.enabled", false)) return;
-            List<String> messages = dataConfig.getStringList("announcements.messages");
-            if (messages.isEmpty()) return;
-            int index = dataConfig.getInt("announcements.current_index", 0);
-            if (index >= messages.size()) index = 0;
-            String msg = ChatColor.translateAlternateColorCodes('&', messages.get(index));
-            String prefix = ChatColor.translateAlternateColorCodes('&', dataConfig.getString("announcements.prefix", "&6[&eAnnouncement&6]&r "));
-            Bukkit.broadcastMessage(prefix + msg);
-            dataConfig.set("announcements.current_index", index + 1);
-        }, intervalTicks, intervalTicks);
+        if (scheduledAnnouncementsOneTimeCheckTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(scheduledAnnouncementsOneTimeCheckTaskId);
+            scheduledAnnouncementsOneTimeCheckTaskId = -1;
+        }
+        if (scheduledCommandsTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(scheduledCommandsTaskId);
+            scheduledCommandsTaskId = -1;
+        }
+    }
+
+    public void restartScheduledAnnouncements() {
+        // Safe to call from any thread
+        Bukkit.getScheduler().runTask(this, this::startScheduledAnnouncements);
     }
 
     private void startMaintenanceChecker() {
