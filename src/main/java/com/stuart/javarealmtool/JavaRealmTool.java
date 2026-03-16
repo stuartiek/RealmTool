@@ -227,36 +227,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             for (String eventName : activeEvents.getKeys(false)) {
                 startEventEffect(eventName);
             }
-            ensureDefaultEnchantQuests();
         }
 
-            // Apply ranks + permissions for online players in case of reload
-            for (Player p : Bukkit.getOnlinePlayers()) {
-                applyRankToPlayer(p);
-                applyPermissionGroup(p);
-            }
-            // register remaining commands
-            if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
-            if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
-            if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
-            if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
-            if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
-            if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
-            if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
-            if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
-            if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
-            if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
-            if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
-            if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
-            if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
-            if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
-            if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
-            if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
-            if (getCommand("report") != null) getCommand("report").setExecutor(this);
         ensureDefaultEnchantQuests();
 
-            // Start anti-lag ground item cleanup (configurable)
-            startAntiLagCleanup();
         // Apply ranks + permissions for online players in case of reload
         for (Player p : Bukkit.getOnlinePlayers()) {
             applyRankToPlayer(p);
