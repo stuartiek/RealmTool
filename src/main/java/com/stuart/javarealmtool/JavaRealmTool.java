@@ -194,6 +194,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
         if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
         if (getCommand("report") != null) getCommand("report").setExecutor(this);
+        if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
+        if (getCommand("economy") != null) getCommand("economy").setExecutor(this);
 
         webServer = new WebServer(this);
         webServer.start();
@@ -226,6 +228,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 startEventEffect(eventName);
             }
             ensureDefaultEnchantQuests();
+        }
 
             // Apply ranks + permissions for online players in case of reload
             for (Player p : Bukkit.getOnlinePlayers()) {
@@ -250,10 +253,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
             if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
             if (getCommand("report") != null) getCommand("report").setExecutor(this);
+        ensureDefaultEnchantQuests();
 
             // Start anti-lag ground item cleanup (configurable)
             startAntiLagCleanup();
+        // Apply ranks + permissions for online players in case of reload
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            applyRankToPlayer(p);
+            applyPermissionGroup(p);
         }
+
+        // Start anti-lag ground item cleanup (configurable)
+        startAntiLagCleanup();
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
         } catch (Throwable t) {
@@ -1795,6 +1806,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 case ANNOUNCE:
                     Bukkit.broadcastMessage(ChatColor.GOLD + "" + ChatColor.BOLD + "[Announcement] " + ChatColor.RESET + ChatColor.YELLOW + reason);
                     p.sendMessage(ChatColor.AQUA + "Broadcast sent!");
+                    pendingActions.remove(p.getUniqueId());
                     break;
                 case ADD_NOTE:
                     if (ctx.targetName != null) {
@@ -5370,7 +5382,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     // --- WebServer helper methods (added to satisfy WebServer calls) ---
     public long getPlaytimeHours(UUID u) {
         try {
-            return dataConfig.getLong("playtime." + u, 0L);
+            return dataConfig.getLong("playtime." + u, 0L) / 60L;
         } catch (Exception e) {
             return 0L;
         }
