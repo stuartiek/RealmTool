@@ -93,7 +93,21 @@ public class WebServer {
             }
             // FIX: Allow offline OPs to access the web panel
             // This fixes the "empty player list" issue when you are not in-game
-            if (Bukkit.getOfflinePlayer(username).isOp()) return true;
+            org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
+            if (offlinePlayer.isOp()) return true;
+            
+            UUID uuid = offlinePlayer.getUniqueId();
+            String group = plugin.getPlayerGroup(uuid);
+            if (group != null) {
+                List<String> perms = plugin.getDataConfig().getStringList("groups." + group + ".permissions");
+                if (perms.contains(permission) || perms.contains("webapp.*")) return true;
+            }
+            
+            String rank = plugin.getPlayerRank(uuid);
+            if (rank != null) {
+                List<String> perms = plugin.getDataConfig().getStringList("ranks." + rank + ".permissions");
+                if (perms.contains(permission) || perms.contains("webapp.*")) return true;
+            }
 
             return false;
         });
@@ -117,7 +131,22 @@ public class WebServer {
                 }
                 return permissions;
             }
-            return new ArrayList<>();
+            
+            List<String> permissions = new ArrayList<>();
+            org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
+            if (offlinePlayer.isOp()) {
+                permissions.add("webapp.*");
+            }
+            UUID uuid = offlinePlayer.getUniqueId();
+            String group = plugin.getPlayerGroup(uuid);
+            if (group != null) {
+                permissions.addAll(plugin.getDataConfig().getStringList("groups." + group + ".permissions"));
+            }
+            String rank = plugin.getPlayerRank(uuid);
+            if (rank != null) {
+                permissions.addAll(plugin.getDataConfig().getStringList("ranks." + rank + ".permissions"));
+            }
+            return permissions;
         });
 
         try {
@@ -140,13 +169,39 @@ public class WebServer {
 
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 Player player = Bukkit.getPlayer(username);
-                if (player == null || !player.isOnline()) {
-                    return Map.of("error", "Player not found or not online. You must be joined to the server.");
+                if (player != null && player.isOnline()) {
+                    if (!player.hasPermission("webapp.access")) {
+                        return Map.of("error", "You do not have permission (webapp.access) to log in.");
+                    }
+                    return Map.of("name", player.getName());
                 }
-                if (!player.hasPermission("webapp.access")) {
-                    return Map.of("error", "You do not have permission (webapp.access) to log in.");
+                
+                org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
+                if (offlinePlayer.hasPlayedBefore() || offlinePlayer.isOp()) {
+                    boolean hasAccess = offlinePlayer.isOp();
+                    UUID uuid = offlinePlayer.getUniqueId();
+                    if (!hasAccess) {
+                        String group = plugin.getPlayerGroup(uuid);
+                        if (group != null) {
+                            List<String> perms = plugin.getDataConfig().getStringList("groups." + group + ".permissions");
+                            if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
+                        }
+                    }
+                    if (!hasAccess) {
+                        String rank = plugin.getPlayerRank(uuid);
+                        if (rank != null) {
+                            List<String> perms = plugin.getDataConfig().getStringList("ranks." + rank + ".permissions");
+                            if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
+                        }
+                    }
+                    
+                    if (hasAccess) {
+                        return Map.of("name", offlinePlayer.getName() != null ? offlinePlayer.getName() : username);
+                    } else {
+                        return Map.of("error", "You do not have permission (webapp.access) to log in.");
+                    }
                 }
-                return Map.of("name", player.getName());
+                return Map.of("error", "Player not found. You must have played on the server before.");
             });
 
             try {
@@ -248,6 +303,28 @@ public class WebServer {
                             t.put("category", plugin.getDataConfig().getString("tickets." + key + ".category", "other"));
                             t.put("assignee", plugin.getDataConfig().getString("tickets." + key + ".assignee", ""));
                             t.put("time", plugin.getDataConfig().getString("tickets." + key + ".timestamp"));
+                            tickets.add(t);
+                        }
+                    }
+                }
+                if (plugin.getDataConfig().contains("appeals")) {
+                    for (String key : plugin.getDataConfig().getConfigurationSection("appeals").getKeys(false)) {
+                        if (key.equals("next_id")) continue;
+                        String appealStatus = plugin.getDataConfig().getString("appeals." + key + ".status", "open");
+                        String appealPriority = plugin.getDataConfig().getString("appeals." + key + ".priority", "medium");
+                        
+                        if ((status == null || status.isEmpty() || status.equals(appealStatus)) && 
+                            (priority == null || priority.isEmpty() || priority.equals(appealPriority))) {
+                            Map<String, Object> t = new HashMap<>();
+                            t.put("id", "-" + key);
+                            t.put("player", plugin.getDataConfig().getString("appeals." + key + ".player"));
+                            t.put("message", plugin.getDataConfig().getString("appeals." + key + ".message"));
+                            t.put("status", appealStatus);
+                            t.put("priority", appealPriority);
+                            t.put("category", "APPEAL: " + plugin.getDataConfig().getString("appeals." + key + ".category", "other"));
+                            t.put("assignee", plugin.getDataConfig().getString("appeals." + key + ".assignee", ""));
+                            t.put("time", plugin.getDataConfig().getString("appeals." + key + ".timestamp"));
+                            t.put("type", "appeal");
                             tickets.add(t);
                         }
                     }
@@ -580,14 +657,16 @@ public class WebServer {
             
             String id = ctx.pathParam("id");
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getDataConfig().set("tickets." + id + ".status", "closed");
+                int parsedId = Integer.parseInt(id);
+                String base = parsedId < 0 ? "appeals." + (-parsedId) : "tickets." + parsedId;
+                plugin.getDataConfig().set(base + ".status", "closed");
                 plugin.saveDataFile();
                 plugin.logAction("WebAdmin", "closed ticket", id);
                 // Notify player if online
-                String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
+                String playerName = plugin.getDataConfig().getString(base + ".player", "");
                 Player target = Bukkit.getPlayer(playerName);
                 if (target != null && target.isOnline()) {
-                    target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + id + " has been closed.");
+                    target.sendMessage(ChatColor.GOLD + "[" + (parsedId < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.YELLOW + "Your " + (parsedId < 0 ? "appeal" : "ticket") + " #" + Math.abs(parsedId) + " has been closed.");
                 }
             });
             ctx.json(Map.of("success", true));
@@ -627,16 +706,9 @@ public class WebServer {
             final String fMessage = message != null ? message : "";
             
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.addTicketResponse(Integer.parseInt(id), fAdmin, fMessage);
+                int parsedId = Integer.parseInt(id);
+                plugin.addTicketResponse(parsedId, fAdmin, fMessage);
                 plugin.logAction("WebAdmin", "added response to ticket", id);
-
-                // Notify player if online
-                String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
-                Player target = Bukkit.getPlayer(playerName);
-                if (target != null && target.isOnline()) {
-                    target.playSound(target.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1F, 2F);
-                    target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "New response from " + ChatColor.AQUA + fAdmin + ChatColor.YELLOW + ": " + ChatColor.WHITE + fMessage);
-                }
             });
             ctx.json(Map.of("success", true));
         });
@@ -678,19 +750,21 @@ public class WebServer {
             final String fPriority = priority, fCategory = category, fStatus = status, fAssignee = assignee;
             final boolean fUpdateAssignee = updateAssignee;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                if (fPriority != null && !fPriority.equals("null")) plugin.updateTicketField(Integer.parseInt(id), "priority", fPriority);
-                if (fCategory != null && !fCategory.equals("null")) plugin.updateTicketField(Integer.parseInt(id), "category", fCategory);
+                int parsedId = Integer.parseInt(id);
+                if (fPriority != null && !fPriority.equals("null")) plugin.updateTicketField(parsedId, "priority", fPriority);
+                if (fCategory != null && !fCategory.equals("null")) plugin.updateTicketField(parsedId, "category", fCategory);
                 if (fStatus != null && !fStatus.equals("null")) {
-                    plugin.updateTicketField(Integer.parseInt(id), "status", fStatus);
+                    plugin.updateTicketField(parsedId, "status", fStatus);
                     // Notify player of status change
-                    String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
+                    String base = parsedId < 0 ? "appeals." + (-parsedId) : "tickets." + parsedId;
+                    String playerName = plugin.getDataConfig().getString(base + ".player", "");
                     Player target = Bukkit.getPlayer(playerName);
                     if (target != null && target.isOnline()) {
-                        target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + id + " status changed to: " + ChatColor.WHITE + fStatus);
+                        target.sendMessage(ChatColor.GOLD + "[" + (parsedId < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.YELLOW + "Your " + (parsedId < 0 ? "appeal" : "ticket") + " #" + Math.abs(parsedId) + " status changed to: " + ChatColor.WHITE + fStatus);
                     }
                 }
                 if (fUpdateAssignee) {
-                    plugin.updateTicketField(Integer.parseInt(id), "assignee", fAssignee != null && !fAssignee.equals("null") ? fAssignee : "");
+                    plugin.updateTicketField(parsedId, "assignee", fAssignee != null && !fAssignee.equals("null") ? fAssignee : "");
                 }
                 plugin.logAction("WebAdmin", "updated ticket", id);
             });
@@ -715,7 +789,8 @@ public class WebServer {
             final String fReason = reason != null ? reason : "No reason";
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.resolveTicket(Integer.parseInt(id), fReason);
+                int parsedId = Integer.parseInt(id);
+                plugin.resolveTicket(parsedId, fReason);
                 plugin.logAction("WebAdmin", "resolved ticket", id);
             });
             ctx.json(Map.of("success", true));
