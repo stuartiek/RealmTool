@@ -143,6 +143,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private int scheduledCommandsTaskId = -1;
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
+    private final Set<UUID> toolRespawnQueue = new HashSet<>();
 
     // Simple anti-xray tracking
     private final Map<UUID, List<Long>> oreBreakTimestamps = new HashMap<>();
@@ -187,8 +188,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
             }
-
-<<<<<<< HEAD
             if (getCommand("ticket") != null) { getCommand("ticket").setExecutor(this); getCommand("ticket").setTabCompleter(this); }
             if (getCommand("tpa") != null) { getCommand("tpa").setExecutor(this); getCommand("tpa").setTabCompleter(this); }
             if (getCommand("kit") != null) { getCommand("kit").setExecutor(this); getCommand("kit").setTabCompleter(this); }
@@ -208,27 +207,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
 
-=======
-        if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
-        if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
-        if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
-        if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
-        if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
-        if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
-        if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
-        if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
-        if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
-        if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
-        if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
-        if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
-        if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
-        if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
-        if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
-        if (getCommand("report") != null) getCommand("report").setExecutor(this);
-        if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
-        if (getCommand("economy") != null) getCommand("economy").setExecutor(this);
- 
->>>>>>> 509ede4de79010c8442791fd3153a3aab93dfc46
         webServer = new WebServer(this);
         webServer.start();
 
@@ -5314,6 +5292,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             e.setRespawnLocation(Bukkit.getWorlds().get(0).getSpawnLocation());
             e.getPlayer().sendMessage(ChatColor.RED + "The End access is locked. Respawning in overworld.");
         }
+
+        // Ensure the player receives the Drowsy Tool on respawn (if it was held when they died)
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (e.getPlayer().isOnline()) {
+                UUID uuid = e.getPlayer().getUniqueId();
+                if (toolRespawnQueue.remove(uuid)) {
+                    ensurePlayerHasTool(e.getPlayer());
+                }
+            }
+        }, 1L);
     }
     @EventHandler
     public void onPlayerTeleport(PlayerTeleportEvent e) {
@@ -5668,16 +5656,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Give admin tool if missing
-        boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
-        if (!hasTool) {
-            ItemStack tool = new ItemStack(Material.DIAMOND);
-            ItemMeta m = tool.getItemMeta();
-            m.setDisplayName(TOOL_NAME);
-            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
-            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-            tool.setItemMeta(m);
-            e.getPlayer().getInventory().addItem(tool);
-        }
+        ensurePlayerHasTool(e.getPlayer());
 
         fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
 
@@ -5773,6 +5752,21 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                 }, 40L);
             }
+        }
+    }
+
+    private void ensurePlayerHasTool(Player p) {
+        boolean hasTool = Arrays.stream(p.getInventory().getContents())
+            .filter(Objects::nonNull)
+            .anyMatch(i -> i.hasItemMeta() && TOOL_NAME.equals(i.getItemMeta().getDisplayName()));
+        if (!hasTool) {
+            ItemStack tool = new ItemStack(Material.DIAMOND);
+            ItemMeta m = tool.getItemMeta();
+            m.setDisplayName(TOOL_NAME);
+            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            tool.setItemMeta(m);
+            p.getInventory().addItem(tool);
         }
     }
 
@@ -6780,12 +6774,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
         Player victim = e.getEntity();
+        UUID victimUUID = victim.getUniqueId();
+
+        // Prevent losing the Drowsy Tool on death
+        boolean hadTool = Arrays.stream(victim.getInventory().getContents())
+                .filter(Objects::nonNull)
+                .anyMatch(i -> i.hasItemMeta() && TOOL_NAME.equals(i.getItemMeta().getDisplayName()));
+        if (hadTool) {
+            toolRespawnQueue.add(victimUUID);
+            e.getDrops().removeIf(item -> item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName()));
+        }
+
         Player killer = victim.getKiller();
         if (killer == null || killer.equals(victim)) return;
 
         // --- PVP STATS TRACKING ---
         UUID killerUUID = killer.getUniqueId();
-        UUID victimUUID = victim.getUniqueId();
         dataConfig.set("pvpstats." + killerUUID + ".kills", dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0) + 1);
         int killerStreak = dataConfig.getInt("pvpstats." + killerUUID + ".streak", 0) + 1;
         dataConfig.set("pvpstats." + killerUUID + ".streak", killerStreak);
