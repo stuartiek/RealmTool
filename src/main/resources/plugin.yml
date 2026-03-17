@@ -5,7 +5,6 @@ api-version: 1.21
 commands:
   dmt:
     description: Main management command
-    permission: dmt.admin
     usage: /dmt help
   ticket:
     description: Ticket system

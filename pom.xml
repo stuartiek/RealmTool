@@ -18,6 +18,7 @@
     </properties>
 
     <build>
+        <finalName>DrowsyManagementTool-1.0</finalName>
         <defaultGoal>clean package</defaultGoal>
         <plugins>
             <plugin>

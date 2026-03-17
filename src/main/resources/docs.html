@@ -53,6 +53,15 @@
 /dmt menu
 /dmt sethub
 /dmt unsethub
+/dmt setserverspawn
+/dmt clearserverspawn
+/dmt spawnlast
+/dmt spawnlast tp <world>      (teleport to your stored last location)
+/dmt spawn reset              (reset all spawn restrictions)
+/dmt spawn <view|list>        (view disabled mob spawns)
+/dmt spawn <mob> <true|false>  (enable/disable mob spawning)
+/dmt killall hostile
+/dmt gencloud <width> <length> <depth>
 /dmt antlag &lt;on|off|now&gt;
 /dmt rank &lt;create|remove|list|info|add|addprefix|addperm&gt; ...
 /dmt npc &lt;list|add|remove|summon&gt;
@@ -61,13 +70,14 @@
 /dmt documentation
     </pre>
 
+
     <h3>2.2 Player Convenience Commands</h3>
     <pre>
 /kit         - Open the kit browsing & purchasing interface
 /hub         - Teleport to the server hub (saved via /dmt sethub)
-/balance     - View your coin balance and XP level
-/balance &lt;player&gt;           - (admin) view another player's balance
-/balance &lt;player&gt; &lt;set|add|remove&gt; &lt;amount&gt; - (admin) modify balance
+/balance     - View your Drowsy coin balance and XP level
+/balance &lt;player&gt;           - (admin) view another player's Drowsy coin balance
+/balance &lt;player&gt; &lt;add|remove|reset&gt; &lt;amount&gt; - (admin) modify Drowsy coins
     </pre>
 
     <h3>2.3 Admin Commands (require permission <code>dmt.admin</code>)</h3>
