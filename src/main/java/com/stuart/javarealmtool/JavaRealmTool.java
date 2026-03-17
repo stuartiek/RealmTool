@@ -143,6 +143,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private int scheduledCommandsTaskId = -1;
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
+    private final Set<UUID> toolRespawnQueue = new HashSet<>();
 
     // Simple anti-xray tracking
     private final Map<UUID, List<Long>> oreBreakTimestamps = new HashMap<>();
@@ -178,30 +179,34 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
             Bukkit.getPluginManager().registerEvents(this, this);
             registerCitizensClickListener();
+
+            // Load any worlds that exist on disk but were not automatically loaded by Spigot at server start.
+            // This ensures worlds created in-game (e.g., hub worlds) persist after a restart.
+            loadPersistedWorlds();
+
             if (getCommand("dmt") != null) {
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
             }
+            if (getCommand("ticket") != null) { getCommand("ticket").setExecutor(this); getCommand("ticket").setTabCompleter(this); }
+            if (getCommand("tpa") != null) { getCommand("tpa").setExecutor(this); getCommand("tpa").setTabCompleter(this); }
+            if (getCommand("kit") != null) { getCommand("kit").setExecutor(this); getCommand("kit").setTabCompleter(this); }
+            if (getCommand("bounty") != null) { getCommand("bounty").setExecutor(this); getCommand("bounty").setTabCompleter(this); }
+            if (getCommand("shop") != null) { getCommand("shop").setExecutor(this); getCommand("shop").setTabCompleter(this); }
+            if (getCommand("quest") != null) { getCommand("quest").setExecutor(this); getCommand("quest").setTabCompleter(this); }
+            if (getCommand("apply") != null) { getCommand("apply").setExecutor(this); getCommand("apply").setTabCompleter(this); }
+            if (getCommand("vote") != null) { getCommand("vote").setExecutor(this); getCommand("vote").setTabCompleter(this); }
+            if (getCommand("crate") != null) { getCommand("crate").setExecutor(this); getCommand("crate").setTabCompleter(this); }
+            if (getCommand("nick") != null) { getCommand("nick").setExecutor(this); getCommand("nick").setTabCompleter(this); }
+            if (getCommand("rules") != null) { getCommand("rules").setExecutor(this); getCommand("rules").setTabCompleter(this); }
+            if (getCommand("duel") != null) { getCommand("duel").setExecutor(this); getCommand("duel").setTabCompleter(this); }
+            if (getCommand("pwarp") != null) { getCommand("pwarp").setExecutor(this); getCommand("pwarp").setTabCompleter(this); }
+            if (getCommand("achievements") != null) { getCommand("achievements").setExecutor(this); getCommand("achievements").setTabCompleter(this); }
+            if (getCommand("stats") != null) { getCommand("stats").setExecutor(this); getCommand("stats").setTabCompleter(this); }
+            if (getCommand("report") != null) { getCommand("report").setExecutor(this); getCommand("report").setTabCompleter(this); }
+            if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
+            if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
 
-        if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
-        if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
-        if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
-        if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
-        if (getCommand("shop") != null) getCommand("shop").setExecutor(this);
-        if (getCommand("quest") != null) getCommand("quest").setExecutor(this);
-        if (getCommand("apply") != null) getCommand("apply").setExecutor(this);
-        if (getCommand("vote") != null) getCommand("vote").setExecutor(this);
-        if (getCommand("crate") != null) getCommand("crate").setExecutor(this);
-        if (getCommand("nick") != null) getCommand("nick").setExecutor(this);
-        if (getCommand("rules") != null) getCommand("rules").setExecutor(this);
-        if (getCommand("duel") != null) getCommand("duel").setExecutor(this);
-        if (getCommand("pwarp") != null) getCommand("pwarp").setExecutor(this);
-        if (getCommand("achievements") != null) getCommand("achievements").setExecutor(this);
-        if (getCommand("stats") != null) getCommand("stats").setExecutor(this);
-        if (getCommand("report") != null) getCommand("report").setExecutor(this);
-        if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
-        if (getCommand("economy") != null) getCommand("economy").setExecutor(this);
- 
         webServer = new WebServer(this);
         webServer.start();
 
@@ -3311,7 +3316,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         gui.setItem(1, createGuiItem(Material.BOOK, ChatColor.YELLOW + "Bug"));
         gui.setItem(2, createGuiItem(Material.OAK_LOG, ChatColor.YELLOW + "Griefing"));
         gui.setItem(3, createGuiItem(Material.PINK_WOOL, ChatColor.YELLOW + "Chat"));
-        gui.setItem(4, createGuiItem(Material.BARRIER, ChatColor.YELLOW + "Item_Loss"));
+        gui.setItem(4, createGuiItem(Material.CHEST, ChatColor.YELLOW + "Item Loss"));
         gui.setItem(5, createGuiItem(Material.DIAMOND_SWORD, ChatColor.YELLOW + "PvP"));
         gui.setItem(6, createGuiItem(Material.MAP, ChatColor.YELLOW + "Other"));
         gui.setItem(8, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
@@ -3323,7 +3328,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         gui.setItem(1, createGuiItem(Material.BOOK, ChatColor.YELLOW + "Bug"));
         gui.setItem(2, createGuiItem(Material.OAK_LOG, ChatColor.YELLOW + "Griefing"));
         gui.setItem(3, createGuiItem(Material.PINK_WOOL, ChatColor.YELLOW + "Chat"));
-        gui.setItem(4, createGuiItem(Material.BARRIER, ChatColor.YELLOW + "Item_Loss"));
+        gui.setItem(4, createGuiItem(Material.CHEST, ChatColor.YELLOW + "Item Loss"));
         gui.setItem(5, createGuiItem(Material.DIAMOND_SWORD, ChatColor.YELLOW + "PvP"));
         gui.setItem(6, createGuiItem(Material.MAP, ChatColor.YELLOW + "Other"));
         gui.setItem(8, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
@@ -3667,6 +3672,41 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         gui.setItem(2, createGuiItem(Material.EMERALD_BLOCK, ChatColor.GREEN + "Confirm Delete"));
         gui.setItem(4, createGuiItem(Material.BARRIER, ChatColor.RED + "Cancel"));
         p.openInventory(gui);
+    }
+
+    private void loadPersistedWorlds() {
+        File worldContainer = getServer().getWorldContainer();
+        if (worldContainer == null || !worldContainer.isDirectory()) return;
+
+        File[] dirs = worldContainer.listFiles(File::isDirectory);
+        if (dirs == null) return;
+
+        for (File dir : dirs) {
+            String name = dir.getName();
+            // ignore known non-world folders
+            if (name.equalsIgnoreCase("plugins")
+                    || name.equalsIgnoreCase("logs")
+                    || name.equalsIgnoreCase("crash-reports")
+                    || name.equalsIgnoreCase("cache")
+                    || name.equalsIgnoreCase("resourcepacks")
+                    || name.equalsIgnoreCase("libraries")) {
+                continue;
+            }
+
+            // If world is already loaded, skip
+            if (Bukkit.getWorld(name) != null) continue;
+
+            // Only load folders that look like valid worlds
+            File levelDat = new File(dir, "level.dat");
+            if (!levelDat.exists()) continue;
+
+            getLogger().info("Loading persisted world: " + name);
+            try {
+                Bukkit.createWorld(new WorldCreator(name));
+            } catch (Exception ex) {
+                getLogger().warning("Failed to load world '" + name + "': " + ex.getMessage());
+            }
+        }
     }
 
     private void openPlayerNotesMenu(Player p, String targetName) {
@@ -4092,54 +4132,58 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onGuiClick(InventoryClickEvent e) {
         String title = e.getView().getTitle();
-        boolean relevant = title.equals(GUI_MAIN)
-            || title.equals(GUI_PLAYER_LIST)
-            || title.equals(GUI_TICKET_LIST)
-            || title.equals(GUI_PLAYER_TICKET_MENU)
-            || title.equals(GUI_PLAYER_TICKETS)
-            || title.startsWith(GUI_MY_TICKET_OPTIONS)
-            || title.equals(GUI_TICKET_CATEGORY)
-            || title.startsWith(GUI_TICKET_DETAIL)
-            || title.startsWith(GUI_PLAYER_ACTION)
-            || title.startsWith(GUI_NOTES_VIEW)
-            || title.equals(ChatColor.RED + "Punished Players")
-            || title.startsWith(ChatColor.YELLOW + "Note:")
-            || title.equals(GUI_MENU_SELECTOR)
-            || title.equals(GUI_PLAYER_MENU)
-            || title.equals(GUI_PLAYER_LIST_TPA)
-            || title.equals(GUI_REPORT_PLAYER)
-            || title.equals(GUI_PLAYER_APPEALS)
-            || title.startsWith(GUI_MY_APPEAL_OPTIONS)
-            || title.equals(ChatColor.BLUE + "Warps")
-            || title.startsWith(GUI_WARP_MANAGEMENT)
-            || title.startsWith(ChatColor.RED + "Delete:")
-            || title.equals(GUI_CLAIMS)
-            || title.equals(GUI_CLAIM_CONFIRM)
-            || title.equals(GUI_UNCLAIM_CONFIRM)
-            || title.equals(GUI_TRUST_PLAYER)
-            || title.equals(GUI_UNTRUST_PLAYER)
-            || title.equals(GUI_WORLD_UTILITIES)
-            || title.equals(GUI_WORLD_SETTINGS)
-            || title.equals(GUI_WORLD_LIST)
-            || title.startsWith(GUI_WORLD_OPTIONS)
-            || title.equals(GUI_CREATE_TYPE)
-            || title.startsWith(GUI_DELETE_CONFIRM)
-            || title.equals(GUI_KIT_LIST)
-            || title.startsWith(GUI_KIT_PREVIEW)
-            || title.startsWith(GUI_KIT_CONFIRM)
-            || title.equals(GUI_CRATE_LIST)
-            || title.equals(GUI_BOUNTY_LIST)
-            || title.equals(GUI_SHOP_LIST)
-            || title.equals(GUI_QUEST_LIST)
-            || title.equals(GUI_AUCTION_HOUSE)
-            || title.equals(GUI_PWARP_LIST)
-            || title.equals(GUI_ACHIEVEMENTS)
-            || title.equals(GUI_POLL_LIST)
-            || title.startsWith(GUI_POLL_VOTE)
-            || title.equals(GUI_EVENT_LIST)      // admin event manager
-            || title.equals(GUI_ACTIVE_EVENT)    // active event options
-            || title.equals(GUI_CUSTOM_ENCHANTS)
-            || title.startsWith(GUI_NPC_SHOP); // NPC shop menu
+        String strippedTitle = ChatColor.stripColor(title);
+        boolean relevant = strippedTitle.equals(ChatColor.stripColor(GUI_MAIN))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_TICKET_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_TICKET_MENU))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_TICKETS))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_MY_TICKET_OPTIONS))
+            // Category menus may get truncated by the client; match by contains to be resilient
+            || strippedTitle.contains("Select Ticket Category")
+            || strippedTitle.contains("Select Appeal Category")
+            || strippedTitle.equals(ChatColor.stripColor(GUI_TICKET_CATEGORY))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_TICKET_DETAIL))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_PLAYER_ACTION))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_NOTES_VIEW))
+            || strippedTitle.equals("Punished Players")
+            || strippedTitle.startsWith("Note:")
+            || strippedTitle.equals(ChatColor.stripColor(GUI_MENU_SELECTOR))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_MENU))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_LIST_TPA))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_REPORT_PLAYER))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_APPEALS))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_MY_APPEAL_OPTIONS))
+            || strippedTitle.equals("Warps")
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_WARP_MANAGEMENT))
+            || strippedTitle.startsWith("Delete:")
+            || strippedTitle.equals(ChatColor.stripColor(GUI_CLAIMS))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_CLAIM_CONFIRM))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_UNCLAIM_CONFIRM))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_TRUST_PLAYER))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_UNTRUST_PLAYER))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_WORLD_UTILITIES))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_WORLD_SETTINGS))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_WORLD_LIST))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_WORLD_OPTIONS))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_CREATE_TYPE))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_DELETE_CONFIRM))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_KIT_LIST))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_KIT_PREVIEW))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_KIT_CONFIRM))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_CRATE_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_BOUNTY_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_SHOP_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_QUEST_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_AUCTION_HOUSE))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_PWARP_LIST))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_ACHIEVEMENTS))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_POLL_LIST))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_POLL_VOTE))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_EVENT_LIST))      // admin event manager
+            || strippedTitle.equals(ChatColor.stripColor(GUI_ACTIVE_EVENT))    // active event options
+            || strippedTitle.equals(ChatColor.stripColor(GUI_CUSTOM_ENCHANTS))
+            || strippedTitle.startsWith(ChatColor.stripColor(GUI_NPC_SHOP)); // NPC shop menu
         if (!relevant) return;
 
         e.setCancelled(true);
@@ -4232,13 +4276,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Category selection menu (tickets or appeals)
-        if (title.equals(GUI_TICKET_CATEGORY) || title.equals(GUI_APPEAL_CATEGORY)) {
-            if (type == Material.BARRIER) {
+        if (strippedTitle.contains("Select Ticket Category") || strippedTitle.contains("Select Appeal Category")
+            || strippedTitle.equals(ChatColor.stripColor(GUI_TICKET_CATEGORY))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_APPEAL_CATEGORY))) {
+            if (itemName.equalsIgnoreCase("Cancel")) {
                 openPlayerTicketMenu(p);
-            } else {
+            } else if (!itemName.isEmpty()) {
                 String category = itemName.toLowerCase().replace(" ", "_");
                 p.closeInventory();
-                ActionType act = title.equals(GUI_APPEAL_CATEGORY) ? ActionType.APPEAL_CREATE : ActionType.TICKET_CREATE;
+                ActionType act = strippedTitle.contains("Select Appeal Category")
+                        || strippedTitle.equals(ChatColor.stripColor(GUI_APPEAL_CATEGORY))
+                        ? ActionType.APPEAL_CREATE
+                        : ActionType.TICKET_CREATE;
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(category, act));
                 p.sendMessage(ChatColor.GOLD + "Type your " + (act == ActionType.APPEAL_CREATE ? "appeal" : "ticket") + " message:");
             }
@@ -5243,6 +5292,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             e.setRespawnLocation(Bukkit.getWorlds().get(0).getSpawnLocation());
             e.getPlayer().sendMessage(ChatColor.RED + "The End access is locked. Respawning in overworld.");
         }
+
+        // Ensure the player receives the Drowsy Tool on respawn (if it was held when they died)
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (e.getPlayer().isOnline()) {
+                UUID uuid = e.getPlayer().getUniqueId();
+                if (toolRespawnQueue.remove(uuid)) {
+                    ensurePlayerHasTool(e.getPlayer());
+                }
+            }
+        }, 1L);
     }
     @EventHandler
     public void onPlayerTeleport(PlayerTeleportEvent e) {
@@ -5597,16 +5656,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Give admin tool if missing
-        boolean hasTool = Arrays.stream(e.getPlayer().getInventory().getContents()).anyMatch(i -> i != null && i.hasItemMeta() && i.getItemMeta().getDisplayName().equals(TOOL_NAME));
-        if (!hasTool) {
-            ItemStack tool = new ItemStack(Material.DIAMOND);
-            ItemMeta m = tool.getItemMeta();
-            m.setDisplayName(TOOL_NAME);
-            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
-            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-            tool.setItemMeta(m);
-            e.getPlayer().getInventory().addItem(tool);
-        }
+        ensurePlayerHasTool(e.getPlayer());
 
         fireDiscordEvent("joins", "Player Joined", "**" + e.getPlayer().getName() + "** joined the server.", 0x4ec9b0, e.getPlayer().getName());
 
@@ -5702,6 +5752,21 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                 }, 40L);
             }
+        }
+    }
+
+    private void ensurePlayerHasTool(Player p) {
+        boolean hasTool = Arrays.stream(p.getInventory().getContents())
+            .filter(Objects::nonNull)
+            .anyMatch(i -> i.hasItemMeta() && TOOL_NAME.equals(i.getItemMeta().getDisplayName()));
+        if (!hasTool) {
+            ItemStack tool = new ItemStack(Material.DIAMOND);
+            ItemMeta m = tool.getItemMeta();
+            m.setDisplayName(TOOL_NAME);
+            m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            tool.setItemMeta(m);
+            p.getInventory().addItem(tool);
         }
     }
 
@@ -6709,12 +6774,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
         Player victim = e.getEntity();
+        UUID victimUUID = victim.getUniqueId();
+
+        // Prevent losing the Drowsy Tool on death
+        boolean hadTool = Arrays.stream(victim.getInventory().getContents())
+                .filter(Objects::nonNull)
+                .anyMatch(i -> i.hasItemMeta() && TOOL_NAME.equals(i.getItemMeta().getDisplayName()));
+        if (hadTool) {
+            toolRespawnQueue.add(victimUUID);
+            e.getDrops().removeIf(item -> item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName()));
+        }
+
         Player killer = victim.getKiller();
         if (killer == null || killer.equals(victim)) return;
 
         // --- PVP STATS TRACKING ---
         UUID killerUUID = killer.getUniqueId();
-        UUID victimUUID = victim.getUniqueId();
         dataConfig.set("pvpstats." + killerUUID + ".kills", dataConfig.getInt("pvpstats." + killerUUID + ".kills", 0) + 1);
         int killerStreak = dataConfig.getInt("pvpstats." + killerUUID + ".streak", 0) + 1;
         dataConfig.set("pvpstats." + killerUUID + ".streak", killerStreak);
