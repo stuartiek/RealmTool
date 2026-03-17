@@ -466,6 +466,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (command.equalsIgnoreCase("antlag") && isModerator(p)) return true;
         // Helpers and moderators should be able to open the menu
         if (command.equalsIgnoreCase("menu") && (isHelper(p) || isModerator(p))) return true;
+        // Helpers and moderators should be able to change mode (survival/spectator)
+        if ((command.equalsIgnoreCase("gamemode") || command.equalsIgnoreCase("gm")) && (isHelper(p) || isModerator(p))) return true;
         return p.hasPermission("dmt.command." + command.toLowerCase());
     }
 
@@ -911,6 +913,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (!isAdminCmd) {
                 if (subcommand.equals("menu") && (isHelperTag || isModTag)) {
                     // allowed
+                } else if ((subcommand.equals("gamemode") || subcommand.equals("gm")) && (isHelperTag || isModTag)) {
+                    // allowed
                 } else if (subcommand.equals("antlag") && isModTag) {
                     // allowed
                 } else if (subcommand.equals("staff") && isAnyStaffTag) {
@@ -1001,6 +1005,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
                     p.sendMessage(ChatColor.RED + "Usage: /dmt staff list");
+                    return true;
+                case "gamemode":
+                case "gm":
+                    if (!hasDmtCommandPermission(p, "gamemode")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt gamemode <survival|spectator>");
+                        return true;
+                    }
+                    Player targetPlayer = Bukkit.getPlayer(p.getUniqueId());
+                    if (targetPlayer == null) {
+                        p.sendMessage(ChatColor.RED + "Unable to find your player object.");
+                        return true;
+                    }
+                    String mode = args[1].toLowerCase();
+                    if (mode.equals("survival") || mode.equals("s")) {
+                        targetPlayer.setGameMode(GameMode.SURVIVAL);
+                        targetPlayer.sendMessage(ChatColor.GREEN + "Gamemode set to Survival.");
+                    } else if (mode.equals("spectator") || mode.equals("sp")) {
+                        targetPlayer.setGameMode(GameMode.SPECTATOR);
+                        targetPlayer.sendMessage(ChatColor.GREEN + "Gamemode set to Spectator.");
+                    } else {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt gamemode <survival|spectator>");
+                    }
                     return true;
                 case "tp":
                     if (!hasDmtCommandPermission(p, "tp")) {
@@ -2044,6 +2074,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/stats [player]" + ChatColor.WHITE + " - View PvP stats");
         p.sendMessage(ChatColor.GREEN + "/report <player> <reason>" + ChatColor.WHITE + " - Report a player");
         p.sendMessage(ChatColor.GREEN + "/staff" + ChatColor.WHITE + " - View online staff tags");
+        p.sendMessage(ChatColor.GREEN + "/dmt gamemode <survival|spectator>" + ChatColor.WHITE + " - Set your game mode (Helpers/Mods)");
         p.sendMessage(ChatColor.GRAY + "Use the player menu to access your custom enchantments (unlocked via quests)");
 
         if (p.hasPermission("dmt.admin")) {
@@ -2068,6 +2099,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt spawnlast tp <world>" + ChatColor.WHITE + " - Teleport to stored last location");
             p.sendMessage(ChatColor.AQUA + "/dmt world <world> <lock|unlock>" + ChatColor.WHITE + " - Lock or unlock a world");
             p.sendMessage(ChatColor.AQUA + "/dmt antlag <on|off|now>" + ChatColor.WHITE + " - Enable/disable or run anti-lag cleanup (drops)");
+            p.sendMessage(ChatColor.AQUA + "/dmt gamemode <survival|spectator>" + ChatColor.WHITE + " - Set your gamemode");
             p.sendMessage(ChatColor.AQUA + "/dmt spawn reset" + ChatColor.WHITE + " - Reset all spawn restrictions");
             p.sendMessage(ChatColor.AQUA + "/dmt spawn <view|list>" + ChatColor.WHITE + " - View disabled mob spawns");
             p.sendMessage(ChatColor.AQUA + "/dmt spawn <mob> <true|false>" + ChatColor.WHITE + " - Enable/disable mob spawning");
@@ -2157,11 +2189,40 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             case "summon":
                 p.sendMessage(ChatColor.AQUA + "/dmt summon <name>" + ChatColor.WHITE + " - Spawn a configurable NPC");
                 break;
+            case "documentation":
+            case "docs":
+                p.sendMessage(ChatColor.AQUA + "/dmt documentation" + ChatColor.WHITE + " - Generate & download plugin docs");
+                break;
+            case "list":
+                p.sendMessage(ChatColor.AQUA + "/dmt list npcs" + ChatColor.WHITE + " - List NPC skins in the library");
+                break;
             case "sethub":
                 p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
                 break;
             case "unsethub":
                 p.sendMessage(ChatColor.AQUA + "/dmt unsethub" + ChatColor.WHITE + " - Remove the saved hub location");
+                break;
+            case "menu":
+                p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Open the management GUI");
+                break;
+            case "staff":
+                p.sendMessage(ChatColor.AQUA + "/dmt staff list" + ChatColor.WHITE + " - List online staff tags");
+                break;
+            case "punish":
+                p.sendMessage(ChatColor.AQUA + "/dmt punish <player> <duration>" + ChatColor.WHITE + " - Punish a player (e.g. 20s, 5m, 2hr)");
+                break;
+            case "setpunishloc":
+                p.sendMessage(ChatColor.AQUA + "/dmt setpunishloc" + ChatColor.WHITE + " - Set the punishment location");
+                break;
+            case "setjailloc":
+                p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set the jail location");
+                break;
+            case "tpjail":
+                p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to the jail location");
+                break;
+            case "gamemode":
+            case "gm":
+                p.sendMessage(ChatColor.AQUA + "/dmt gamemode <survival|spectator>" + ChatColor.WHITE + " - Change your game mode");
                 break;
             case "setserverspawn":
                 p.sendMessage(ChatColor.AQUA + "/dmt setserverspawn" + ChatColor.WHITE + " - Set the server spawn location");
@@ -5811,18 +5872,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onToolUse(PlayerInteractEvent e) {
         if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-        
+
         ItemStack item = e.getItem();
         if (item == null || !item.hasItemMeta()) return;
         if (!item.getItemMeta().getDisplayName().equals(TOOL_NAME)) return;
-        
+
         Player p = e.getPlayer();
         e.setCancelled(true);
-        
+
+        // Keep the tool locked to the last hotbar slot
+        ensurePlayerHasTool(p);
+
         if (isHelper(p) || isModerator(p) || p.isOp() || p.hasPermission("dmt.admin")) {
             openMenuSelector(p);
         } else {
             openPlayerMenu(p);
+        }
+    }
+
+    @EventHandler
+    public void onToolDrop(PlayerDropItemEvent e) {
+        ItemStack item = e.getItemDrop().getItemStack();
+        if (item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName())) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage(ChatColor.RED + "You cannot drop the Drowsy tool.");
+            ensurePlayerHasTool(e.getPlayer());
         }
     }
 
@@ -6030,17 +6104,40 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void ensurePlayerHasTool(Player p) {
-        boolean hasTool = Arrays.stream(p.getInventory().getContents())
-            .filter(Objects::nonNull)
-            .anyMatch(i -> i.hasItemMeta() && TOOL_NAME.equals(i.getItemMeta().getDisplayName()));
-        if (!hasTool) {
+        // Ensure the player has the tool item and keep it locked in the last hotbar slot (slot 8).
+        Inventory inv = p.getInventory();
+        int toolSlot = -1;
+        for (int i = 0; i < inv.getSize(); i++) {
+            ItemStack item = inv.getItem(i);
+            if (item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName())) {
+                toolSlot = i;
+                break;
+            }
+        }
+
+        if (toolSlot == -1) {
             ItemStack tool = new ItemStack(Material.DIAMOND);
             ItemMeta m = tool.getItemMeta();
             m.setDisplayName(TOOL_NAME);
             m.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
             m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
             tool.setItemMeta(m);
-            p.getInventory().addItem(tool);
+            inv.setItem(8, tool);
+            return;
+        }
+
+        // If the tool exists but isn't in the locked slot, move it back to slot 8.
+        if (toolSlot != 8) {
+            ItemStack existing = inv.getItem(8);
+            inv.setItem(8, inv.getItem(toolSlot));
+            inv.setItem(toolSlot, existing);
+        }
+
+        // If tool exists but isn't in the locked slot, move it there.
+        if (toolSlot != 8) {
+            ItemStack existing = inv.getItem(8);
+            inv.setItem(8, inv.getItem(toolSlot));
+            inv.setItem(toolSlot, existing);
         }
     }
 
@@ -7049,6 +7146,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
         Player victim = e.getEntity();
         UUID victimUUID = victim.getUniqueId();
+
+        // Ensure only the Drowsy tool is kept on death (all other items drop normally)
+        e.setKeepInventory(false);
 
         // Prevent losing the Drowsy Tool on death
         boolean hadTool = Arrays.stream(victim.getInventory().getContents())
