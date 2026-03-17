@@ -6301,7 +6301,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         m.put("message", dataConfig.getString(base + ".message", ""));
         m.put("status", dataConfig.getString(base + ".status", "open"));
         m.put("priority", dataConfig.getString(base + ".priority", "medium"));
-        m.put("category", (id < 0 ? "APPEAL: " : "") + dataConfig.getString(base + ".category", "other"));
+        m.put("category", dataConfig.getString(base + ".category", "other"));
         m.put("assignee", dataConfig.getString(base + ".assignee", ""));
         m.put("timestamp", dataConfig.getString(base + ".timestamp", ""));
         m.put("resolution", dataConfig.getString(base + ".resolution", ""));
