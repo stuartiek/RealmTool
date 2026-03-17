@@ -5401,14 +5401,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     public Map<String, Object> getTicketData(int id) {
         Map<String, Object> m = new HashMap<>();
-        String base = "tickets." + id;
+        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
         if (!dataConfig.contains(base)) return m;
-        m.put("id", id);
+        m.put("id", Integer.toString(id));
         m.put("player", dataConfig.getString(base + ".player", ""));
         m.put("message", dataConfig.getString(base + ".message", ""));
         m.put("status", dataConfig.getString(base + ".status", "open"));
         m.put("priority", dataConfig.getString(base + ".priority", "medium"));
-        m.put("category", dataConfig.getString(base + ".category", "other"));
+        m.put("category", (id < 0 ? "APPEAL: " : "") + dataConfig.getString(base + ".category", "other"));
         m.put("assignee", dataConfig.getString(base + ".assignee", ""));
         m.put("timestamp", dataConfig.getString(base + ".timestamp", ""));
         m.put("resolution", dataConfig.getString(base + ".resolution", ""));
@@ -5442,36 +5442,39 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public void addTicketResponse(int id, String admin, String message) {
-        String path = "tickets." + id + ".responses";
+        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
+        String path = base + ".responses";
         List<String> responses = dataConfig.getStringList(path);
         String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + admin + " | " + message;
         responses.add(entry);
         dataConfig.set(path, responses);
-        dataConfig.set("tickets." + id + ".has_new_response", true);
+        dataConfig.set(base + ".has_new_response", true);
         saveDataFile();
         // Notify player if online
-        String playerName = dataConfig.getString("tickets." + id + ".player", "");
+        String playerName = dataConfig.getString(base + ".player", "");
         Player target = Bukkit.getPlayer(playerName);
         if (target != null && target.isOnline()) {
-            target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.GREEN + admin + " responded to your ticket #" + id + ": " + ChatColor.WHITE + message);
+            target.playSound(target.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1F, 2F);
+            target.sendMessage(ChatColor.GOLD + "[" + (id < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.GREEN + admin + " responded to your " + (id < 0 ? "appeal" : "ticket") + " #" + Math.abs(id) + ": " + ChatColor.WHITE + message);
         }
     }
 
     public void updateTicketField(int id, String field, String value) {
-        dataConfig.set("tickets." + id + "." + field, value);
+        dataConfig.set((id < 0 ? "appeals." + (-id) : "tickets." + id) + "." + field, value);
         saveDataFile();
     }
 
     public void resolveTicket(int id, String reason) {
-        dataConfig.set("tickets." + id + ".status", "resolved");
-        dataConfig.set("tickets." + id + ".resolution", reason);
-        dataConfig.set("tickets." + id + ".has_new_response", true);
+        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
+        dataConfig.set(base + ".status", "resolved");
+        dataConfig.set(base + ".resolution", reason);
+        dataConfig.set(base + ".has_new_response", true);
         saveDataFile();
         // Notify player if online
-        String playerName = dataConfig.getString("tickets." + id + ".player", "");
+        String playerName = dataConfig.getString(base + ".player", "");
         Player target = Bukkit.getPlayer(playerName);
         if (target != null && target.isOnline()) {
-            target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.GREEN + "Your ticket #" + id + " has been resolved: " + ChatColor.WHITE + reason);
+            target.sendMessage(ChatColor.GOLD + "[" + (id < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.GREEN + "Your " + (id < 0 ? "appeal" : "ticket") + " #" + Math.abs(id) + " has been resolved: " + ChatColor.WHITE + reason);
         }
     }
 
