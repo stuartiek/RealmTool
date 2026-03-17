@@ -520,8 +520,42 @@ public class WebServer {
 
         app.get("/api/banned", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.banned")) return;
-            List<String> banned = new ArrayList<>(Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getEntries());
-            ctx.json(banned);
+            
+            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, String>> banned = new ArrayList<>();
+                org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                for (Object obj : profileBanList.getEntries()) {
+                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                    Map<String, String> map = new HashMap<>();
+                    Object target = entry.getTarget();
+                    String name = "Unknown";
+                    if (target instanceof org.bukkit.profile.PlayerProfile) {
+                        name = ((org.bukkit.profile.PlayerProfile) target).getName();
+                    } else if (target != null) {
+                        name = target.toString();
+                    }
+                    if (name == null || name.isEmpty()) continue;
+                    map.put("name", name);
+                    map.put("target", name);
+                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
+                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
+                    banned.add(map);
+                }
+                org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
+                for (Object obj : nameBanList.getEntries()) {
+                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                    String name = entry.getTarget() != null ? entry.getTarget().toString() : null;
+                    if (name == null || name.isEmpty() || banned.stream().anyMatch(m -> name.equals(m.get("name")))) continue;
+                    Map<String, String> map = new HashMap<>();
+                    map.put("name", name);
+                    map.put("target", name);
+                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
+                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
+                    banned.add(map);
+                }
+                return banned;
+            });
+            ctx.json(future.get());
         });
 
         app.get("/api/logs", ctx -> {
@@ -561,8 +595,10 @@ public class WebServer {
                     if (body != null && !body.isEmpty()) {
                         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                         java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                            if (targetNameParam == null) targetNameParam = (String) bodyMap.get("player");
-                        if (reasonParam == null) reasonParam = (String) bodyMap.get("reason");
+                        if (targetNameParam == null && bodyMap.get("player") != null) targetNameParam = String.valueOf(bodyMap.get("player"));
+                        if (targetNameParam == null && bodyMap.get("target") != null) targetNameParam = String.valueOf(bodyMap.get("target"));
+                        if (targetNameParam == null && bodyMap.get("name") != null) targetNameParam = String.valueOf(bodyMap.get("name"));
+                        if (reasonParam == null && bodyMap.get("reason") != null) reasonParam = String.valueOf(bodyMap.get("reason"));
                     }
                 } catch (Exception e) {
                     // Continue with null params
@@ -591,14 +627,26 @@ public class WebServer {
                     }
                     else if (action.equals("ban")) {
                         String banReason = val != null ? val : "No reason";
-                        Bukkit.getBanList(org.bukkit.BanList.Type.NAME).addBan(targetName, banReason, null, "Web Admin");
+                        org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
+                        nameBanList.addBan(targetName, banReason, (java.util.Date) null, "Web Admin");
+                        org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
+                        if (op != null && op.getPlayerProfile() != null) {
+                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                            profileBanList.addBan(op.getPlayerProfile(), banReason, (java.util.Date) null, "Web Admin");
+                        }
                         if (p != null) p.kickPlayer(ChatColor.RED + "You have been banned: " + banReason);
                         plugin.addChatLog("System", "[BAN] " + targetName + ": " + banReason);
                         plugin.logAction("WebAdmin", "banned", targetName + " (" + banReason + ")");
                         plugin.fireDiscordEvent("bans", "Player Banned", "**" + targetName + "** was banned.\nReason: " + banReason, 0xe74c3c, targetName);
                     }
                     else if (action.equals("unban")) {
-                        Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(targetName);
+                        org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
+                        nameBanList.pardon(targetName);
+                        org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
+                        if (op != null && op.getPlayerProfile() != null) {
+                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                            profileBanList.pardon(op.getPlayerProfile());
+                        }
                         plugin.logAction("WebAdmin", "unbanned", targetName);
                     }
                     else if (action.equals("warn")) {
@@ -946,8 +994,8 @@ public class WebServer {
                     if (body != null && !body.isEmpty()) {
                         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                         java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                            if (playerParam == null) playerParam = (String) bodyMap.get("player");
-                            if (reasonParam == null) reasonParam = (String) bodyMap.get("reason");
+                        if (playerParam == null && bodyMap.get("player") != null) playerParam = String.valueOf(bodyMap.get("player"));
+                        if (reasonParam == null && bodyMap.get("reason") != null) reasonParam = String.valueOf(bodyMap.get("reason"));
                     }
                 } catch (Exception e) {
                     // Continue with null params
@@ -976,7 +1024,7 @@ public class WebServer {
                     if (body != null && !body.isEmpty()) {
                         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                         java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                            playerParam = (String) bodyMap.get("player");
+                        if (bodyMap.get("player") != null) playerParam = String.valueOf(bodyMap.get("player"));
                     }
                 } catch (Exception e) {
                     // Continue with null params
@@ -1280,9 +1328,9 @@ public class WebServer {
                 if (body != null && !body.isEmpty()) {
                     com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                     java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                    if (action == null) action = (String) bodyMap.get("action");
-                    if (players == null) players = (String) bodyMap.get("players");
-                    if (reason == null) reason = (String) bodyMap.get("reason");
+                    if (action == null && bodyMap.get("action") != null) action = String.valueOf(bodyMap.get("action"));
+                    if (players == null && bodyMap.get("players") != null) players = String.valueOf(bodyMap.get("players"));
+                    if (reason == null && bodyMap.get("reason") != null) reason = String.valueOf(bodyMap.get("reason"));
                 }
             } catch (Exception ignored) {}
 
@@ -1296,7 +1344,13 @@ public class WebServer {
                         if (target.isEmpty()) continue;
                         UUID uuid = Bukkit.getOfflinePlayer(target).getUniqueId();
                         if ("ban".equals(fAction)) {
-                            Bukkit.getBanList(org.bukkit.BanList.Type.NAME).addBan(target, fReason, null, "WebAdmin");
+                            org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
+                            nameBanList.addBan(target, fReason, (java.util.Date) null, "WebAdmin");
+                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
+                            if (op != null && op.getPlayerProfile() != null) {
+                                org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                                profileBanList.addBan(op.getPlayerProfile(), fReason, (java.util.Date) null, "WebAdmin");
+                            }
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.kickPlayer(ChatColor.RED + "Banned: " + (fReason != null ? fReason : ""));
                         } else if ("kick".equals(fAction)) {
