@@ -55,6 +55,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> pendingClaimAction = new HashMap<>();
     private final Map<UUID, String> pendingTrustAction = new HashMap<>();
     private final Map<UUID, Integer> menuPages = new HashMap<>();
+    private final Map<UUID, String> menuOrigin = new HashMap<>();
     private final Map<UUID, String> currentChunk = new ConcurrentHashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
     private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
@@ -74,6 +75,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final String HOLOGRAM_WAND_NAME = ChatColor.AQUA + "" + ChatColor.BOLD + "Hologram Wand";
     
     private final String GUI_MENU_SELECTOR = ChatColor.AQUA + "Menu Selection";
+    private final String GUI_HELPER_MENU = ChatColor.GREEN + "Helper Menu";
+    private final String GUI_MODERATOR_MENU = ChatColor.GOLD + "Moderator Menu";
     private final String GUI_PLAYER_MENU = ChatColor.GREEN + "Player Menu";
     private final String GUI_PLAYER_TICKET_MENU = ChatColor.AQUA + "Tickets";
     private final String GUI_PLAYER_LIST_TPA = ChatColor.GREEN + "Players (TPA)";
@@ -391,9 +394,78 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         applyRankToPlayer(player);
     }
 
+    private boolean hasTag(Player p, String tag) {
+        if (tag == null) return false;
+        for (String t : p.getScoreboardTags()) {
+            if (t.equalsIgnoreCase(tag)) return true;
+        }
+        return false;
+    }
+
+    private boolean isHelper(Player p) {
+        return hasTag(p, "Helper");
+    }
+
+    private boolean isModerator(Player p) {
+        return hasTag(p, "Moderator");
+    }
+
+    private boolean isAdminTag(Player p) {
+        return hasTag(p, "Admin");
+    }
+
+    private boolean isManagerTag(Player p) {
+        return hasTag(p, "Manager");
+    }
+
+    private boolean isOwnerTag(Player p) {
+        return hasTag(p, "Owner");
+    }
+
+    private boolean isHeadAdminTag(Player p) {
+        return hasTag(p, "Head_Admin");
+    }
+
+    private boolean isStaffTagged(Player p) {
+        return isHelper(p) || isModerator(p) || isAdminTag(p) || isManagerTag(p) || isOwnerTag(p) || isHeadAdminTag(p);
+    }
+
+    private void setMenuOrigin(Player p, String origin) {
+        if (origin == null) {
+            menuOrigin.remove(p.getUniqueId());
+        } else {
+            menuOrigin.put(p.getUniqueId(), origin);
+        }
+    }
+
+    private void clearMenuOrigin(Player p) {
+        menuOrigin.remove(p.getUniqueId());
+    }
+
+    private void returnToPreviousMenu(Player p) {
+        String origin = menuOrigin.get(p.getUniqueId());
+        if ("helper".equals(origin)) {
+            openHelperMenu(p);
+        } else if ("moderator".equals(origin)) {
+            openModeratorMenu(p);
+        } else {
+            openMenuSelector(p);
+        }
+        clearMenuOrigin(p);
+    }
+
+    private boolean canBan(Player p) {
+        // Only operators or those with dmt.admin can ban
+        return p.isOp() || p.hasPermission("dmt.admin");
+    }
+
     private boolean hasDmtCommandPermission(Player p, String command) {
         if (p.isOp() || p.hasPermission("dmt.admin")) return true;
         if (command == null || command.trim().isEmpty()) return false;
+        // Moderators should be able to run anti-lag commands
+        if (command.equalsIgnoreCase("antlag") && isModerator(p)) return true;
+        // Helpers and moderators should be able to open the menu
+        if (command.equalsIgnoreCase("menu") && (isHelper(p) || isModerator(p))) return true;
         return p.hasPermission("dmt.command." + command.toLowerCase());
     }
 
@@ -825,9 +897,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     return true;
             }
 
-            if (!p.hasPermission("dmt.admin")) {
-                p.sendMessage(ChatColor.RED + "No permission.");
-                return true;
+            boolean isAdminCmd = p.hasPermission("dmt.admin");
+            boolean isModTag = isModerator(p);
+            boolean isHelperTag = isHelper(p);
+            boolean isAnyStaffTag = isStaffTagged(p);
+
+            // Allow helpers/moderators to use their specific tools without full admin perms
+            if (!isAdminCmd) {
+                if (subcommand.equals("menu") && (isHelperTag || isModTag)) {
+                    // allowed
+                } else if (subcommand.equals("antlag") && isModTag) {
+                    // allowed
+                } else if (subcommand.equals("staff") && isAnyStaffTag) {
+                    // allowed
+                } else {
+                    p.sendMessage(ChatColor.RED + "No permission.");
+                    return true;
+                }
             }
 
             switch(subcommand) {
@@ -892,10 +978,46 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
                     try {
-                        openMainMenu(p);
+                        // Helpers/Moderators use the selector menu; full admins use the admin main menu.
+                        if (!p.hasPermission("dmt.admin") && isStaffTagged(p)) {
+                            openMenuSelector(p);
+                        } else {
+                            openMainMenu(p);
+                        }
                     } catch (Exception ex) {
                         p.sendMessage(ChatColor.RED + "An unexpected error occurred while opening the menu.");
                         getLogger().log(java.util.logging.Level.SEVERE, "Failed to open admin menu: " + ex.getMessage(), ex);
+                    }
+                    break;
+                case "staff":
+                    // Staff list for players with any staff-related tag.
+                    if (!isStaffTagged(p) && !p.hasPermission("dmt.admin")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length < 2 || !args[1].equalsIgnoreCase("list")) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt staff list");
+                        return true;
+                    }
+
+                    List<String> staffLines = new ArrayList<>();
+                    for (Player online : Bukkit.getOnlinePlayers()) {
+                        List<String> tags = new ArrayList<>();
+                        if (isHelper(online)) tags.add("Helper");
+                        if (isModerator(online)) tags.add("Moderator");
+                        if (isAdminTag(online)) tags.add("Admin");
+                        if (isManagerTag(online)) tags.add("Manager");
+                        if (isOwnerTag(online)) tags.add("Owner");
+                        if (isHeadAdminTag(online)) tags.add("Head_Admin");
+                        if (!tags.isEmpty()) {
+                            staffLines.add(ChatColor.AQUA + online.getName() + ChatColor.GRAY + " [" + String.join(", ", tags) + "]");
+                        }
+                    }
+                    p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "Staff Online" + ChatColor.GOLD + " =====");
+                    if (staffLines.isEmpty()) {
+                        p.sendMessage(ChatColor.GRAY + "No staff members online.");
+                    } else {
+                        staffLines.forEach(p::sendMessage);
                     }
                     break;
                 case "tp":
@@ -1974,6 +2096,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/balance <player> reset" + ChatColor.WHITE + " - Reset a player's Drowsy coins");
             p.sendMessage(ChatColor.AQUA + "/economy reset" + ChatColor.WHITE + " - Reset all player balances");
         }
+
+        if (isStaffTagged(p) || p.hasPermission("dmt.admin")) {
+            p.sendMessage("");
+            p.sendMessage(ChatColor.AQUA + "/dmt staff list" + ChatColor.WHITE + " - List online staff (Helper/Moderator/Admin/Manager/Owner/Head_Admin)");
+        }
     }
 
     private void sendDmtSubcommandHelp(Player p, String subcommand) {
@@ -2782,22 +2909,81 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         pmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Homes, Warps, TPA"));
         playerMenu.setItemMeta(pmMeta);
         gui.setItem(11, playerMenu);
-        
+
+        // Helper Menu button
+        if (isHelper(p)) {
+            ItemStack helperMenu = new ItemStack(Material.BLUE_STAINED_GLASS);
+            ItemMeta hmMeta = helperMenu.getItemMeta();
+            hmMeta.setDisplayName(ChatColor.GREEN + "Helper Menu");
+            hmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Staff tools for Helpers"));
+            helperMenu.setItemMeta(hmMeta);
+            gui.setItem(13, helperMenu);
+        }
+
+        // Moderator Menu button
+        if (isModerator(p)) {
+            ItemStack modMenu = new ItemStack(Material.GOLD_BLOCK);
+            ItemMeta mmMeta = modMenu.getItemMeta();
+            mmMeta.setDisplayName(ChatColor.GOLD + "Moderator Menu");
+            mmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Staff tools for Moderators"));
+            modMenu.setItemMeta(mmMeta);
+            gui.setItem(15, modMenu);
+        }
+
         // Admin Menu button
-        ItemStack adminMenu = new ItemStack(Material.REDSTONE_BLOCK);
-        ItemMeta amMeta = adminMenu.getItemMeta();
-        amMeta.setDisplayName(ChatColor.RED + "Admin Menu");
-        amMeta.setLore(Arrays.asList(ChatColor.GRAY + "Management tools"));
-        adminMenu.setItemMeta(amMeta);
-        gui.setItem(15, adminMenu);
+        if (p.isOp() || p.hasPermission("dmt.admin")) {
+            ItemStack adminMenu = new ItemStack(Material.REDSTONE_BLOCK);
+            ItemMeta amMeta = adminMenu.getItemMeta();
+            amMeta.setDisplayName(ChatColor.RED + "Admin Menu");
+            amMeta.setLore(Arrays.asList(ChatColor.GRAY + "Management tools"));
+            adminMenu.setItemMeta(amMeta);
+            gui.setItem(17, adminMenu);
+        }
         
-        // Back button
+        // Close button
         ItemStack back = new ItemStack(Material.BARRIER);
         ItemMeta bMeta = back.getItemMeta();
         bMeta.setDisplayName(ChatColor.RED + "Close");
         back.setItemMeta(bMeta);
         gui.setItem(26, back);
         
+        p.openInventory(gui);
+    }
+
+    private void openHelperMenu(Player p) {
+        setMenuOrigin(p, "helper");
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_HELPER_MENU);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+
+        gui.setItem(10, createGuiItem(Material.PAPER, ChatColor.GOLD + "Tickets"));
+        gui.setItem(11, createGuiItem(Material.CLOCK, ChatColor.AQUA + "Set Day"));
+        gui.setItem(12, createGuiItem(Material.SUNFLOWER, ChatColor.YELLOW + "Clear Weather"));
+        gui.setItem(13, createGuiItem(Material.GRASS_BLOCK, ChatColor.AQUA + "Survival Mode"));
+        gui.setItem(14, createGuiItem(Material.ENDER_EYE, ChatColor.AQUA + "Spectator Mode"));
+        gui.setItem(15, createGuiItem(Material.PLAYER_HEAD, ChatColor.AQUA + "Player Directory"));
+        gui.setItem(16, createGuiItem(Material.IRON_BARS, ChatColor.RED + "Punished Players"));
+        gui.setItem(17, createGuiItem(Material.BLAZE_ROD, INSPECTOR_NAME));
+        gui.setItem(26, createGuiItem(Material.BARRIER, ChatColor.RED + "Back"));
+        p.openInventory(gui);
+    }
+
+    private void openModeratorMenu(Player p) {
+        setMenuOrigin(p, "moderator");
+        Inventory gui = Bukkit.createInventory(null, 27, GUI_MODERATOR_MENU);
+        fillGUIBorders(gui);
+        fillGUIEmpty(gui);
+
+        gui.setItem(10, createGuiItem(Material.PAPER, ChatColor.GOLD + "Tickets"));
+        gui.setItem(11, createGuiItem(Material.CLOCK, ChatColor.AQUA + "World Settings"));
+        gui.setItem(12, createGuiItem(Material.GRASS_BLOCK, ChatColor.AQUA + "Survival Mode"));
+        gui.setItem(13, createGuiItem(Material.ENDER_EYE, ChatColor.AQUA + "Spectator Mode"));
+        gui.setItem(14, createGuiItem(Material.PLAYER_HEAD, ChatColor.AQUA + "Player Directory"));
+        gui.setItem(15, createGuiItem(Material.IRON_BARS, ChatColor.RED + "Punished Players"));
+        gui.setItem(16, createGuiItem(Material.BLAZE_ROD, INSPECTOR_NAME));
+        gui.setItem(17, createGuiItem(Material.MAGMA_CREAM, ChatColor.RED + "Toggle Anti-Lag"));
+        gui.setItem(18, createGuiItem(Material.TNT, ChatColor.GOLD + "Run Anti-Lag Now"));
+        gui.setItem(26, createGuiItem(Material.BARRIER, ChatColor.RED + "Back"));
         p.openInventory(gui);
     }
 
@@ -3286,7 +3472,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         gui.setItem(19, createGuiItem(Material.GOLDEN_APPLE, ChatColor.GREEN + "Heal & Feed"));
         gui.setItem(20, createGuiItem(Material.IRON_DOOR, ChatColor.YELLOW + "Kick Player"));
-        gui.setItem(21, createGuiItem(Material.BARRIER, ChatColor.RED + "Ban Player"));
+        if (canBan(p)) {
+            gui.setItem(21, createGuiItem(Material.BARRIER, ChatColor.RED + "Ban Player"));
+        } else {
+            gui.setItem(21, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + "Ban Player (no permission)"));
+        }
         gui.setItem(28, createGuiItem(Material.GOAT_HORN, ChatColor.YELLOW + "Warn Player"));
 
         gui.setItem(37, createGuiItem(Material.IRON_BARS, ChatColor.RED + "Punish 1hr"));
@@ -4149,6 +4339,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             || strippedTitle.equals("Punished Players")
             || strippedTitle.startsWith("Note:")
             || strippedTitle.equals(ChatColor.stripColor(GUI_MENU_SELECTOR))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_HELPER_MENU))
+            || strippedTitle.equals(ChatColor.stripColor(GUI_MODERATOR_MENU))
             || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_MENU))
             || strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_LIST_TPA))
             || strippedTitle.equals(ChatColor.stripColor(GUI_REPORT_PLAYER))
@@ -4201,10 +4393,86 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (title.equals(GUI_MENU_SELECTOR)) {
             if (type == Material.EMERALD_BLOCK) {
                 openPlayerMenu(p);
+            } else if (type == Material.BLUE_STAINED_GLASS) {
+                openHelperMenu(p);
+            } else if (type == Material.GOLD_BLOCK) {
+                openModeratorMenu(p);
             } else if (type == Material.REDSTONE_BLOCK) {
                 openMainMenu(p);
             } else if (type == Material.BARRIER) {
                 p.closeInventory();
+            }
+            return;
+        }
+
+        // Helper Menu
+        if (title.equals(GUI_HELPER_MENU)) {
+            if (itemName.equals("Tickets")) {
+                p.closeInventory();
+                openPlayerTicketMenu(p);
+            } else if (itemName.equals("Set Day")) {
+                p.getWorld().setTime(1000);
+                p.sendMessage(ChatColor.GREEN + "Time set to day.");
+            } else if (itemName.equals("Clear Weather")) {
+                p.getWorld().setStorm(false);
+                p.getWorld().setThundering(false);
+                p.sendMessage(ChatColor.GREEN + "Weather cleared.");
+            } else if (itemName.equals("Survival Mode")) {
+                p.setGameMode(GameMode.SURVIVAL);
+            } else if (itemName.equals("Spectator Mode")) {
+                p.setGameMode(GameMode.SPECTATOR);
+            } else if (itemName.equals("Player Directory")) {
+                openPlayerListMenu(p);
+            } else if (itemName.equals("Punished Players")) {
+                openPunishedPlayersMenu(p);
+            } else if (itemName.equals(ChatColor.stripColor(INSPECTOR_NAME))) {
+                p.getInventory().addItem(createGuiItem(Material.BLAZE_ROD, INSPECTOR_NAME));
+                p.sendMessage(ChatColor.GREEN + "Inspector wand added to your inventory.");
+            } else if (itemName.equals("Back")) {
+                clearMenuOrigin(p);
+                openMenuSelector(p);
+            }
+            return;
+        }
+
+        // Moderator Menu
+        if (title.equals(GUI_MODERATOR_MENU)) {
+            if (itemName.equals("Tickets")) {
+                p.closeInventory();
+                openPlayerTicketMenu(p);
+            } else if (itemName.equals("World Settings")) {
+                openWorldSettingsMenu(p);
+            } else if (itemName.equals("Survival Mode")) {
+                p.setGameMode(GameMode.SURVIVAL);
+            } else if (itemName.equals("Spectator Mode")) {
+                p.setGameMode(GameMode.SPECTATOR);
+            } else if (itemName.equals("Player Directory")) {
+                openPlayerListMenu(p);
+            } else if (itemName.equals("Punished Players")) {
+                openPunishedPlayersMenu(p);
+            } else if (itemName.equals(ChatColor.stripColor(INSPECTOR_NAME))) {
+                p.getInventory().addItem(createGuiItem(Material.BLAZE_ROD, INSPECTOR_NAME));
+                p.sendMessage(ChatColor.GREEN + "Inspector wand added to your inventory.");
+            } else if (itemName.equals("Toggle Anti-Lag")) {
+                boolean enabled = dataConfig.getBoolean("anti_lag.enabled", true);
+                if (enabled) {
+                    stopAntiLagCleanup();
+                    dataConfig.set("anti_lag.enabled", false);
+                    saveDataFile();
+                    p.sendMessage(ChatColor.RED + "Anti-lag cleanup disabled.");
+                } else {
+                    dataConfig.set("anti_lag.enabled", true);
+                    saveDataFile();
+                    startAntiLagCleanup();
+                    p.sendMessage(ChatColor.GREEN + "Anti-lag cleanup enabled.");
+                }
+            } else if (itemName.equals("Run Anti-Lag Now")) {
+                clearGroundItems();
+                Bukkit.broadcastMessage(ChatColor.BLUE + "Drowsy Anti Lag: Drops/Items have been Cleared!");
+                p.sendMessage(ChatColor.GREEN + "Anti-lag cleanup executed immediately.");
+            } else if (itemName.equals("Back")) {
+                clearMenuOrigin(p);
+                openMenuSelector(p);
             }
             return;
         }
@@ -5006,7 +5274,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     p.sendMessage(ChatColor.GREEN + "Weather cleared.");
                     break;
                 case 26:
-                    openMainMenu(p);
+                    returnToPreviousMenu(p);
                     break;
             }
         } else if (title.startsWith(GUI_NPC_SHOP)) {
@@ -5109,10 +5377,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         } else if (title.equals(ChatColor.RED + "Punished Players")) {
             if (type == Material.PLAYER_HEAD) openPlayerActionMenu(p, itemName);
-            else if (type == Material.REDSTONE) openMainMenu(p);
+            else if (type == Material.REDSTONE) returnToPreviousMenu(p);
         } else if (title.equals(GUI_PLAYER_LIST)) {
             if (type == Material.PLAYER_HEAD) openPlayerActionMenu(p, itemName);
-            else if (type == Material.REDSTONE) openMainMenu(p);
+            else if (type == Material.REDSTONE) returnToPreviousMenu(p);
             else if (type == Material.ARROW) {
                 int currentPage = menuPages.getOrDefault(p.getUniqueId(), 0);
                 openPlayerListMenu(p, currentPage + 1);
@@ -5545,7 +5813,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Player p = e.getPlayer();
         e.setCancelled(true);
         
-        if (hasDmtCommandPermission(p, "menu")) {
+        if (isHelper(p) || isModerator(p) || p.isOp() || p.hasPermission("dmt.admin")) {
             openMenuSelector(p);
         } else {
             openPlayerMenu(p);
