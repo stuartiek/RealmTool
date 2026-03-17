@@ -183,25 +183,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 getCommand("dmt").setTabCompleter(this);
             }
 
-<<<<<<< HEAD
-            if (getCommand("ticket") != null) { getCommand("ticket").setExecutor(this); getCommand("ticket").setTabCompleter(this); }
-        if (getCommand("tpa") != null) { getCommand("tpa").setExecutor(this); getCommand("tpa").setTabCompleter(this); }
-        if (getCommand("kit") != null) { getCommand("kit").setExecutor(this); getCommand("kit").setTabCompleter(this); }
-        if (getCommand("bounty") != null) { getCommand("bounty").setExecutor(this); getCommand("bounty").setTabCompleter(this); }
-        if (getCommand("shop") != null) { getCommand("shop").setExecutor(this); getCommand("shop").setTabCompleter(this); }
-        if (getCommand("quest") != null) { getCommand("quest").setExecutor(this); getCommand("quest").setTabCompleter(this); }
-        if (getCommand("apply") != null) { getCommand("apply").setExecutor(this); getCommand("apply").setTabCompleter(this); }
-        if (getCommand("vote") != null) { getCommand("vote").setExecutor(this); getCommand("vote").setTabCompleter(this); }
-        if (getCommand("crate") != null) { getCommand("crate").setExecutor(this); getCommand("crate").setTabCompleter(this); }
-        if (getCommand("nick") != null) { getCommand("nick").setExecutor(this); getCommand("nick").setTabCompleter(this); }
-        if (getCommand("rules") != null) { getCommand("rules").setExecutor(this); getCommand("rules").setTabCompleter(this); }
-        if (getCommand("duel") != null) { getCommand("duel").setExecutor(this); getCommand("duel").setTabCompleter(this); }
-        if (getCommand("pwarp") != null) { getCommand("pwarp").setExecutor(this); getCommand("pwarp").setTabCompleter(this); }
-        if (getCommand("achievements") != null) { getCommand("achievements").setExecutor(this); getCommand("achievements").setTabCompleter(this); }
-        if (getCommand("stats") != null) { getCommand("stats").setExecutor(this); getCommand("stats").setTabCompleter(this); }
-        if (getCommand("report") != null) { getCommand("report").setExecutor(this); getCommand("report").setTabCompleter(this); }
-=======
-            if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
+        if (getCommand("ticket") != null) getCommand("ticket").setExecutor(this);
         if (getCommand("tpa") != null) getCommand("tpa").setExecutor(this);
         if (getCommand("kit") != null) getCommand("kit").setExecutor(this);
         if (getCommand("bounty") != null) getCommand("bounty").setExecutor(this);
@@ -219,8 +201,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (getCommand("report") != null) getCommand("report").setExecutor(this);
         if (getCommand("balance") != null) getCommand("balance").setExecutor(this);
         if (getCommand("economy") != null) getCommand("economy").setExecutor(this);
->>>>>>> 90e77ad032f2e959aacf2a3ac53c5420e54c9a20
-
+ 
         webServer = new WebServer(this);
         webServer.start();
 
@@ -251,37 +232,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             for (String eventName : activeEvents.getKeys(false)) {
                 startEventEffect(eventName);
             }
-<<<<<<< HEAD
-            ensureDefaultEnchantQuests();
-
-            // Apply ranks + permissions for online players in case of reload
-            for (Player p : Bukkit.getOnlinePlayers()) {
-                applyRankToPlayer(p);
-                applyPermissionGroup(p);
-            }
-            // register remaining commands
-            if (getCommand("ticket") != null) { getCommand("ticket").setExecutor(this); getCommand("ticket").setTabCompleter(this); }
-            if (getCommand("tpa") != null) { getCommand("tpa").setExecutor(this); getCommand("tpa").setTabCompleter(this); }
-            if (getCommand("kit") != null) { getCommand("kit").setExecutor(this); getCommand("kit").setTabCompleter(this); }
-            if (getCommand("bounty") != null) { getCommand("bounty").setExecutor(this); getCommand("bounty").setTabCompleter(this); }
-            if (getCommand("shop") != null) { getCommand("shop").setExecutor(this); getCommand("shop").setTabCompleter(this); }
-            if (getCommand("quest") != null) { getCommand("quest").setExecutor(this); getCommand("quest").setTabCompleter(this); }
-            if (getCommand("apply") != null) { getCommand("apply").setExecutor(this); getCommand("apply").setTabCompleter(this); }
-            if (getCommand("vote") != null) { getCommand("vote").setExecutor(this); getCommand("vote").setTabCompleter(this); }
-            if (getCommand("crate") != null) { getCommand("crate").setExecutor(this); getCommand("crate").setTabCompleter(this); }
-            if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
-            if (getCommand("nick") != null) { getCommand("nick").setExecutor(this); getCommand("nick").setTabCompleter(this); }
-            if (getCommand("rules") != null) { getCommand("rules").setExecutor(this); getCommand("rules").setTabCompleter(this); }
-            if (getCommand("duel") != null) { getCommand("duel").setExecutor(this); getCommand("duel").setTabCompleter(this); }
-            if (getCommand("pwarp") != null) { getCommand("pwarp").setExecutor(this); getCommand("pwarp").setTabCompleter(this); }
-            if (getCommand("achievements") != null) { getCommand("achievements").setExecutor(this); getCommand("achievements").setTabCompleter(this); }
-            if (getCommand("stats") != null) { getCommand("stats").setExecutor(this); getCommand("stats").setTabCompleter(this); }
-            if (getCommand("report") != null) { getCommand("report").setExecutor(this); getCommand("report").setTabCompleter(this); }
-
-            // Start anti-lag ground item cleanup (configurable)
-            startAntiLagCleanup();
-=======
->>>>>>> 90e77ad032f2e959aacf2a3ac53c5420e54c9a20
         }
 
         ensureDefaultEnchantQuests();
