@@ -63,6 +63,9 @@ commands:
   report:
     description: Report a player
     usage: /report <player> <reason>
+  staff:
+    description: View online staff tags
+    usage: /staff
 permissions:
   dmt.admin:
     description: Allows use of admin tools

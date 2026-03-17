@@ -861,6 +861,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (!(sender instanceof Player)) return true;
         Player p = (Player) sender;
 
+        if (cmd.getName().equalsIgnoreCase("staff")) {
+            sendStaffList(p);
+            return true;
+        }
+
         if (cmd.getName().equalsIgnoreCase("dmt")) {
             if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
                 sendHelpMessage(p);
@@ -990,36 +995,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                     break;
                 case "staff":
-                    // Staff list for players with any staff-related tag.
-                    if (!isStaffTagged(p) && !p.hasPermission("dmt.admin")) {
-                        p.sendMessage(ChatColor.RED + "No permission.");
+                    // Allow anyone to view staff tags
+                    if (args.length == 1 || (args.length >= 2 && args[1].equalsIgnoreCase("list"))) {
+                        sendStaffList(p);
                         return true;
                     }
-                    if (args.length < 2 || !args[1].equalsIgnoreCase("list")) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt staff list");
-                        return true;
-                    }
-
-                    List<String> staffLines = new ArrayList<>();
-                    for (Player online : Bukkit.getOnlinePlayers()) {
-                        List<String> tags = new ArrayList<>();
-                        if (isHelper(online)) tags.add("Helper");
-                        if (isModerator(online)) tags.add("Moderator");
-                        if (isAdminTag(online)) tags.add("Admin");
-                        if (isManagerTag(online)) tags.add("Manager");
-                        if (isOwnerTag(online)) tags.add("Owner");
-                        if (isHeadAdminTag(online)) tags.add("Head_Admin");
-                        if (!tags.isEmpty()) {
-                            staffLines.add(ChatColor.AQUA + online.getName() + ChatColor.GRAY + " [" + String.join(", ", tags) + "]");
-                        }
-                    }
-                    p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "Staff Online" + ChatColor.GOLD + " =====");
-                    if (staffLines.isEmpty()) {
-                        p.sendMessage(ChatColor.GRAY + "No staff members online.");
-                    } else {
-                        staffLines.forEach(p::sendMessage);
-                    }
-                    break;
+                    p.sendMessage(ChatColor.RED + "Usage: /dmt staff list");
+                    return true;
                 case "tp":
                     if (!hasDmtCommandPermission(p, "tp")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
@@ -2061,6 +2043,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/achievements" + ChatColor.WHITE + " - View your achievements");
         p.sendMessage(ChatColor.GREEN + "/stats [player]" + ChatColor.WHITE + " - View PvP stats");
         p.sendMessage(ChatColor.GREEN + "/report <player> <reason>" + ChatColor.WHITE + " - Report a player");
+        p.sendMessage(ChatColor.GREEN + "/staff" + ChatColor.WHITE + " - View online staff tags");
         p.sendMessage(ChatColor.GRAY + "Use the player menu to access your custom enchantments (unlocked via quests)");
 
         if (p.hasPermission("dmt.admin")) {
@@ -2100,6 +2083,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (isStaffTagged(p) || p.hasPermission("dmt.admin")) {
             p.sendMessage("");
             p.sendMessage(ChatColor.AQUA + "/dmt staff list" + ChatColor.WHITE + " - List online staff (Helper/Moderator/Admin/Manager/Owner/Head_Admin)");
+        }
+    }
+
+    private void sendStaffList(Player p) {
+        List<String> staffLines = new ArrayList<>();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            List<String> tags = new ArrayList<>();
+            if (isHelper(online)) tags.add("Helper");
+            if (isModerator(online)) tags.add("Moderator");
+            if (isAdminTag(online)) tags.add("Admin");
+            if (isManagerTag(online)) tags.add("Manager");
+            if (isOwnerTag(online)) tags.add("Owner");
+            if (isHeadAdminTag(online)) tags.add("Head_Admin");
+            if (!tags.isEmpty()) {
+                staffLines.add(ChatColor.AQUA + online.getName() + ChatColor.GRAY + " [" + String.join(", ", tags) + "]");
+            }
+        }
+
+        p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "Staff Online" + ChatColor.GOLD + " =====");
+        if (staffLines.isEmpty()) {
+            p.sendMessage(ChatColor.GRAY + "No staff members online.");
+        } else {
+            staffLines.forEach(p::sendMessage);
         }
     }
 
@@ -2908,7 +2914,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         pmMeta.setDisplayName(ChatColor.GREEN + "Player Menu");
         pmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Homes, Warps, TPA"));
         playerMenu.setItemMeta(pmMeta);
-        gui.setItem(11, playerMenu);
+        gui.setItem(10, playerMenu);
 
         // Helper Menu button
         if (isHelper(p)) {
@@ -2917,7 +2923,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             hmMeta.setDisplayName(ChatColor.GREEN + "Helper Menu");
             hmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Staff tools for Helpers"));
             helperMenu.setItemMeta(hmMeta);
-            gui.setItem(13, helperMenu);
+            gui.setItem(12, helperMenu);
         }
 
         // Moderator Menu button
@@ -2927,7 +2933,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             mmMeta.setDisplayName(ChatColor.GOLD + "Moderator Menu");
             mmMeta.setLore(Arrays.asList(ChatColor.GRAY + "Staff tools for Moderators"));
             modMenu.setItemMeta(mmMeta);
-            gui.setItem(15, modMenu);
+            gui.setItem(14, modMenu);
         }
 
         // Admin Menu button
@@ -2937,7 +2943,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             amMeta.setDisplayName(ChatColor.RED + "Admin Menu");
             amMeta.setLore(Arrays.asList(ChatColor.GRAY + "Management tools"));
             adminMenu.setItemMeta(amMeta);
-            gui.setItem(17, adminMenu);
+            gui.setItem(16, adminMenu);
         }
         
         // Close button
