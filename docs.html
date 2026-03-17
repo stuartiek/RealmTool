@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RealmTool Plugin Documentation</title>
+  <title>Drowsy Management Plugin Documentation</title>
   <style>
     body { font-family: system-ui, sans-serif; line-height: 1.5; padding: 24px; max-width: 980px; margin: auto; background: #0f1116; color: #e5e5e5; }
     h1, h2, h3 { color: #d1d5db; }
@@ -12,30 +12,73 @@
     a { color: #38bdf8; text-decoration: none; }
     a:hover { text-decoration: underline; }
     section + section { margin-top: 32px; }
-    ul { margin-top: 0.25rem; }
+    ul, ol { margin-top: 0.25rem; margin-bottom: 0.5rem; }
+    h3 { margin-top: 1.5rem; color: #a78bfa; border-bottom: 1px solid #333; padding-bottom: 4px; }
+    h4 { margin-top: 1.25rem; color: #9ca3af; }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; background: #374151; color: #fff; margin-left: 8px; }
   </style>
 </head>
 <body>
-  <h1>RealmTool Plugin Documentation</h1>
-  <p>This document describes all features, commands, and user interfaces exposed by the <strong>RealmTool</strong> Minecraft plugin.</p>
+  <h1>DrowsyCraft Management Tool Documentation</h1>
+  <p>This document is a comprehensive guide to all features, commands, and systems provided by the <strong>DrowsyCraft Management Tool</strong> plugin, including both the in-game features and the external Web Application.</p>
 
   <section>
     <h2>1. Getting Started</h2>
     <p><strong>Installation:</strong></p>
     <ol>
       <li>Drop the compiled JAR into your server's <code>plugins/</code> folder.</li>
-      <li>Start or restart the server to generate the default <code>data.yml</code> / config structure.</li>
-      <li>Adjust your permissions and configuration (if desired) using the generated <code>data.yml</code> file.</li>
+      <li>Start or restart the server to generate the default <code>data.yml</code> and <code>config.yml</code> files.</li>
+      <li>The built-in web server will automatically start on port <strong>8091</strong>.</li>
+      <li>Use the API key from <code>config.yml</code> (or generate a new one) to authenticate with external services if needed, and ensure you have OP or <code>webapp.access</code> permission to log into the web panel.</li>
     </ol>
-    <p><strong>Note:</strong> The plugin stores persistent data in <code>data.yml</code> (rank definitions, NPC library, warp/home locations, etc.).</p>
   </section>
 
   <section>
-    <h2>2. Command Overview</h2>
-    <p>The primary command is <code>/dmt</code>. Many other commands are provided by the plugin as well.</p>
+    <h2>2. In-Game Player Features</h2>
+    <p>Players have access to a rich suite of economy, social, and progression features via commands and interactive GUIs.</p>
 
-    <h3>2.1 Core Commands</h3>
-    <p>Most <code>/dmt</code> subcommands can be secured using permission nodes in the form <code>dmt.command.&lt;subcommand&gt;</code> (e.g. <code>dmt.command.menu</code>).</p>
+    <h3>Navigation & World</h3>
+    <ul>
+      <li><strong>Homes & Warps:</strong> Save personal homes via the Player Menu (<code>/dmt menu</code>) and teleport to them. Browse server warps or create Player Warps using <code>/pwarp [set|delete &lt;name&gt;]</code>.</li>
+      <li><strong>TPA System:</strong> Send teleport requests via the Player Menu GUI. Accept/deny using <code>/tpa accept &lt;player&gt;</code> and <code>/tpa deny &lt;player&gt;</code>.</li>
+      <li><strong>Server Hub:</strong> Teleport to the server's designated hub using <code>/hub</code>.</li>
+      <li><strong>Chunk Claims:</strong> Claim chunks to protect your builds. Trust/untrust other players via the GUI. Claim limits increase automatically based on your playtime!</li>
+    </ul>
+
+    <h3>Economy & Trading</h3>
+    <ul>
+      <li><strong>Balance:</strong> View your coin and XP balance with <code>/balance</code>. Coins are used for shops, while XP is used for kits and bounties.</li>
+      <li><strong>Player Shops:</strong> Browse the community shop via <code>/shop</code>. Sell your items using <code>/shop sell &lt;item&gt; &lt;amount&gt; &lt;price&gt;</code>. Offline players still receive their coins/XP when they log back in.</li>
+      <li><strong>Auction House:</strong> Bid on timed item auctions using <code>/auction</code> or via the web-sync system.</li>
+      <li><strong>Bounties:</strong> Place XP bounties on enemies using <code>/bounty set &lt;player&gt; &lt;amount&gt;</code>. Claim them by killing the target. Browse active bounties via <code>/bounty</code>.</li>
+    </ul>
+
+    <h3>Progression & Rewards</h3>
+    <ul>
+      <li><strong>Kits:</strong> Browse and purchase kits (often costing XP levels) using <code>/kit</code>. Includes cooldown tracking.</li>
+      <li><strong>Crates:</strong> Open random reward crates using <code>/crate</code>. Keys are purchased with XP levels.</li>
+      <li><strong>Quests:</strong> View and complete active quests (e.g., breaking ores, killing mobs) via <code>/quest</code>. Rewards include XP, coins, kits, and Custom Enchantments.</li>
+      <li><strong>Achievements:</strong> Unlock milestones (like kill streaks) automatically to earn XP, special Chat Titles, and more. View them via <code>/achievements</code>.</li>
+      <li><strong>Daily Login & Playtime:</strong> Log in consecutively to earn streak-based XP/Coin rewards. Reach playtime milestones for automatic reward drops.</li>
+      <li><strong>Custom Enchantments:</strong> Earn powerful enchants (Timber, Vein Miner, Smelting Touch, Telepathy) via quests. Apply them via the Player Menu GUI.</li>
+    </ul>
+
+    <h3>Social & Communication</h3>
+    <ul>
+      <li><strong>Nicknames & Chat Tags:</strong> Set your nickname using <code>/nick &lt;name&gt;</code>. Unlocked chat tags can be configured to display before your name.</li>
+      <li><strong>Duels:</strong> Challenge others to 1v1 combat with optional XP wagers using <code>/duel &lt;player&gt; [wager]</code>. Both players are teleported back to their original locations afterward.</li>
+      <li><strong>PvP Stats:</strong> View your Kills, Deaths, K/D ratio, and Killstreaks using <code>/stats [player]</code>.</li>
+      <li><strong>Polls:</strong> Participate in active server votes using <code>/vote &lt;pollId&gt; &lt;option#&gt;</code>.</li>
+      <li><strong>Tickets & Reports:</strong> Report rulebreakers via <code>/report &lt;player&gt; &lt;reason&gt;</code>, or open support tickets/appeals using <code>/ticket new &lt;category&gt; &lt;message&gt;</code>.</li>
+      <li><strong>Staff Application:</strong> Apply for staff in-game using <code>/apply &lt;message&gt;</code>.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>3. In-Game Admin Features</h2>
+    <p>Admins (with <code>dmt.admin</code>) have access to extensive management tools via the <code>/dmt</code> command and the Admin GUI.</p>
+
+    <h3>Core Commands</h3>
     <p>Common permission nodes:</p>
     <ul>
       <li><code>dmt.command.menu</code> - open the main menu (player + admin panel)</li>
@@ -226,7 +269,8 @@
   </section>
 
   <footer>
-    <p>Generated documentation for the RealmTool plugin. Keep this file alongside the plugin JAR for reference.</p>
+    <p>Generated documentation for the DrowsyCraft management plugin. Keep this file alongside the plugin JAR for reference.</p>
+    <p>&copy; 2026 Drowsy Vocals | ABZ DIGITAL GROUP - V 1.0.0</p>
   </footer>
 </body>
 </html>

@@ -647,27 +647,40 @@ public class WebServer {
             String id = ctx.pathParam("id");
             // Read from JSON body or query params
             String priority = null, category = null, status = null, assignee = null;
+            boolean updateAssignee = false;
             try {
                 String body = ctx.body();
                 if (body != null && !body.isEmpty()) {
                     com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                     java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                    priority = (String) bodyMap.get("priority");
-                    category = (String) bodyMap.get("category");
-                    status = (String) bodyMap.get("status");
-                    assignee = (String) bodyMap.get("assignee");
+                    if (bodyMap.containsKey("priority")) priority = String.valueOf(bodyMap.get("priority"));
+                    if (bodyMap.containsKey("category")) category = String.valueOf(bodyMap.get("category"));
+                    if (bodyMap.containsKey("status")) status = String.valueOf(bodyMap.get("status"));
+                    if (bodyMap.containsKey("assignee")) {
+                        updateAssignee = true;
+                        Object aObj = bodyMap.get("assignee");
+                        if (aObj instanceof java.util.Map) {
+                            assignee = String.valueOf(((java.util.Map<?, ?>) aObj).get("name"));
+                        } else {
+                            assignee = aObj != null ? String.valueOf(aObj) : "";
+                        }
+                    }
                 }
             } catch (Exception ignored) {}
             if (priority == null) priority = ctx.queryParam("priority");
             if (category == null) category = ctx.queryParam("category");
             if (status == null) status = ctx.queryParam("status");
-            if (assignee == null) assignee = ctx.queryParam("assignee");
+            if (!updateAssignee && ctx.queryParam("assignee") != null) {
+                assignee = ctx.queryParam("assignee");
+                updateAssignee = true;
+            }
 
             final String fPriority = priority, fCategory = category, fStatus = status, fAssignee = assignee;
+            final boolean fUpdateAssignee = updateAssignee;
             Bukkit.getScheduler().runTask(plugin, () -> {
-                if (fPriority != null) plugin.updateTicketField(Integer.parseInt(id), "priority", fPriority);
-                if (fCategory != null) plugin.updateTicketField(Integer.parseInt(id), "category", fCategory);
-                if (fStatus != null) {
+                if (fPriority != null && !fPriority.equals("null")) plugin.updateTicketField(Integer.parseInt(id), "priority", fPriority);
+                if (fCategory != null && !fCategory.equals("null")) plugin.updateTicketField(Integer.parseInt(id), "category", fCategory);
+                if (fStatus != null && !fStatus.equals("null")) {
                     plugin.updateTicketField(Integer.parseInt(id), "status", fStatus);
                     // Notify player of status change
                     String playerName = plugin.getDataConfig().getString("tickets." + id + ".player", "");
@@ -676,7 +689,9 @@ public class WebServer {
                         target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + id + " status changed to: " + ChatColor.WHITE + fStatus);
                     }
                 }
-                if (fAssignee != null) plugin.updateTicketField(Integer.parseInt(id), "assignee", fAssignee);
+                if (fUpdateAssignee) {
+                    plugin.updateTicketField(Integer.parseInt(id), "assignee", fAssignee != null && !fAssignee.equals("null") ? fAssignee : "");
+                }
                 plugin.logAction("WebAdmin", "updated ticket", id);
             });
             ctx.json(Map.of("success", true));
