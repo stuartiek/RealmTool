@@ -307,6 +307,19 @@ public class WebServer {
                         }
                     }
                 }
+                return tickets;
+            });
+            ctx.json(future.get());
+        });
+
+        app.get("/api/appeals", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
+
+            String status = ctx.queryParam("status");
+            String priority = ctx.queryParam("priority");
+            
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> appeals = new ArrayList<>();
                 if (plugin.getDataConfig().contains("appeals")) {
                     for (String key : plugin.getDataConfig().getConfigurationSection("appeals").getKeys(false)) {
                         if (key.equals("next_id")) continue;
@@ -321,15 +334,15 @@ public class WebServer {
                             t.put("message", plugin.getDataConfig().getString("appeals." + key + ".message"));
                             t.put("status", appealStatus);
                             t.put("priority", appealPriority);
-                            t.put("category", "APPEAL: " + plugin.getDataConfig().getString("appeals." + key + ".category", "other"));
+                            t.put("category", plugin.getDataConfig().getString("appeals." + key + ".category", "other"));
                             t.put("assignee", plugin.getDataConfig().getString("appeals." + key + ".assignee", ""));
                             t.put("time", plugin.getDataConfig().getString("appeals." + key + ".timestamp"));
                             t.put("type", "appeal");
-                            tickets.add(t);
+                            appeals.add(t);
                         }
                     }
                 }
-                return tickets;
+                return appeals;
             });
             ctx.json(future.get());
         });
