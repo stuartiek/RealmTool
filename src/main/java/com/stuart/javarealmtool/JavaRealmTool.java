@@ -131,6 +131,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private int springTaskId = -1;
     private int summerTaskId = -1;
     private int antiLagWarningTaskId = -1;
+    private int antiLagWarningTaskId2 = -1;
     private int antiLagClearTaskId = -1;
 
     // Scheduled announcements task IDs (used for reloading config without restart)
@@ -1816,6 +1817,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                     pendingActions.remove(p.getUniqueId());
                     break;
+                case SET_WARP:
+                    String warpName = reason.trim().replaceAll("[^A-Za-z0-9_\\-]", "");
+                    if (warpName.isEmpty()) {
+                        p.sendMessage(ChatColor.RED + "Invalid warp name. Use letters, numbers, underscore, or dash.");
+                        break;
+                    }
+                    dataConfig.set("warps." + warpName + ".world", p.getWorld().getName());
+                    dataConfig.set("warps." + warpName + ".x", p.getLocation().getX());
+                    dataConfig.set("warps." + warpName + ".y", p.getLocation().getY());
+                    dataConfig.set("warps." + warpName + ".z", p.getLocation().getZ());
+                    dataConfig.set("warps." + warpName + ".yaw", p.getLocation().getYaw());
+                    dataConfig.set("warps." + warpName + ".pitch", p.getLocation().getPitch());
+                    saveDataFile();
+                    p.sendMessage(ChatColor.GREEN + "Warp '" + warpName + "' set! Use the Warps menu to teleport.");
+                    pendingActions.remove(p.getUniqueId());
+                    break;
                 case HOLOGRAM:
                     if (ctx.expectedLines <= 0) {
                         int lines;
@@ -2242,7 +2259,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + message);
             }
         }
-        p.sendMessage(ChatColor.AQUA + "View tickets: " + getWebPanelUrl());
+        p.sendMessage(ChatColor.GREEN + "Your ticket has been submitted! A staff member will review it shortly.");
     }
 
     private void createAppeal(Player p, String text) {
@@ -2283,7 +2300,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 staff.sendMessage(ChatColor.GOLD + "[Appeals] " + ChatColor.YELLOW + p.getName() + " created appeal #" + id + ": " + ChatColor.GRAY + message);
             }
         }
-        p.sendMessage(ChatColor.AQUA + "View appeals: " + getWebPanelUrl());
+        p.sendMessage(ChatColor.GREEN + "Your appeal has been submitted! A staff member will review it shortly.");
     }
 
     // --- GUIS ---
@@ -3620,6 +3637,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             || title.equals(GUI_PLAYER_MENU)
             || title.equals(GUI_PLAYER_LIST_TPA)
             || title.equals(GUI_REPORT_PLAYER)
+            || title.equals(GUI_PLAYER_APPEALS)
+            || title.startsWith(GUI_MY_APPEAL_OPTIONS)
             || title.equals(ChatColor.BLUE + "Warps")
             || title.startsWith(GUI_WARP_MANAGEMENT)
             || title.startsWith(ChatColor.RED + "Delete:")
@@ -3831,6 +3850,39 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.AQUA + "Status options: Submitted, Pending, Processed");
             } else if (type == Material.BARRIER) {
                 openMyTicketsMenu(p);
+            }
+            return;
+        }
+
+        // My appeals list
+        if (title.equals(GUI_PLAYER_APPEALS)) {
+            if (type == Material.REDSTONE) {
+                openPlayerTicketMenu(p);
+                return;
+            }
+            if (itemName.startsWith("Appeal #")) {
+                String id = itemName.replace("Appeal #", "").trim();
+                openMyAppealDetailMenu(p, id);
+            }
+            return;
+        }
+
+        // My appeal options detail menu
+        if (title.startsWith(GUI_MY_APPEAL_OPTIONS)) {
+            String appealId = title.replace(GUI_MY_APPEAL_OPTIONS, "").trim();
+            if (itemName.equals("View Appeal")) {
+                String message = dataConfig.getString("appeals." + appealId + ".message", "");
+                p.sendMessage(ChatColor.AQUA + "Appeal #" + appealId + ": " + ChatColor.WHITE + message);
+            } else if (itemName.equals("Delete Appeal")) {
+                p.closeInventory();
+                dataConfig.set("appeals." + appealId, null);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Appeal #" + appealId + " deleted.");
+                openMyAppealsMenu(p);
+            } else if (itemName.equals("View Appeal Outcome")) {
+                p.sendMessage(ChatColor.AQUA + "Status options: Submitted, Pending, Processed");
+            } else if (type == Material.BARRIER) {
+                openMyAppealsMenu(p);
             }
             return;
         }
@@ -4050,7 +4102,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Player List for TPA
         if (title.equals(GUI_PLAYER_LIST_TPA)) {
             if (type == Material.BARRIER) {
-                openMenuSelector(p);
+                openPlayerMenu(p);
             } else if (type == Material.PLAYER_HEAD) {
                 p.closeInventory();
                 Player target = Bukkit.getPlayer(itemName);
@@ -5849,22 +5901,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         stopAntiLagCleanup();
 
-        // Warning 30 seconds before clear
+        // Announce 3 minutes before the cleanup (every 10 minutes)
         antiLagWarningTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
-            Bukkit.broadcastMessage(ChatColor.BLUE + "Drowsy Anti Lag: I will be removing ALL ground items/drops in 30 seconds!");
-        }, 0L, 180L * 20L); // every 3 minutes
+            Bukkit.broadcastMessage(ChatColor.BLUE + "Drowsy Anti Lag: Clearing items in 3 minutes!");
+        }, 7 * 60 * 20L, 10 * 60 * 20L); // first run after 7m, then every 10m
 
-        // Actual clear every 3 minutes
+        // Announce 30 seconds before the cleanup (every 10 minutes)
+        antiLagWarningTaskId2 = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            Bukkit.broadcastMessage(ChatColor.BLUE + "Drowsy Anti Lag: Clearing items in 30 seconds!");
+        }, (9 * 60 + 30) * 20L, 10 * 60 * 20L); // first run after 9m30s, then every 10m
+
+        // Actual clear every 10 minutes
         antiLagClearTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             clearGroundItems();
             Bukkit.broadcastMessage(ChatColor.BLUE + "Drowsy Anti Lag: Drops/Items have been Cleared!");
-        }, 180L * 20L, 180L * 20L);
+        }, 10 * 60 * 20L, 10 * 60 * 20L);
     }
 
     private void stopAntiLagCleanup() {
         if (antiLagWarningTaskId != -1) {
             Bukkit.getScheduler().cancelTask(antiLagWarningTaskId);
             antiLagWarningTaskId = -1;
+        }
+        if (antiLagWarningTaskId2 != -1) {
+            Bukkit.getScheduler().cancelTask(antiLagWarningTaskId2);
+            antiLagWarningTaskId2 = -1;
         }
         if (antiLagClearTaskId != -1) {
             Bukkit.getScheduler().cancelTask(antiLagClearTaskId);
