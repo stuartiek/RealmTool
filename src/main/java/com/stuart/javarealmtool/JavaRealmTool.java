@@ -5942,7 +5942,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         lastActivity.put(uuid, System.currentTimeMillis());
         
         if (isPunished(uuid)) {
-            punishTeam.addEntry(e.getPlayer().getName());
+            if (!punishTeam.hasEntry(e.getPlayer().getName())) {
+                punishTeam.addEntry(e.getPlayer().getName());
+            }
             long min = (dataConfig.getLong("punishments." + uuid) - System.currentTimeMillis()) / 60000;
             e.getPlayer().sendMessage(ChatColor.RED + "You are punished for " + min + " more minutes.");
         } else {
@@ -6238,7 +6240,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // Store player's current location for later restoration
             saveLoc("player_location." + u, p.getLocation());
             
-            punishTeam.addEntry(p.getName());
+            if (!punishTeam.hasEntry(p.getName())) {
+                punishTeam.addEntry(p.getName());
+            }
             p.sendMessage(ChatColor.RED + "You are punished! You cannot move/build.");
             
             // Teleport to punishment location if set
@@ -6260,7 +6264,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (originalLoc != null) {
             if (p != null) {
                 // Player is online - schedule teleport next tick to ensure they're fully loaded
-                punishTeam.removeEntry(p.getName());
+                if (punishTeam.hasEntry(p.getName())) {
+                    punishTeam.removeEntry(p.getName());
+                }
                 p.sendMessage(ChatColor.GREEN + "Punishment lifted.");
                 Bukkit.getScheduler().runTask(this, () -> {
                     if (p.isOnline()) {

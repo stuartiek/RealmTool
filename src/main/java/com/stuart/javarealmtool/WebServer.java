@@ -523,6 +523,7 @@ public class WebServer {
             
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> banned = new ArrayList<>();
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                 org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
                 for (Object obj : profileBanList.getEntries()) {
                     org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
@@ -541,8 +542,8 @@ public class WebServer {
                     map.put("target", name);
                     map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
                     map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
-                    if (entry.getCreated() != null) map.put("created", entry.getCreated());
-                    if (entry.getExpiration() != null) map.put("expiration", entry.getExpiration());
+                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
+                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
                     banned.add(map);
                 }
                 org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
@@ -555,8 +556,22 @@ public class WebServer {
                     map.put("target", name);
                     map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
                     map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
-                    if (entry.getCreated() != null) map.put("created", entry.getCreated());
-                    if (entry.getExpiration() != null) map.put("expiration", entry.getExpiration());
+                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
+                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
+                    banned.add(map);
+                }
+                org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
+                for (Object obj : ipBanList.getEntries()) {
+                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                    String ip = entry.getTarget() != null ? entry.getTarget().toString() : null;
+                    if (ip == null || ip.isEmpty() || banned.stream().anyMatch(m -> ip.equals(m.get("name")))) continue;
+                    Map<String, Object> map = new HashMap<>();
+                    map.put("name", ip);
+                    map.put("target", ip);
+                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
+                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
+                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
+                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
                     banned.add(map);
                 }
                 return banned;
@@ -601,9 +616,24 @@ public class WebServer {
                     if (body != null && !body.isEmpty()) {
                         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                         java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                        if (targetNameParam == null && bodyMap.get("player") != null) targetNameParam = String.valueOf(bodyMap.get("player"));
-                        if (targetNameParam == null && bodyMap.get("target") != null) targetNameParam = String.valueOf(bodyMap.get("target"));
-                        if (targetNameParam == null && bodyMap.get("name") != null) targetNameParam = String.valueOf(bodyMap.get("name"));
+                        
+                        String extractedName = null;
+                        for (String key : new String[]{"player", "target", "name"}) {
+                            Object obj = bodyMap.get(key);
+                            if (obj != null) {
+                                if (obj instanceof java.util.Map) {
+                                    Object nested = ((java.util.Map<?, ?>) obj).get("name");
+                                    if (nested == null) nested = ((java.util.Map<?, ?>) obj).get("target");
+                                    if (nested != null) extractedName = String.valueOf(nested);
+                                } else if (obj instanceof java.util.List && !((java.util.List<?>) obj).isEmpty()) {
+                                    extractedName = String.valueOf(((java.util.List<?>) obj).get(0));
+                                } else {
+                                    extractedName = String.valueOf(obj);
+                                }
+                                if (extractedName != null && !extractedName.isEmpty()) break;
+                            }
+                        }
+                        if (targetNameParam == null) targetNameParam = extractedName;
                         if (reasonParam == null && bodyMap.get("reason") != null) reasonParam = String.valueOf(bodyMap.get("reason"));
                     }
                 } catch (Exception e) {
@@ -1343,7 +1373,25 @@ public class WebServer {
                     com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
                     java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
                     if (action == null && bodyMap.get("action") != null) action = String.valueOf(bodyMap.get("action"));
-                    if (players == null && bodyMap.get("players") != null) players = String.valueOf(bodyMap.get("players"));
+                    if (players == null && bodyMap.get("players") != null) {
+                        Object pObj = bodyMap.get("players");
+                        if (pObj instanceof java.util.List) {
+                            java.util.List<?> list = (java.util.List<?>) pObj;
+                            java.util.List<String> strList = new ArrayList<>();
+                            for (Object o : list) {
+                                if (o instanceof java.util.Map) {
+                                    Object nested = ((java.util.Map<?, ?>) o).get("name");
+                                    if (nested == null) nested = ((java.util.Map<?, ?>) o).get("target");
+                                    if (nested != null) strList.add(String.valueOf(nested));
+                                } else {
+                                    strList.add(String.valueOf(o));
+                                }
+                            }
+                            players = String.join(",", strList);
+                        } else {
+                            players = String.valueOf(pObj);
+                        }
+                    }
                     if (reason == null && bodyMap.get("reason") != null) reason = String.valueOf(bodyMap.get("reason"));
                 }
             } catch (Exception ignored) {}
