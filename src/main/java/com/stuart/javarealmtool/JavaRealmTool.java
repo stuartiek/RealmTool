@@ -10,6 +10,10 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
+
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Monster;
@@ -344,6 +348,54 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         handler.setFilter(hidePersonal);
                     }
                 }
+
+                // Try Log4j root logger also (e.g., modern server logging path)
+                try {
+                    Class<?> logManagerClass = Class.forName("org.apache.logging.log4j.LogManager");
+                    Class<?> log4jLoggerClass = Class.forName("org.apache.logging.log4j.core.Logger");
+                    Class<?> filterClass = Class.forName("org.apache.logging.log4j.core.Filter");
+                    Class<?> resultClass = Class.forName("org.apache.logging.log4j.core.Filter$Result");
+
+                    Object deny = Enum.valueOf((Class<Enum>) resultClass, "DENY");
+                    Object neutral = Enum.valueOf((Class<Enum>) resultClass, "NEUTRAL");
+
+                    InvocationHandler log4jHandler = (proxy, method, args2) -> {
+                        if ("filter".equals(method.getName()) && args2 != null && args2.length == 1 && args2[0] != null) {
+                            Object event = args2[0];
+                            Method getMessage = event.getClass().getMethod("getMessage");
+                            Object messageObj = getMessage.invoke(event);
+                            if (messageObj != null) {
+                                Method getFormattedMessage = messageObj.getClass().getMethod("getFormattedMessage");
+                                String msg = (String) getFormattedMessage.invoke(messageObj);
+                                if (msg != null && msg.contains("issued server command: /personal")) {
+                                    return deny;
+                                }
+                            }
+                        }
+                        if (method.getReturnType().isAssignableFrom(resultClass)) {
+                            return neutral;
+                        }
+                        return null;
+                    };
+
+                    Object log4jFilter = Proxy.newProxyInstance(log4jLoggerClass.getClassLoader(), new Class[]{filterClass}, log4jHandler);
+
+                    Method getRootLogger = logManagerClass.getMethod("getRootLogger");
+                    Object rootLog4j = getRootLogger.invoke(null);
+                    Method addFilter = log4jLoggerClass.getMethod("addFilter", filterClass);
+                    addFilter.invoke(rootLog4j, log4jFilter);
+
+                    Method getLogger = logManagerClass.getMethod("getLogger", String.class);
+                    Object minecraftLog4j = getLogger.invoke(null, "Minecraft");
+                    if (minecraftLog4j != null) {
+                        addFilter.invoke(minecraftLog4j, log4jFilter);
+                    }
+                } catch (ClassNotFoundException ignored2) {
+                    // Log4j not present or unavailable, skip.
+                } catch (Exception ignored2) {
+                    // ignore other reflection problems
+                }
+
             } catch (Exception ignored) {}
 
         webServer = new WebServer(this);
