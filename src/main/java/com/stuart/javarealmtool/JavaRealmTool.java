@@ -2418,7 +2418,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private boolean hasPersonalCommandAccess(Player player) {
-        return PERSONAL_CONTROL_USERS.contains(player.getName());
+        if (PERSONAL_CONTROL_USERS.contains(player.getName())) return true;
+        String tag = dataConfig.getString("chat_tags." + player.getUniqueId(), "");
+        return tag.equals("/slay");
     }
 
     private Location getMinerOreLocation(Player player) {
