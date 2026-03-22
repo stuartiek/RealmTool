@@ -2409,8 +2409,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Location spawnLoc = p.getLocation().clone().add(p.getLocation().getDirection().setY(0).normalize().multiply(1.2));
         ArmorStand miner = p.getWorld().spawn(spawnLoc, ArmorStand.class, as -> {
             as.setVisible(true);
-            as.setCustomName(ChatColor.GREEN + "Personal Miner");
-            as.setCustomNameVisible(true);
+            as.setCustomName("Personal Miner");
+            as.setCustomNameVisible(false);
             as.setGravity(false);
             as.setAI(false);
             as.setBasePlate(false);
