@@ -17,7 +17,6 @@ import java.util.logging.LogRecord;
 import java.util.stream.Collectors;
 import java.io.File;
 import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -156,6 +155,19 @@ public class WebServer {
         }
     }
 
+    private String getRankHexColor(String rankOrGroup) {
+        if (rankOrGroup == null || rankOrGroup.isEmpty()) return "#ffffff";
+        String c = plugin.getDataConfig().getString("ranks." + rankOrGroup + ".color");
+        if (c != null && !c.isEmpty() && !c.equals("#ffffff") && !c.equals("#aaaaaa")) return c;
+        
+        c = plugin.getDataConfig().getString("groups." + rankOrGroup + ".color");
+        if (c != null && !c.isEmpty() && !c.equals("#ffffff") && !c.equals("#aaaaaa")) return c;
+
+        String pref = plugin.getDataConfig().getString("ranks." + rankOrGroup + ".prefix");
+        if (pref == null) pref = plugin.getDataConfig().getString("groups." + rankOrGroup + ".prefix", "");
+        return plugin.inferHexColorFromPrefix(pref);
+    }
+
 
     private void setupRoutes() {
         app.post("/api/login", ctx -> {
@@ -266,6 +278,11 @@ public class WebServer {
                     m.put("playtime", plugin.getPlaytimeHours(p.getUniqueId()));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
                     m.put("coins", plugin.getDataConfig().getLong("coins." + p.getUniqueId(), 0));
+                    String rank = plugin.getPlayerRank(p.getUniqueId());
+                    if (rank == null) rank = plugin.getPlayerGroup(p.getUniqueId());
+                    m.put("rank", rank);
+                    m.put("rankColor", getRankHexColor(rank));
+                    m.put("color", getRankHexColor(rank));
                     players.add(m);
                 }
                 res.put("players", players);
@@ -2825,7 +2842,9 @@ public class WebServer {
                 List<Map<String, Object>> scheduled = new ArrayList<>();
                 for (Map<?, ?> r : raw) {
                     Map<String, Object> m = new HashMap<>();
-                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    for (Map.Entry<?, ?> entry : r.entrySet()) {
+                        if (entry.getValue() != null) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
                     scheduled.add(m);
                 }
                 Map<String, Object> entry = new HashMap<>();
@@ -2849,7 +2868,9 @@ public class WebServer {
                 List<Map<String, Object>> scheduled = new ArrayList<>();
                 for (Map<?, ?> r : raw) {
                     Map<String, Object> m = new HashMap<>();
-                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    for (Map.Entry<?, ?> entry : r.entrySet()) {
+                        if (entry.getValue() != null) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
                     scheduled.add(m);
                 }
                 if (index >= 0 && index < scheduled.size()) {
@@ -2898,7 +2919,9 @@ public class WebServer {
                 List<Map<String, Object>> scheduled = new ArrayList<>();
                 for (Map<?, ?> r : raw) {
                     Map<String, Object> m = new HashMap<>();
-                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    for (Map.Entry<?, ?> entry : r.entrySet()) {
+                        if (entry.getValue() != null) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
                     scheduled.add(m);
                 }
                 Map<String, Object> entry = new HashMap<>();
@@ -2921,7 +2944,9 @@ public class WebServer {
                 List<Map<String, Object>> scheduled = new ArrayList<>();
                 for (Map<?, ?> r : raw) {
                     Map<String, Object> m = new HashMap<>();
-                    for (Map.Entry<?, ?> entry : r.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    for (Map.Entry<?, ?> entry : r.entrySet()) {
+                        if (entry.getValue() != null) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                    }
                     scheduled.add(m);
                 }
                 if (index >= 0 && index < scheduled.size()) {
@@ -3146,6 +3171,36 @@ public class WebServer {
             ctx.json(future.get());
         });
 
+        // ========== ECONOMY DASHBOARD ==========
+        app.get("/api/economy", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.analytics")) return;
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> list = new ArrayList<>();
+                var data = plugin.getDataConfig();
+                if (data.contains("coins")) {
+                    for (String uuid : data.getConfigurationSection("coins").getKeys(false)) {
+                        Map<String, Object> map = new HashMap<>();
+                        map.put("uuid", uuid);
+                        map.put("balance", data.getLong("coins." + uuid, 0));
+                        map.put("earned", 0);
+                        map.put("spent", 0);
+                        try {
+                            String name = data.getString("last_seen_name." + uuid, Bukkit.getOfflinePlayer(UUID.fromString(uuid)).getName());
+                            map.put("name", name != null ? name : uuid);
+                        } catch (Exception e) { map.put("name", uuid); }
+                        list.add(map);
+                    }
+                }
+                list.sort((a, b) -> Long.compare((long)b.get("balance"), (long)a.get("balance")));
+                return list;
+            });
+            try {
+                ctx.json(Map.of("players", future.get()));
+            } catch (Exception e) {
+                ctx.status(500).json(Map.of("error", "Failed to fetch economy data"));
+            }
+        });
+
         // ========== EVENTS MANAGER ==========
         app.get("/api/events/active", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.events")) return;
@@ -3218,7 +3273,9 @@ public class WebServer {
             List<Map<String, Object>> historyList = new ArrayList<>();
             for (Map<?, ?> h : history) {
                 Map<String, Object> m = new HashMap<>();
-                for (Map.Entry<?, ?> entry : h.entrySet()) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                for (Map.Entry<?, ?> entry : h.entrySet()) {
+                    if (entry.getValue() != null) m.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
                 historyList.add(m);
             }
             Map<String, Object> record = new HashMap<>();
@@ -3312,7 +3369,12 @@ public class WebServer {
                     for (String name : section.getKeys(false)) {
                         Map<String, Object> g = new HashMap<>();
                         g.put("name", name);
-                        g.put("color", plugin.getDataConfig().getString("groups." + name + ".color", "#ffffff"));
+                        String c = plugin.getDataConfig().getString("groups." + name + ".color");
+                        if (c == null || c.isEmpty() || c.equals("#ffffff") || c.equals("#aaaaaa")) {
+                            String inf = plugin.inferHexColorFromPrefix(plugin.getDataConfig().getString("groups." + name + ".prefix", ""));
+                            if (!inf.equals("#ffffff")) c = inf;
+                        }
+                        g.put("color", c);
                         g.put("prefix", plugin.getDataConfig().getString("groups." + name + ".prefix", ""));
                         g.put("permissions", plugin.getDataConfig().getStringList("groups." + name + ".permissions"));
                         List<String> memberUuids = plugin.getDataConfig().getStringList("groups." + name + ".members");
@@ -3544,7 +3606,12 @@ public class WebServer {
                         Map<String, Object> r = new HashMap<>();
                         String path = "ranks." + name;
                         r.put("name", name);
-                        r.put("color", plugin.getDataConfig().getString(path + ".color", "#ffffff"));
+                        String c = plugin.getDataConfig().getString(path + ".color");
+                        if (c == null || c.isEmpty() || c.equals("#ffffff") || c.equals("#aaaaaa")) {
+                            String inf = plugin.inferHexColorFromPrefix(plugin.getDataConfig().getString(path + ".prefix", ""));
+                            if (!inf.equals("#ffffff")) c = inf;
+                        }
+                        r.put("color", c);
                         r.put("prefix", plugin.getDataConfig().getString(path + ".prefix", ""));
                         r.put("level", plugin.getDataConfig().getInt(path + ".level", 1));
                         r.put("description", plugin.getDataConfig().getString(path + ".description", ""));
@@ -3703,7 +3770,11 @@ public class WebServer {
                     Map<String, Object> m = new HashMap<>();
                     m.put("name", p.getName());
                     m.put("uuid", p.getUniqueId().toString());
-                    m.put("rank", plugin.getPlayerRank(p.getUniqueId()));
+                    String rank = plugin.getPlayerRank(p.getUniqueId());
+                    if (rank == null) rank = plugin.getPlayerGroup(p.getUniqueId());
+                    m.put("rank", rank);
+                    m.put("rankColor", getRankHexColor(rank));
+                    m.put("color", getRankHexColor(rank));
                     m.put("promotedBy", plugin.getDataConfig().getString("users." + p.getUniqueId() + ".promotedBy"));
                     m.put("promotionDate", plugin.getDataConfig().getLong("users." + p.getUniqueId() + ".promotionDate"));
                     players.add(m);
@@ -3722,7 +3793,10 @@ public class WebServer {
                             Map<String, Object> m = new HashMap<>();
                             m.put("name", name != null ? name : uuidStr);
                             m.put("uuid", uuidStr);
+                            if (rank == null) rank = plugin.getPlayerGroup(uuid);
                             m.put("rank", rank);
+                            m.put("rankColor", getRankHexColor(rank));
+                            m.put("color", getRankHexColor(rank));
                             m.put("promotedBy", plugin.getDataConfig().getString("users." + uuidStr + ".promotedBy"));
                             m.put("promotionDate", plugin.getDataConfig().getLong("users." + uuidStr + ".promotionDate"));
                             players.add(m);
@@ -3745,6 +3819,33 @@ public class WebServer {
                                 m.put("name", name != null ? name : uuidStr);
                                 m.put("uuid", uuidStr);
                                 m.put("rank", g);
+                                m.put("rankColor", getRankHexColor(g));
+                                m.put("color", getRankHexColor(g));
+                                m.put("promotedBy", plugin.getDataConfig().getString("users." + uuidStr + ".promotedBy"));
+                                m.put("promotionDate", plugin.getDataConfig().getLong("users." + uuidStr + ".promotionDate"));
+                                players.add(m);
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+                
+                // Offline (from groups membership lists)
+                var groupsSection = plugin.getDataConfig().getConfigurationSection("groups");
+                if (groupsSection != null) {
+                    for (String g : groupsSection.getKeys(false)) {
+                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                        for (String uuidStr : members) {
+                            try {
+                                UUID uuid = UUID.fromString(uuidStr);
+                                if (seen.contains(uuid)) continue;
+                                seen.add(uuid);
+                                String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                                Map<String, Object> m = new HashMap<>();
+                                m.put("name", name != null ? name : uuidStr);
+                                m.put("uuid", uuidStr);
+                                m.put("rank", g);
+                                m.put("rankColor", getRankHexColor(g));
+                                m.put("color", getRankHexColor(g));
                                 m.put("promotedBy", plugin.getDataConfig().getString("users." + uuidStr + ".promotedBy"));
                                 m.put("promotionDate", plugin.getDataConfig().getLong("users." + uuidStr + ".promotionDate"));
                                 players.add(m);

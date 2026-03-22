@@ -47,7 +47,7 @@
 
     <h3>Economy & Trading</h3>
     <ul>
-      <li><strong>Balance:</strong> View your coin and XP balance with <code>/balance</code>. Coins are used for shops, while XP is used for kits and bounties.</li>
+      <li><strong>Balance:</strong> View your coin and XP balance with <code>/balance</code>. Coins are earned naturally by killing monsters (1-5 coins), mining ores (30% chance for 2 coins), logging in daily (50+ coins), and selling items in player shops.</li>
       <li><strong>Player Shops:</strong> Browse the community shop via <code>/shop</code>. Sell your items using <code>/shop sell &lt;item&gt; &lt;amount&gt; &lt;price&gt;</code>. Offline players still receive their coins/XP when they log back in.</li>
       <li><strong>Auction House:</strong> Bid on timed item auctions using <code>/auction</code> or via the web-sync system.</li>
       <li><strong>Bounties:</strong> Place XP bounties on enemies using <code>/bounty set &lt;player&gt; &lt;amount&gt;</code>. Claim them by killing the target. Browse active bounties via <code>/bounty</code>.</li>
@@ -105,6 +105,7 @@
 /dmt spawn <mob> <true|false>  (enable/disable mob spawning)
 /dmt killall hostile
 /dmt gencloud <width> <length> <depth>
+/dmt leaderboard <create|delete> [type]
 /dmt antlag &lt;on|off|now&gt;
 /dmt rank &lt;create|remove|list|info|add|addprefix|addperm&gt; ...
 /dmt npc &lt;list|add|remove|summon&gt;
@@ -143,8 +144,15 @@
 /dmt npc summon &lt;library-name&gt; - Summon an NPC using a stored skin
 /dmt summon &lt;library-name&gt;     - Shortcut to summon a stored NPC
     </pre>
+    
+    <h3>2.5 Hologram Leaderboards</h3>
+    <p>Admins can spawn dynamic hologram leaderboards that update automatically every 5 minutes.</p>
+    <pre>
+/dmt leaderboard create <coins|playtime|kills>  - Create a new leaderboard at your location
+/dmt leaderboard delete                         - Remove any leaderboard holograms near you
+    </pre>
 
-    <h3>2.5 Anti-lag Cleanup</h3>
+    <h3>2.6 Anti-lag Cleanup</h3>
     <p>The plugin can periodically clear item drops to reduce lag.</p>
     <pre>
 /dmt antlag on      - Enable automatic cleanup
@@ -266,6 +274,35 @@
     </ul>
 
     <p><strong>Tip:</strong> When editing <code>data.yml</code> manually, keep YAML structure intact and restart the server after changes.</p>
+  </section>
+
+  <section>
+    <h2>8. Web Dashboard &amp; PWA Installation</h2>
+    <p>The DrowsyCraft Management Tool includes a Progressive Web App (PWA) that allows you to install the web dashboard directly to your home screen or desktop as a native app, complete with push notifications.</p>
+
+    <h3>Installing on iOS (iPhone/iPad)</h3>
+    <ol>
+      <li>Open the web dashboard URL in <strong>Safari</strong>.</li>
+      <li>Tap the <strong>Share</strong> button (the square with an arrow pointing up) at the bottom of the screen.</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+      <li>Tap <strong>Add</strong> in the top right. The dashboard will now appear as an app on your home screen!</li>
+    </ol>
+
+    <h3>Installing on Android</h3>
+    <ol>
+      <li>Open the web dashboard URL in <strong>Chrome</strong>.</li>
+      <li>Tap the <strong>Menu</strong> button (three vertical dots) in the top right corner.</li>
+      <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+      <li>Follow the on-screen prompt to install. The app will be added to your app drawer and home screen.</li>
+    </ol>
+
+    <h3>Installing on Desktop (Windows/Mac/Linux)</h3>
+    <ol>
+      <li>Open the web dashboard URL in <strong>Chrome</strong> or <strong>Edge</strong>.</li>
+      <li>Look for the <strong>Install icon</strong> (a computer screen with a down arrow) on the far right side of the address bar.</li>
+      <li>Click the icon and select <strong>Install</strong>.</li>
+      <li>The dashboard will now run in its own standalone window and can be pinned to your taskbar or dock.</li>
+    </ol>
   </section>
 
   <footer>
