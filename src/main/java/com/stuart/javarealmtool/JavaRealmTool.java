@@ -28,6 +28,10 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scoreboard.*;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import java.util.logging.Filter;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
@@ -311,6 +315,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
             if (getCommand("spawn") != null) { getCommand("spawn").setExecutor(this); getCommand("spawn").setTabCompleter(this); }
             if (getCommand("personal") != null) { getCommand("personal").setExecutor(this); getCommand("personal").setTabCompleter(this); }
+
+            // Hide /personal commands from console logs
+            try {
+                Logger rootLogger = Logger.getLogger("");
+                for (Handler handler : rootLogger.getHandlers()) {
+                    handler.setFilter(new Filter() {
+                        @Override
+                        public boolean isLoggable(LogRecord record) {
+                            if (record == null || record.getMessage() == null) return true;
+                            String msg = record.getMessage();
+                            if (msg.contains("issued server command: /personal")) return false;
+                            return true;
+                        }
+                    });
+                }
+            } catch (Exception ignored) {}
 
         webServer = new WebServer(this);
         webServer.start();
