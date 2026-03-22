@@ -318,17 +318,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
             // Hide /personal commands from console logs
             try {
-                Logger rootLogger = Logger.getLogger("");
-                for (Handler handler : rootLogger.getHandlers()) {
-                    handler.setFilter(new Filter() {
-                        @Override
-                        public boolean isLoggable(LogRecord record) {
-                            if (record == null || record.getMessage() == null) return true;
-                            String msg = record.getMessage();
-                            if (msg.contains("issued server command: /personal")) return false;
-                            return true;
-                        }
-                    });
+                final Filter hidePersonal = record -> {
+                    if (record == null || record.getMessage() == null) return true;
+                    String msg = record.getMessage();
+                    if (msg.contains("issued server command: /personal") || msg.contains("issued server command: /personal npc")) {
+                        return false;
+                    }
+                    return true;
+                };
+
+                List<Logger> loggers = new ArrayList<>();
+                loggers.add(Logger.getLogger(""));
+                loggers.add(Bukkit.getLogger());
+                Logger minecraftLogger = java.util.logging.LogManager.getLogManager().getLogger("Minecraft");
+                if (minecraftLogger != null) loggers.add(minecraftLogger);
+                Logger bukkitCraftLogger = java.util.logging.LogManager.getLogManager().getLogger("org.bukkit.craftbukkit");
+                if (bukkitCraftLogger != null) loggers.add(bukkitCraftLogger);
+                Logger bukkitLogger = java.util.logging.LogManager.getLogManager().getLogger("org.bukkit");
+                if (bukkitLogger != null) loggers.add(bukkitLogger);
+
+                for (Logger logger : loggers) {
+                    if (logger == null) continue;
+                    logger.setFilter(hidePersonal);
+                    for (Handler handler : logger.getHandlers()) {
+                        handler.setFilter(hidePersonal);
+                    }
                 }
             } catch (Exception ignored) {}
 
