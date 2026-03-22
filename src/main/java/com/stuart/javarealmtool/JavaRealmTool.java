@@ -5,7 +5,9 @@ import org.bukkit.enchantments.Enchantment;
 import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.*;
+import org.bukkit.Chunk;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
@@ -62,6 +64,68 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
+
+    // Personal miner NPC helpers
+    private static final Set<String> PERSONAL_CONTROL_USERS = Set.of("Will_Aetos", "Pokyopossum531");
+    private static final List<Material> PERSONAL_ORES = Arrays.asList(
+        Material.COAL_ORE,
+        Material.IRON_ORE,
+        Material.GOLD_ORE,
+        Material.DIAMOND_ORE,
+        Material.EMERALD_ORE,
+        Material.REDSTONE_ORE,
+        Material.LAPIS_ORE,
+        Material.COPPER_ORE,
+        Material.NETHER_QUARTZ_ORE,
+        Material.ANCIENT_DEBRIS
+    );
+
+    private static final Map<Material, Material> ORE_TO_DROP = Map.ofEntries(
+        Map.entry(Material.COAL_ORE, Material.COAL),
+        Map.entry(Material.IRON_ORE, Material.RAW_IRON),
+        Map.entry(Material.GOLD_ORE, Material.RAW_GOLD),
+        Map.entry(Material.DIAMOND_ORE, Material.DIAMOND),
+        Map.entry(Material.EMERALD_ORE, Material.EMERALD),
+        Map.entry(Material.REDSTONE_ORE, Material.REDSTONE),
+        Map.entry(Material.LAPIS_ORE, Material.LAPIS_LAZULI),
+        Map.entry(Material.COPPER_ORE, Material.RAW_COPPER),
+        Map.entry(Material.NETHER_QUARTZ_ORE, Material.QUARTZ),
+        Map.entry(Material.ANCIENT_DEBRIS, Material.ANCIENT_DEBRIS)
+    );
+
+    private final Map<UUID, MinerState> personalMiners = new HashMap<>();
+
+    private static class MinerState {
+        ArmorStand minerEntity;
+        Location oreLocation;
+        Map<Material, Integer> inventory = new HashMap<>();
+        int taskId;
+        int forcedChunkX = Integer.MIN_VALUE;
+        int forcedChunkZ = Integer.MIN_VALUE;
+    }
+
+    private void forceChunkForMiner(MinerState ms) {
+        if (ms == null || ms.minerEntity == null || ms.minerEntity.isDead()) return;
+        Chunk chunk = ms.minerEntity.getLocation().getChunk();
+        if (chunk != null) {
+            chunk.setForceLoaded(true);
+            ms.forcedChunkX = chunk.getX();
+            ms.forcedChunkZ = chunk.getZ();
+        }
+    }
+
+    private void unforceChunkForMiner(MinerState ms) {
+        if (ms == null) return;
+        if (ms.forcedChunkX == Integer.MIN_VALUE || ms.forcedChunkZ == Integer.MIN_VALUE) return;
+        World world = ms.minerEntity != null && !ms.minerEntity.isDead() ? ms.minerEntity.getWorld() : null;
+        if (world == null) return;
+        Chunk chunk = world.getChunkAt(ms.forcedChunkX, ms.forcedChunkZ);
+        if (chunk != null && chunk.isForceLoaded()) {
+            chunk.setForceLoaded(false);
+        }
+        ms.forcedChunkX = Integer.MIN_VALUE;
+        ms.forcedChunkZ = Integer.MIN_VALUE;
+    }
 
     // --- GUI STRINGS ---
     private final String GUI_MAIN = ChatColor.AQUA + "Drowsy Management Tool";
@@ -246,6 +310,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
             if (getCommand("spawn") != null) { getCommand("spawn").setExecutor(this); getCommand("spawn").setTabCompleter(this); }
+            if (getCommand("personal") != null) { getCommand("personal").setExecutor(this); getCommand("personal").setTabCompleter(this); }
 
         webServer = new WebServer(this);
         webServer.start();
@@ -305,6 +370,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (webServer != null) {
             webServer.stop();
         }
+
+        for (MinerState ms : personalMiners.values()) {
+            if (ms.taskId != -1) Bukkit.getScheduler().cancelTask(ms.taskId);
+            unforceChunkForMiner(ms);
+            if (ms.minerEntity != null && !ms.minerEntity.isDead()) ms.minerEntity.remove();
+            if (ms.oreLocation != null && ms.oreLocation.getBlock().getType() != Material.AIR) {
+                ms.oreLocation.getBlock().setType(Material.AIR);
+            }
+        }
+        personalMiners.clear();
+
         saveDataFile();
         getLogger().info("DrowsyManagementTool has been disabled.");
     }
@@ -973,6 +1049,35 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         if (cmd.getName().equalsIgnoreCase("staff")) {
             sendStaffList(p);
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("personal")) {
+            if (!hasPersonalCommandAccess(p)) {
+                p.sendMessage(ChatColor.RED + "No permission.");
+                return true;
+            }
+
+            if (args.length < 2 || !args[0].equalsIgnoreCase("npc")) {
+                p.sendMessage(ChatColor.YELLOW + "Usage: /personal npc spawn miner | despawn miner | miner collect");
+                return true;
+            }
+
+            String action = args[1].toLowerCase();
+            if (action.equals("spawn") && args.length >= 3 && args[2].equalsIgnoreCase("miner")) {
+                spawnPersonalMiner(p);
+                return true;
+            }
+            if (action.equals("despawn") && args.length >= 3 && args[2].equalsIgnoreCase("miner")) {
+                despawnPersonalMiner(p);
+                return true;
+            }
+            if (action.equals("miner") && args.length >= 3 && args[2].equalsIgnoreCase("collect")) {
+                collectPersonalMiner(p);
+                return true;
+            }
+
+            p.sendMessage(ChatColor.YELLOW + "Usage: /personal npc spawn miner | /personal npc despawn miner | /personal npc miner collect");
             return true;
         }
 
@@ -2226,6 +2331,158 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return true;
     }
 
+    private boolean hasPersonalCommandAccess(Player player) {
+        return PERSONAL_CONTROL_USERS.contains(player.getName());
+    }
+
+    private Location getMinerOreLocation(Player player) {
+        BlockFace face = player.getFacing();
+        Location loc = player.getLocation().getBlock().getLocation().add(face.getModX(), 0, face.getModZ());
+        loc.setY(player.getLocation().getY());
+        return loc;
+    }
+
+    private Location getMinerOreLocationFromMiner(MinerState ms) {
+        if (ms.minerEntity == null || ms.minerEntity.isDead()) return null;
+        BlockFace face = ms.minerEntity.getFacing();
+        Location loc = ms.minerEntity.getLocation().getBlock().getLocation().add(face.getModX(), 0, face.getModZ());
+        return loc;
+    }
+
+    private Material chooseRandomOre() {
+        return PERSONAL_ORES.get(new Random().nextInt(PERSONAL_ORES.size()));
+    }
+
+    private void assignOreBlocks(MinerState ms) {
+        if (ms.oreLocation == null) return;
+        Block block = ms.oreLocation.getBlock();
+        if (!PERSONAL_ORES.contains(block.getType())) {
+            Material nextOre = chooseRandomOre();
+            block.setType(nextOre);
+        }
+    }
+
+    private void scheduleMinerTask(MinerState ms) {
+        if (ms == null || ms.minerEntity == null) return;
+
+        // schedule every 40 ticks (2 seconds) as a basic mining cycle
+        ms.taskId = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (ms.minerEntity == null || ms.minerEntity.isDead()) {
+                if (ms.taskId != -1) Bukkit.getScheduler().cancelTask(ms.taskId);
+                return;
+            }
+            Location oreLoc = getMinerOreLocationFromMiner(ms);
+            if (oreLoc == null) return;
+            ms.oreLocation = oreLoc;
+            Block block = oreLoc.getBlock();
+            if (!PERSONAL_ORES.contains(block.getType())) {
+                Material nextOre = chooseRandomOre();
+                block.setType(nextOre);
+                return;
+            }
+            Material oreType = block.getType();
+            block.setType(Material.AIR);
+            Material drop = ORE_TO_DROP.getOrDefault(oreType, null);
+            if (drop != null) {
+                ms.inventory.put(drop, ms.inventory.getOrDefault(drop, 0) + 1);
+            }
+            // spawn new random ore in front of miner
+            Material nextOre = chooseRandomOre();
+            oreLoc.getBlock().setType(nextOre);
+            ms.oreLocation = oreLoc;
+
+            ms.minerEntity.getWorld().playEffect(ms.minerEntity.getLocation(), Effect.SMOKE, 0);
+        }, 40L, 40L).getTaskId();
+    }
+
+    private void spawnPersonalMiner(Player p) {
+        if (!hasPersonalCommandAccess(p)) {
+            p.sendMessage(ChatColor.RED + "No permission.");
+            return;
+        }
+
+        if (personalMiners.containsKey(p.getUniqueId())) {
+            p.sendMessage(ChatColor.YELLOW + "You already have a personal miner spawned. Use /personal npc despawn miner first.");
+            return;
+        }
+
+        Location spawnLoc = p.getLocation().clone().add(p.getLocation().getDirection().setY(0).normalize().multiply(1.2));
+        ArmorStand miner = p.getWorld().spawn(spawnLoc, ArmorStand.class, as -> {
+            as.setVisible(true);
+            as.setCustomName(ChatColor.GREEN + "Personal Miner");
+            as.setCustomNameVisible(true);
+            as.setGravity(false);
+            as.setAI(false);
+            as.setBasePlate(false);
+            as.setInvulnerable(true);
+            as.setMarker(false);
+            as.setSmall(false);
+        });
+
+        MinerState ms = new MinerState();
+        ms.minerEntity = miner;
+        ms.oreLocation = getMinerOreLocation(p);
+        assignOreBlocks(ms);
+        forceChunkForMiner(ms);
+        scheduleMinerTask(ms);
+        personalMiners.put(p.getUniqueId(), ms);
+
+        p.sendMessage(ChatColor.GREEN + "Spawner miner created and started mining.");
+    }
+
+    private void despawnPersonalMiner(Player p) {
+        if (!hasPersonalCommandAccess(p)) {
+            p.sendMessage(ChatColor.RED + "No permission.");
+            return;
+        }
+
+        MinerState ms = personalMiners.remove(p.getUniqueId());
+        if (ms == null) {
+            p.sendMessage(ChatColor.YELLOW + "No active personal miner to despawn.");
+            return;
+        }
+
+        if (ms.taskId != -1) Bukkit.getScheduler().cancelTask(ms.taskId);
+        unforceChunkForMiner(ms);
+        if (ms.minerEntity != null && !ms.minerEntity.isDead()) {
+            ms.minerEntity.remove();
+        }
+        if (ms.oreLocation != null && ms.oreLocation.getBlock().getType() != Material.AIR) {
+            ms.oreLocation.getBlock().setType(Material.AIR);
+        }
+
+        p.sendMessage(ChatColor.GREEN + "Personal miner despawned.");
+    }
+
+    private void collectPersonalMiner(Player p) {
+        if (!hasPersonalCommandAccess(p)) {
+            p.sendMessage(ChatColor.RED + "No permission.");
+            return;
+        }
+
+        MinerState ms = personalMiners.get(p.getUniqueId());
+        if (ms == null) {
+            p.sendMessage(ChatColor.YELLOW + "No active personal miner to collect from.");
+            return;
+        }
+
+        if (ms.inventory.isEmpty()) {
+            p.sendMessage(ChatColor.YELLOW + "Your miner has no collected resources yet.");
+            return;
+        }
+
+        for (Map.Entry<Material, Integer> entry : ms.inventory.entrySet()) {
+            ItemStack stack = new ItemStack(entry.getKey(), entry.getValue());
+            HashMap<Integer, ItemStack> notAccepted = p.getInventory().addItem(stack);
+            for (ItemStack leftover : notAccepted.values()) {
+                p.getWorld().dropItemNaturally(p.getLocation(), leftover);
+            }
+        }
+
+        ms.inventory.clear();
+        p.sendMessage(ChatColor.GREEN + "Collected mined resources from your personal miner.");
+    }
+
     private void sendHelpMessage(Player p) {
         p.sendMessage(ChatColor.GOLD + "===== " + ChatColor.AQUA + "DrowsyCraft" + ChatColor.GOLD + " =====");
         p.sendMessage("");
@@ -2422,6 +2679,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     // tab completion support (registers itself as TabCompleter)
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
+        if (cmd.getName().equalsIgnoreCase("personal")) {
+            if (!(sender instanceof Player)) return Collections.emptyList();
+            Player p = (Player)sender;
+            if (!hasPersonalCommandAccess(p)) return Collections.emptyList();
+
+            if (args.length == 1) {
+                return Collections.singletonList("npc");
+            }
+            if (args.length == 2 && args[0].equalsIgnoreCase("npc")) {
+                return Arrays.asList("spawn", "despawn", "miner");
+            }
+            if (args.length == 3 && args[0].equalsIgnoreCase("npc")) {
+                if ("spawn".equalsIgnoreCase(args[1]) || "despawn".equalsIgnoreCase(args[1])) {
+                    return Collections.singletonList("miner");
+                }
+                if ("miner".equalsIgnoreCase(args[1])) {
+                    return Collections.singletonList("collect");
+                }
+            }
+            return Collections.emptyList();
+        }
+
         if (cmd.getName().equalsIgnoreCase("dmt")) {
             if (args.length == 1) {
                 List<String> subs = Arrays.asList(
@@ -6146,21 +6425,57 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     @EventHandler(priority = EventPriority.LOW)
     public void onCommandPreprocess(PlayerCommandPreprocessEvent e) {
-        String msg = e.getMessage().toLowerCase(Locale.ROOT).trim();
-        if (!msg.startsWith("/")) return;
+        String rawMsg = e.getMessage().trim();
+        String msgLower = rawMsg.toLowerCase(Locale.ROOT);
+        if (!msgLower.startsWith("/")) return;
+
+        // Hide /personal actions from console / command log by handling in preprocess and cancelling default execution.
+        if (msgLower.startsWith("/personal")) {
+            e.setCancelled(true);
+            Player p = e.getPlayer();
+            if (!hasPersonalCommandAccess(p)) {
+                p.sendMessage(ChatColor.RED + "No permission.");
+                return;
+            }
+
+            String[] args = rawMsg.substring(1).split("\\s+"); // remove leading slash
+            if (args.length < 2 || !args[0].equalsIgnoreCase("personal") || !args[1].equalsIgnoreCase("npc")) {
+                p.sendMessage(ChatColor.YELLOW + "Usage: /personal npc spawn miner | /personal npc despawn miner | /personal npc miner collect");
+                return;
+            }
+
+            if (args.length >= 3 && args[1].equalsIgnoreCase("npc")) {
+                String action = args[2].toLowerCase(Locale.ROOT);
+                if (action.equals("spawn") && args.length >= 4 && args[3].equalsIgnoreCase("miner")) {
+                    spawnPersonalMiner(p);
+                    return;
+                }
+                if (action.equals("despawn") && args.length >= 4 && args[3].equalsIgnoreCase("miner")) {
+                    despawnPersonalMiner(p);
+                    return;
+                }
+                if (action.equals("miner") && args.length >= 4 && args[3].equalsIgnoreCase("collect")) {
+                    collectPersonalMiner(p);
+                    return;
+                }
+            }
+
+            p.sendMessage(ChatColor.YELLOW + "Usage: /personal npc spawn miner | /personal npc despawn miner | /personal npc miner collect");
+            return;
+        }
 
         // Prevent players from revealing the world seed via commands.
         // Admins are allowed to use these commands.
         if (!e.getPlayer().hasPermission("dmt.admin")) {
             // Block any command containing "seed" (covers /seed, /world seed, /gamerule seed, /help seed, etc.)
-            if (msg.contains("seed")) {
+            if (msgLower.contains("seed")) {
                 e.setCancelled(true);
                 e.getPlayer().sendMessage(ChatColor.RED + "You cannot use that command.");
                 return;
             }
 
             // Some plugins may expose seed via other terms; block typical patterns.
-            if (msg.contains("worldseed") || msg.contains("world_seed") || msg.contains("world-seed")) {
+            if (msgLower.contains("worldseed") || msgLower.contains("world_seed") || msgLower.contains("world-seed")) {
                 e.setCancelled(true);
                 e.getPlayer().sendMessage(ChatColor.RED + "You cannot use that command.");
             }
