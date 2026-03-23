@@ -1404,7 +1404,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
 
                     String targetWorld;
-                    if (worldSub.equals("separate_world") || worldSub.equals("unseparate_world")) {
+                    if (worldSub.equals("separate_world") || worldSub.equals("seperate_world") || worldSub.equals("unseparate_world") || worldSub.equals("unseperate_world")) {
                         if (args.length == 3) {
                             targetWorld = args[2];
                         } else {
@@ -1416,17 +1416,48 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         }
                         World wflags = Bukkit.getWorld(targetWorld);
                         if (wflags == null) {
+                            // Attempt to load world by name if possible
+                            wflags = Bukkit.createWorld(new org.bukkit.WorldCreator(targetWorld));
+                        }
+                        if (wflags == null) {
                             p.sendMessage(ChatColor.RED + "World '" + targetWorld + "' not found.");
                             return true;
                         }
-                        boolean separate = worldSub.equals("separate_world");
+                        boolean separate = worldSub.startsWith("separate");
                         dataConfig.set("worlds." + targetWorld + ".separate", separate);
+                        saveDataFile();
                         if (separate) {
                             p.sendMessage(ChatColor.GREEN + "World '" + targetWorld + "' is now separated (own inventory/settings mode). ");
                         } else {
                             p.sendMessage(ChatColor.GREEN + "World '" + targetWorld + "' is now normal (shared settings mode). ");
                         }
-                        saveDataFile();
+                        applyWorldSettings(wflags);
+                        return true;
+                    }
+
+                    // world status
+                    if (worldSub.equals("status")) {
+                        targetWorld = args.length == 3 ? args[2] : selectedWorld.get(p.getUniqueId());
+                        if (targetWorld == null) {
+                            p.sendMessage(ChatColor.RED + "Usage: /dmt world status [<world>] or select a world first.");
+                            return true;
+                        }
+                        World wstatus = Bukkit.getWorld(targetWorld);
+                        if (wstatus == null) {
+                            p.sendMessage(ChatColor.RED + "World not found: " + targetWorld);
+                            return true;
+                        }
+                        boolean separated = dataConfig.getBoolean("worlds." + targetWorld + ".separate", false);
+                        boolean lockedStatus = dataConfig.getBoolean("worldlocks." + targetWorld, false);
+                        boolean mobspawns = dataConfig.getBoolean("worlds." + targetWorld + ".mobspawns", true);
+                        String gm = dataConfig.getString("worlds." + targetWorld + ".gamemode", "default");
+                        p.sendMessage(ChatColor.AQUA + "----- World Status: " + targetWorld + " -----");
+                        p.sendMessage(ChatColor.GREEN + "Separated: " + (separated ? "Yes" : "No"));
+                        p.sendMessage(ChatColor.GREEN + "Locked: " + (lockedStatus ? "Yes" : "No"));
+                        p.sendMessage(ChatColor.GREEN + "Mob Spawns: " + (mobspawns ? "Enabled" : "Disabled"));
+                        p.sendMessage(ChatColor.GREEN + "Sound Gamemode: " + gm);
+                        p.sendMessage(ChatColor.GREEN + "Loaded: " + (wstatus != null ? "Yes" : "No"));
+                        p.sendMessage(ChatColor.AQUA + "-----------------------------------");
                         return true;
                     }
 
@@ -1525,12 +1556,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             dataConfig.set("worlds." + sel + ".gamemode", gm.name());
                             saveDataFile();
                             p.sendMessage(ChatColor.GREEN + "Gamemode for world '" + sel + "' set to " + gm.name() + ".");
-                            // optionally apply to all players in world
                             World world = Bukkit.getWorld(sel);
                             if (world != null) {
                                 for (Player wp : world.getPlayers()) {
                                     wp.setGameMode(gm);
                                 }
+                            } else {
+                                world = Bukkit.createWorld(new org.bukkit.WorldCreator(sel));
+                            }
+                            if (world != null) {
+                                applyWorldSettings(world);
                             }
                         } catch (Exception ex) {
                             p.sendMessage(ChatColor.RED + "Unknown gamemode: " + modeName);
@@ -2928,6 +2963,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 break;
             case "world":
                 p.sendMessage(ChatColor.AQUA + "/dmt world select <world>" + ChatColor.WHITE + " - Select a world for settings (mobspawns/lock/gamerule)");
+                p.sendMessage(ChatColor.AQUA + "/dmt world status [<world>]" + ChatColor.WHITE + " - Show selected/world status");
                 p.sendMessage(ChatColor.AQUA + "/dmt world separate_world [<world>]" + ChatColor.WHITE + " - Make the selected world separate-server mode");
                 p.sendMessage(ChatColor.AQUA + "/dmt world unseparate_world [<world>]" + ChatColor.WHITE + " - Disable separate-server mode");
                 p.sendMessage(ChatColor.AQUA + "/dmt world <world> lock" + ChatColor.WHITE + " - Lock a world (prevents /hub and /dmt tp world)");
