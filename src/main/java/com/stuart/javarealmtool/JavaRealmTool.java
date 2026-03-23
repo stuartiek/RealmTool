@@ -1188,6 +1188,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return true;
         }
 
+        if (cmd.getName().equalsIgnoreCase("drowsytool")) {
+            ensurePlayerHasTool(p);
+            p.sendMessage(ChatColor.GREEN + "You have received the Drowsy Tool. It is in your hotbar slot 9.");
+            return true;
+        }
+
         if (cmd.getName().equalsIgnoreCase("randomrole")) {
             p.sendMessage(ChatColor.GREEN + "Thank you for purchasing Random Roles! Please open a minecraft ticket in the Drowsy Vocals Discord to claim. (discord.gg/drowsyvocals)");
             return true;
@@ -9704,6 +9710,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
+        // Give the player their Drowsy Tool at join (fallback for users who lost it).
+        ensurePlayerHasTool(p);
+
         // determine first pending enchant quest and notify
         List<String> order = Arrays.asList("Timber", "Vein Miner", "Smelting Touch", "Telepathy");
         for (String ench : order) {

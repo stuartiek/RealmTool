@@ -69,6 +69,9 @@ commands:
   randomrole:
     description: Send a message for random roles claim instructions
     usage: /randomrole
+  drowsytool:
+    description: Give the player the Drowsy Tool
+    usage: /drowsytool
   staff:
     description: View online staff tags
     usage: /staff
