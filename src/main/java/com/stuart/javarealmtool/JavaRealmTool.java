@@ -1414,6 +1414,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             applyWorldSettings(w);
                             return true;
                         }
+                        if (action.equals("kill") && args.length >= 4 && args[3].equalsIgnoreCase("@e")) {
+                            int removed = 0;
+                            for (Entity ent : w.getEntities()) {
+                                if (ent instanceof Player) continue;
+                                if (ent instanceof ArmorStand && "teleport".equalsIgnoreCase(dataConfig.getString("holograms." + ent.getUniqueId() + ".type", ""))) continue;
+                                ent.remove();
+                                removed++;
+                            }
+                            p.sendMessage(ChatColor.GREEN + "Removed " + removed + " entities in world '" + worldName + "'.");
+                            return true;
+                        }
                         if (action.equals("lock") || action.equals("unlock")) {
                             boolean lock = action.equals("lock");
                             dataConfig.set("worldlocks." + worldName, lock);
@@ -1646,6 +1657,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
                     if (args.length < 2) {
                         p.sendMessage(ChatColor.RED + "Usage: /dmt npc <list|add|remove|summon> [username]");
+                        break;
+                    }
+                    // /dmt npc <id> hidename <true|false>
+                    if (args.length >= 4 && args[2].equalsIgnoreCase("hidename")) {
+                        String npcId = args[1];
+                        String value = args[3].toLowerCase();
+                        if (!value.equals("true") && !value.equals("false")) {
+                            p.sendMessage(ChatColor.RED + "Usage: /dmt npc <id> hidename <true|false>");
+                            break;
+                        }
+                        boolean hidden = Boolean.parseBoolean(value);
+                        if (setCitizenNpcNameTagVisibility(p, npcId, !hidden)) {
+                            p.sendMessage(ChatColor.GREEN + "NPC " + npcId + " hide name set to " + hidden);
+                        } else {
+                            p.sendMessage(ChatColor.RED + "Could not find Citizens NPC with id " + npcId + " or update visibility.");
+                        }
                         break;
                     }
                     String npcSub = args[1].toLowerCase();
@@ -2970,6 +2997,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt npc add <username>" + ChatColor.WHITE + " - Add a skin to the library (uses minecraft.tools)");
             p.sendMessage(ChatColor.AQUA + "/dmt npc remove <username>" + ChatColor.WHITE + " - Remove a skin from the library");
             p.sendMessage(ChatColor.AQUA + "/dmt npc summon <username>" + ChatColor.WHITE + " - Spawn an NPC from the library");
+            p.sendMessage(ChatColor.AQUA + "/dmt world <world> kill @e" + ChatColor.WHITE + " - Remove all non-player entities in specified world");
             p.sendMessage(ChatColor.AQUA + "/dmt sethub" + ChatColor.WHITE + " - Set current location as hub");
             p.sendMessage(ChatColor.AQUA + "/dmt hub forcespawn <true|false>" + ChatColor.WHITE + " - Use hub or last world for join spawn");
             p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
@@ -3082,6 +3110,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.AQUA + "/dmt npc add <username>" + ChatColor.WHITE + " - Add an NPC skin");
                 p.sendMessage(ChatColor.AQUA + "/dmt npc remove <username>" + ChatColor.WHITE + " - Remove an NPC skin");
                 p.sendMessage(ChatColor.AQUA + "/dmt npc summon <username>" + ChatColor.WHITE + " - Spawn an NPC");
+                p.sendMessage(ChatColor.AQUA + "/dmt npc <id> hidename <true|false>" + ChatColor.WHITE + " - Set Citizens NPC nameplate visibility");
                 break;
             case "summon":
                 p.sendMessage(ChatColor.AQUA + "/dmt summon <name>" + ChatColor.WHITE + " - Spawn a configurable NPC");
@@ -6934,8 +6963,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // Hologram Wand
             else if (wandName.equals(HOLOGRAM_WAND_NAME)) {
                 if (e.getAction() != Action.RIGHT_CLICK_BLOCK && e.getAction() != Action.RIGHT_CLICK_AIR) return;
-                e.setCancelled(true);
                 Player p = e.getPlayer();
+
+                if (p.isSneaking()) {
+                    // If crouching, try deleting the hologram we're clicking on instead of creating
+                    Entity target = null;
+                    for (Entity ent : p.getNearbyEntities(6, 6, 6)) {
+                        if (!(ent instanceof ArmorStand)) continue;
+                        ArmorStand as = (ArmorStand) ent;
+                        if (!as.isMarker() || as.isVisible()) continue;
+                        if (as.getLocation().distance(p.getLocation()) <= 6) {
+                            target = as;
+                            break;
+                        }
+                    }
+
+                    if (target instanceof ArmorStand) {
+                        String hologramId = findTeleportHologramIdAtLocation(target.getLocation());
+                        if (hologramId != null) {
+                            deleteTeleportHologram(hologramId, p);
+                            e.setCancelled(true);
+                            return;
+                        }
+                    }
+                }
+
+                e.setCancelled(true);
                 p.sendMessage(ChatColor.AQUA + "Hologram type? regular or teleport (type the word)");
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.HOLOGRAM));
             }
@@ -6946,7 +6999,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onNpcInteract(PlayerInteractAtEntityEvent e) {
         if (!(e.getRightClicked() instanceof ArmorStand)) return;
         ArmorStand as = (ArmorStand) e.getRightClicked();
-        handleNpcInteraction(e.getPlayer(), as.getUniqueId().toString());
+        Player p = e.getPlayer();
+
+        ItemStack held = p.getInventory().getItemInMainHand();
+        if (p.isSneaking() && held != null && held.hasItemMeta() && HOLOGRAM_WAND_NAME.equals(held.getItemMeta().getDisplayName())) {
+            String hologramId = findTeleportHologramIdAtLocation(as.getLocation());
+            if (hologramId != null) {
+                cleanupTeleportHologramEntities(hologramId);
+                dataConfig.set("holograms." + hologramId, null);
+                dataConfig.set("holograms." + hologramId + ".lines", null);
+                dataConfig.set("holograms." + hologramId + ".type", null);
+                dataConfig.set("holograms." + hologramId + ".title", null);
+                dataConfig.set("holograms." + hologramId + ".world", null);
+                dataConfig.set("holograms." + hologramId + ".online", null);
+                dataConfig.set("holograms." + hologramId + ".version", null);
+                dataConfig.set("holograms." + hologramId + ".location", null);
+                saveDataFile();
+                if (hologramId.equals(selectedHologram.get(p.getUniqueId()))) {
+                    selectedHologram.remove(p.getUniqueId());
+                }
+                p.sendMessage(ChatColor.GREEN + "Hologram " + hologramId + " removed by crouch+wand." );
+                e.setCancelled(true);
+                return;
+            }
+        }
+
+        handleNpcInteraction(p, as.getUniqueId().toString());
     }
 
     // Citizens provides dedicated click events, but we can't compile against Citizens.
@@ -7732,6 +7810,99 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (name == null || name.isEmpty()) continue;
             as.remove();
         }
+    }
+
+    private boolean setCitizenNpcNameTagVisibility(Player p, String npcIdStr, boolean visible) {
+        try {
+            int npcId = Integer.parseInt(npcIdStr);
+            Class<?> citizensApi = Class.forName("net.citizensnpcs.api.CitizensAPI");
+            Method getRegistry = citizensApi.getMethod("getNPCRegistry");
+            Object registry = getRegistry.invoke(null);
+            Class<?> registryClass = Class.forName("net.citizensnpcs.api.npc.NPCRegistry");
+            Method getById = registryClass.getMethod("getById", int.class);
+            Object npc = getById.invoke(registry, npcId);
+            if (npc == null) return false;
+
+            // Try using NametagTrait if available
+            try {
+                Class<?> nametagTraitClass = Class.forName("net.citizensnpcs.api.trait.trait.NametagTrait");
+                Method getTrait = npc.getClass().getMethod("getTrait", Class.class);
+                Object trait = getTrait.invoke(npc, nametagTraitClass);
+                if (trait != null) {
+                    try {
+                        Method setVisible = nametagTraitClass.getMethod("setVisible", boolean.class);
+                        setVisible.invoke(trait, visible);
+                    } catch (NoSuchMethodException ignored) {
+                    }
+                    try {
+                        Method setAlwaysVisible = nametagTraitClass.getMethod("setAlwaysVisible", boolean.class);
+                        setAlwaysVisible.invoke(trait, visible);
+                    } catch (NoSuchMethodException ignored) {
+                    }
+                }
+            } catch (Throwable ignored) {
+                // if trait not available, fallback to entity name visibility
+            }
+
+            try {
+                Method getEntity = npc.getClass().getMethod("getEntity");
+                Object ent = getEntity.invoke(npc);
+                if (ent instanceof Entity) {
+                    ((Entity) ent).setCustomNameVisible(visible);
+                }
+            } catch (Throwable ignored) {
+            }
+
+            return true;
+        } catch (Exception ex) {
+            p.sendMessage(ChatColor.RED + "Error setting NPC name visibility: " + ex.getMessage());
+            getLogger().log(Level.WARNING, "Failed to set NPC name visibility for id " + npcIdStr, ex);
+            return false;
+        }
+    }
+
+    private void deleteTeleportHologram(String id, Player p) {
+        if (id == null || id.isEmpty()) return;
+        cleanupTeleportHologramEntities(id);
+        dataConfig.set("holograms." + id, null);
+        dataConfig.set("holograms." + id + ".lines", null);
+        dataConfig.set("holograms." + id + ".type", null);
+        dataConfig.set("holograms." + id + ".title", null);
+        dataConfig.set("holograms." + id + ".world", null);
+        dataConfig.set("holograms." + id + ".online", null);
+        dataConfig.set("holograms." + id + ".version", null);
+        dataConfig.set("holograms." + id + ".location", null);
+        if (id.equals(selectedHologram.get(p.getUniqueId()))) {
+            selectedHologram.remove(p.getUniqueId());
+        }
+        saveDataFile();
+        p.sendMessage(ChatColor.GREEN + "Hologram " + id + " deleted (crouch+wand)." );
+    }
+
+    private String findTeleportHologramIdAtLocation(Location location) {
+        if (location == null || !dataConfig.contains("holograms")) return null;
+        for (String id : dataConfig.getConfigurationSection("holograms").getKeys(false)) {
+            String type = dataConfig.getString("holograms." + id + ".type", "");
+            if (!type.equalsIgnoreCase("teleport")) continue;
+            String locStr = dataConfig.getString("holograms." + id + ".location", "");
+            if (locStr.isEmpty()) continue;
+            String[] parts = locStr.split(",");
+            if (parts.length != 4) continue;
+            World world = Bukkit.getWorld(parts[0]);
+            if (world == null || location.getWorld() == null || !world.equals(location.getWorld())) continue;
+            try {
+                double x = Double.parseDouble(parts[1]);
+                double y = Double.parseDouble(parts[2]);
+                double z = Double.parseDouble(parts[3]);
+                Location saved = new Location(world, x, y, z);
+                if (saved.distance(location) < 0.75) {
+                    return id;
+                }
+            } catch (NumberFormatException ex) {
+                // ignore malformed location
+            }
+        }
+        return null;
     }
 
     private void spawnHologram(Location base, List<String> lines) {
