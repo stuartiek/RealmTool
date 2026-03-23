@@ -693,29 +693,30 @@ public class WebServer {
                         plugin.fireDiscordEvent("bans", "Player Banned", "**" + targetName + "** was banned.\nReason: " + banReason, 0xe74c3c, targetName);
                     }
                     else if (action.equals("unban")) {
-                        org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
-                        nameBanList.pardon(targetName);
-                        org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                        List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
-                        for (Object obj : profileBanList.getEntries()) {
-                            org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                            Object eTarget = entry.getTarget();
-                            if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
-                                org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
-                                if (targetName.equalsIgnoreCase(pp.getName()) || targetName.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                    profilesToPardon.add(pp);
+                        try { Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(targetName); } catch (Exception ignored) {}
+                        try { Bukkit.getBanList(org.bukkit.BanList.Type.IP).pardon(targetName); } catch (Exception ignored) {}
+                        try {
+                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                            List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
+                            for (Object obj : profileBanList.getEntries()) {
+                                org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                                Object eTarget = entry.getTarget();
+                                if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
+                                    org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
+                                    if (targetName.equalsIgnoreCase(pp.getName()) || targetName.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
+                                        profilesToPardon.add(pp);
+                                    }
                                 }
                             }
-                        }
-                        for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
-                            profileBanList.pardon(pp);
-                        }
-                        org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
-                        if (op != null && op.getPlayerProfile() != null) {
-                            profileBanList.pardon(op.getPlayerProfile());
-                        }
-                        org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
-                        ipBanList.pardon(targetName);
+                            for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
+                                try { profileBanList.pardon(pp); } catch (Exception ignored) {}
+                            }
+                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
+                            if (op != null && op.getPlayerProfile() != null) {
+                                try { profileBanList.pardon(op.getPlayerProfile()); } catch (Exception ignored) {}
+                            }
+                        } catch (Exception ignored) {}
+                        try { plugin.removePunishment(uuid); } catch (Exception ignored) {}
                         plugin.logAction("WebAdmin", "unbanned", targetName);
                     }
                     else if (action.equals("warn")) {
@@ -1441,29 +1442,30 @@ public class WebServer {
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.kickPlayer(ChatColor.RED + "Banned: " + (fReason != null ? fReason : ""));
                         } else if ("unban".equals(fAction)) {
-                            org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
-                            nameBanList.pardon(target);
-                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                            List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
-                            for (Object obj : profileBanList.getEntries()) {
-                                org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                                Object eTarget = entry.getTarget();
-                                if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
-                                    org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
-                                    if (target.equalsIgnoreCase(pp.getName()) || target.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                        profilesToPardon.add(pp);
+                                try { Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(target); } catch (Exception ignored) {}
+                                try { Bukkit.getBanList(org.bukkit.BanList.Type.IP).pardon(target); } catch (Exception ignored) {}
+                                try {
+                                    org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                                    List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
+                                    for (Object obj : profileBanList.getEntries()) {
+                                        org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                                        Object eTarget = entry.getTarget();
+                                        if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
+                                            org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
+                                            if (target.equalsIgnoreCase(pp.getName()) || target.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
+                                                profilesToPardon.add(pp);
+                                            }
                                     }
                                 }
-                            }
-                            for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
-                                profileBanList.pardon(pp);
-                            }
-                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
-                            if (op != null && op.getPlayerProfile() != null) {
-                                profileBanList.pardon(op.getPlayerProfile());
-                            }
-                            org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
-                            ipBanList.pardon(target);
+                                    for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
+                                        try { profileBanList.pardon(pp); } catch (Exception ignored) {}
+                                    }
+                                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
+                                    if (op != null && op.getPlayerProfile() != null) {
+                                        try { profileBanList.pardon(op.getPlayerProfile()); } catch (Exception ignored) {}
+                                    }
+                                } catch (Exception ignored) {}
+                                try { plugin.removePunishment(uuid); } catch (Exception ignored) {}
                         } else if ("kick".equals(fAction)) {
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.kickPlayer(ChatColor.RED + (fReason != null ? fReason : "Kicked"));
