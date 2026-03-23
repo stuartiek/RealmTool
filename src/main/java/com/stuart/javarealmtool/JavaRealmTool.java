@@ -1388,7 +1388,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     }
 
                     // support: /dmt world <world> <action>
-                    if (args.length == 3 && !args[1].equalsIgnoreCase("select") && !args[1].equalsIgnoreCase("status")
+                    if (args.length >= 3 && !args[1].equalsIgnoreCase("select") && !args[1].equalsIgnoreCase("status")
                             && !args[1].equalsIgnoreCase("separate_world") && !args[1].equalsIgnoreCase("unseparate_world")) {
                         String worldName = args[1];
                         String action = args[2].toLowerCase();
@@ -1398,6 +1398,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         }
                         if (w == null) {
                             p.sendMessage(ChatColor.RED + "World '" + worldName + "' not found.");
+                            return true;
+                        }
+                        if (action.equals("kill") && args.length >= 4 && args[3].equalsIgnoreCase("@e")) {
+                            int removed = 0;
+                            for (Entity ent : w.getEntities()) {
+                                if (ent instanceof Player) continue;
+                                if (ent instanceof ArmorStand && "teleport".equalsIgnoreCase(dataConfig.getString("holograms." + ent.getUniqueId() + ".type", ""))) continue;
+                                ent.remove();
+                                removed++;
+                            }
+                            p.sendMessage(ChatColor.GREEN + "Removed " + removed + " entities in world '" + worldName + "'.");
                             return true;
                         }
                         if (action.equals("separate_world") || action.equals("seperate_world")) {
@@ -7824,6 +7835,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (npc == null) return false;
 
             // Try using NametagTrait if available
+            boolean applied = false;
             try {
                 Class<?> nametagTraitClass = Class.forName("net.citizensnpcs.api.trait.trait.NametagTrait");
                 Method getTrait = npc.getClass().getMethod("getTrait", Class.class);
@@ -7832,25 +7844,76 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     try {
                         Method setVisible = nametagTraitClass.getMethod("setVisible", boolean.class);
                         setVisible.invoke(trait, visible);
+                        applied = true;
                     } catch (NoSuchMethodException ignored) {
                     }
                     try {
                         Method setAlwaysVisible = nametagTraitClass.getMethod("setAlwaysVisible", boolean.class);
                         setAlwaysVisible.invoke(trait, visible);
+                        applied = true;
+                    } catch (NoSuchMethodException ignored) {
+                    }
+                    try {
+                        Method setNameVisible = nametagTraitClass.getMethod("setNameVisible", boolean.class);
+                        setNameVisible.invoke(trait, visible);
+                        applied = true;
                     } catch (NoSuchMethodException ignored) {
                     }
                 }
             } catch (Throwable ignored) {
-                // if trait not available, fallback to entity name visibility
+                // trait not available, fallback to entity name visibility
             }
 
             try {
                 Method getEntity = npc.getClass().getMethod("getEntity");
                 Object ent = getEntity.invoke(npc);
                 if (ent instanceof Entity) {
-                    ((Entity) ent).setCustomNameVisible(visible);
+                    org.bukkit.entity.Entity entity = (org.bukkit.entity.Entity) ent;
+                    entity.setCustomNameVisible(visible);
+                    if (visible) {
+                        String npcName = null;
+                        try {
+                            Method getName = npc.getClass().getMethod("getName");
+                            Object nameObj = getName.invoke(npc);
+                            if (nameObj != null) npcName = nameObj.toString();
+                        } catch (Throwable ignored) {
+                        }
+                        if (npcName != null) {
+                            entity.setCustomName(npcName);
+                        }
+                    }
+                    applied = true;
                 }
             } catch (Throwable ignored) {
+            }
+
+            // Fallback via NPC data storage (Citizens 2.0+)
+            try {
+                Method dataMethod = npc.getClass().getMethod("data");
+                Object dataObj = dataMethod.invoke(npc);
+                if (dataObj != null) {
+                    Method setMethod = null;
+                    try {
+                        setMethod = dataObj.getClass().getMethod("set", String.class, Object.class);
+                    } catch (NoSuchMethodException ignored) {
+                        // no setter available
+                    }
+                    if (setMethod != null) {
+                        String[] keys = {"nametag-visible", "nameplate-visible", "nametag", "nametag-always-visible"};
+                        for (String key : keys) {
+                            try {
+                                setMethod.invoke(dataObj, key, visible);
+                                applied = true;
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+
+            if (!applied) {
+                p.sendMessage(ChatColor.YELLOW + "Could not apply NPC nametag visibility using Citizens API. If using non-standard Citizens version, this may not be supported.");
             }
 
             return true;
