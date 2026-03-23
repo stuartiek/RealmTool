@@ -66,6 +66,9 @@ commands:
   personal:
     description: Personal miner NPC controller
     usage: /personal npc spawn miner | /personal npc despawn miner | /personal npc miner collect
+  randomrole:
+    description: Send a message for random roles claim instructions
+    usage: /randomrole
   staff:
     description: View online staff tags
     usage: /staff
