@@ -63,6 +63,9 @@ commands:
   report:
     description: Report a player
     usage: /report <player> <reason>
+  personal:
+    description: Personal miner NPC controller
+    usage: /personal npc spawn miner | /personal npc despawn miner | /personal npc miner collect
   staff:
     description: View online staff tags
     usage: /staff
