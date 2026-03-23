@@ -1749,7 +1749,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             return true;
                         }
                         selectedHologram.put(p.getUniqueId(), id);
-                        p.sendMessage(ChatColor.GREEN + "Selected hologram " + id + ". Use /dmt hologram edit to modify.");
+                        p.sendMessage(ChatColor.GREEN + "Selected hologram " + id + ". Use /dmt hologram edit to modify or /dmt hologram delete to remove.");
                         return true;
                     }
                     if (sub.equals("clear")) {
@@ -1757,12 +1757,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.GREEN + "Hologram selection cleared.");
                         return true;
                     }
-                    if (sub.equals("delete") && args.length >= 3) {
-                        String id = args[2];
+                    if (sub.equals("delete")) {
+                        String id = args.length >= 3 ? args[2] : selectedHologram.get(p.getUniqueId());
+                        if (id == null || id.isEmpty()) {
+                            p.sendMessage(ChatColor.RED + "No hologram specified. Use /dmt hologram delete <id> or /dmt hologram select <id> first.");
+                            return true;
+                        }
                         if (!dataConfig.contains("holograms." + id)) {
                             p.sendMessage(ChatColor.RED + "Hologram not found: " + id);
                             return true;
                         }
+                        cleanupTeleportHologramEntities(id);
                         dataConfig.set("holograms." + id, null);
                         dataConfig.set("holograms." + id + ".lines", null);
                         dataConfig.set("holograms." + id + ".type", null);
@@ -1770,6 +1775,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         dataConfig.set("holograms." + id + ".world", null);
                         dataConfig.set("holograms." + id + ".online", null);
                         dataConfig.set("holograms." + id + ".version", null);
+                        dataConfig.set("holograms." + id + ".location", null);
                         saveDataFile();
                         if (id.equals(selectedHologram.get(p.getUniqueId()))) {
                             selectedHologram.remove(p.getUniqueId());
@@ -3555,15 +3561,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             ctx.lines.add(statusText);
 
                             // spawn hologram and persist
-                            spawnHologram(p, ctx.lines);
-                            String selectedId;
                             boolean isEdit = ctx.hologramMode.equals("teleport-edit");
-                            if (isEdit && ctx.targetName != null && !ctx.targetName.isEmpty()) {
-                                selectedId = ctx.targetName;
-                            } else {
-                                selectedId = generateHologramId();
+                            String selectedId = isEdit && ctx.targetName != null && !ctx.targetName.isEmpty() ? ctx.targetName : generateHologramId();
+
+                            Location targetLocation = null;
+                            if (isEdit) {
+                                targetLocation = getSavedTeleportHologramLocation(selectedId);
+                                if (targetLocation != null) {
+                                    cleanupTeleportHologramEntitiesAtLocation(targetLocation);
+                                }
                             }
-                            saveTeleportHologram(selectedId, ctx.lines.get(0), ctx.lines.get(1), worldName, online, version, p.getLocation());
+                            if (targetLocation == null) {
+                                targetLocation = p.getLocation().add(0, 1.6, 0);
+                            }
+
+                            spawnHologram(targetLocation, ctx.lines);
+                            saveTeleportHologram(selectedId, ctx.lines.get(0), ctx.lines.get(1), worldName, online, version, targetLocation);
 
                             p.sendMessage(ChatColor.GREEN + "Teleport hologram " + (isEdit ? "updated" : "created") + " with ID: " + selectedId + "!");
                             pendingActions.remove(p.getUniqueId());
@@ -7597,6 +7610,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
     }
 
+    private void clearInventoryForWorld(Player p, String worldName) {
+        String base = "worlds." + worldName + ".inventory." + p.getUniqueId();
+        dataConfig.set(base + ".contents", new ArrayList<>());
+        dataConfig.set(base + ".armor", new ArrayList<>());
+        saveDataFile();
+    }
+
+    private void clearSharedInventory(Player p) {
+        String base = "worlds.shared.inventory." + p.getUniqueId();
+        dataConfig.set(base + ".contents", new ArrayList<>());
+        dataConfig.set(base + ".armor", new ArrayList<>());
+        saveDataFile();
+    }
+
     private void applyWorldSettings(World world) {
         if (world == null) return;
         String worldName = world.getName();
@@ -7668,6 +7695,63 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         lines.add((online ? ChatColor.GREEN : ChatColor.RED) + (online ? "Online" : "Offline") + " (" + version + ")");
         dataConfig.set("holograms." + id + ".lines", lines);
         saveDataFile();
+    }
+
+    private Location getSavedTeleportHologramLocation(String id) {
+        if (!dataConfig.contains("holograms." + id + ".location")) return null;
+        String locationStr = dataConfig.getString("holograms." + id + ".location", "");
+        if (locationStr.isEmpty()) return null;
+        String[] parts = locationStr.split(",");
+        if (parts.length != 4) return null;
+        World world = Bukkit.getWorld(parts[0]);
+        if (world == null) return null;
+        try {
+            double x = Double.parseDouble(parts[1]);
+            double y = Double.parseDouble(parts[2]);
+            double z = Double.parseDouble(parts[3]);
+            return new Location(world, x, y, z);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private void cleanupTeleportHologramEntities(String id) {
+        Location loc = getSavedTeleportHologramLocation(id);
+        if (loc != null) {
+            cleanupTeleportHologramEntitiesAtLocation(loc);
+        }
+    }
+
+    private void cleanupTeleportHologramEntitiesAtLocation(Location location) {
+        if (location == null || location.getWorld() == null) return;
+        for (Entity entity : location.getWorld().getNearbyEntities(location, 1.5, 3.0, 1.5)) {
+            if (!(entity instanceof ArmorStand)) continue;
+            ArmorStand as = (ArmorStand) entity;
+            if (!as.isMarker() || as.isVisible()) continue;
+            String name = as.getCustomName();
+            if (name == null || name.isEmpty()) continue;
+            as.remove();
+        }
+    }
+
+    private void spawnHologram(Location base, List<String> lines) {
+        World world = base.getWorld();
+        if (world == null || lines == null) return;
+        double spacing = 0.25;
+        for (int i = 0; i < lines.size(); i++) {
+            Location loc = base.clone().add(0, -i * spacing, 0);
+            ArmorStand as = (ArmorStand) world.spawnEntity(loc, org.bukkit.entity.EntityType.ARMOR_STAND);
+            as.setVisible(false);
+            as.setGravity(false);
+            as.setMarker(true);
+            as.setInvulnerable(true);
+            as.setCustomName(ChatColor.translateAlternateColorCodes('&', lines.get(i)));
+            as.setCustomNameVisible(true);
+        }
+    }
+
+    private void spawnHologram(Player p, List<String> lines) {
+        spawnHologram(p.getLocation().add(0, 1.6, 0), lines);
     }
 
     private void loadTeleportHologram(String id, Player p) {
@@ -8646,6 +8730,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             logAction(killer.getName(), "duel_won", "vs " + victim.getName() + (wager > 0 ? " wager:" + wager : ""));
         }
 
+        // Clear saved inventory for the death world to prevent repopulating pre-death items on teleport back.
+        World deathWorld = victim.getWorld();
+        if (deathWorld != null) {
+            String deathWorldName = deathWorld.getName();
+            if (isWorldSeparated(deathWorldName)) {
+                clearInventoryForWorld(victim, deathWorldName);
+            } else {
+                clearSharedInventory(victim);
+            }
+        }
+
         // Check for bounties on the victim
         if (dataConfig.contains("bounties")) {
             List<String> toRemove = new ArrayList<>();
@@ -9360,22 +9455,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         meta.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
         item.setItemMeta(meta);
         return true;
-    }
-
-    private void spawnHologram(Player p, List<String> lines) {
-        Location base = p.getLocation().add(0, 1.6, 0);
-        World world = p.getWorld();
-        double spacing = 0.25;
-        for (int i = 0; i < lines.size(); i++) {
-            Location loc = base.clone().add(0, -i * spacing, 0);
-            ArmorStand as = (ArmorStand) world.spawnEntity(loc, org.bukkit.entity.EntityType.ARMOR_STAND);
-            as.setVisible(false);
-            as.setGravity(false);
-            as.setMarker(true);
-            as.setInvulnerable(true);
-            as.setCustomName(ChatColor.translateAlternateColorCodes('&', lines.get(i)));
-            as.setCustomNameVisible(true);
-        }
     }
 
     private void openNpcShop(Player p, String npcId) {
