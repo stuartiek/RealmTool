@@ -1038,21 +1038,27 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             int code = conn.getResponseCode();
             conn.disconnect();
             if (code >= 200 && code < 300) {
-                int sent = dataConfig.getInt("discord.webhooks_sent", 0);
-                dataConfig.set("discord.webhooks_sent", sent + 1);
-                saveDataFile();
+                Bukkit.getScheduler().runTask(this, () -> {
+                    int sent = dataConfig.getInt("discord.webhooks_sent", 0);
+                    dataConfig.set("discord.webhooks_sent", sent + 1);
+                    saveDataFile();
+                });
                 return true;
             } else {
-                int failed = dataConfig.getInt("discord.webhooks_failed", 0);
-                dataConfig.set("discord.webhooks_failed", failed + 1);
-                saveDataFile();
+                Bukkit.getScheduler().runTask(this, () -> {
+                    int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+                    dataConfig.set("discord.webhooks_failed", failed + 1);
+                    saveDataFile();
+                });
                 getLogger().warning("Discord webhook returned " + code);
                 return false;
             }
         } catch (Exception e) {
-            int failed = dataConfig.getInt("discord.webhooks_failed", 0);
-            dataConfig.set("discord.webhooks_failed", failed + 1);
-            saveDataFile();
+            Bukkit.getScheduler().runTask(this, () -> {
+                int failed = dataConfig.getInt("discord.webhooks_failed", 0);
+                dataConfig.set("discord.webhooks_failed", failed + 1);
+                saveDataFile();
+            });
             getLogger().warning("Discord webhook failed: " + e.getMessage());
             return false;
         }
