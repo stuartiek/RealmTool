@@ -696,15 +696,23 @@ public class WebServer {
                         org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
                         nameBanList.pardon(targetName);
                         org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                        List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
                         for (Object obj : profileBanList.getEntries()) {
                             org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
                             Object eTarget = entry.getTarget();
                             if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
                                 org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
                                 if (targetName.equalsIgnoreCase(pp.getName()) || targetName.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                    profileBanList.pardon(pp);
+                                    profilesToPardon.add(pp);
                                 }
                             }
+                        }
+                        for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
+                            profileBanList.pardon(pp);
+                        }
+                        org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
+                        if (op != null && op.getPlayerProfile() != null) {
+                            profileBanList.pardon(op.getPlayerProfile());
                         }
                         org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
                         ipBanList.pardon(targetName);
@@ -1436,15 +1444,23 @@ public class WebServer {
                             org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
                             nameBanList.pardon(target);
                             org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
+                            List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
                             for (Object obj : profileBanList.getEntries()) {
                                 org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
                                 Object eTarget = entry.getTarget();
                                 if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
                                     org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
                                     if (target.equalsIgnoreCase(pp.getName()) || target.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                        profileBanList.pardon(pp);
+                                        profilesToPardon.add(pp);
                                     }
                                 }
+                            }
+                            for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
+                                profileBanList.pardon(pp);
+                            }
+                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
+                            if (op != null && op.getPlayerProfile() != null) {
+                                profileBanList.pardon(op.getPlayerProfile());
                             }
                             org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
                             ipBanList.pardon(target);
