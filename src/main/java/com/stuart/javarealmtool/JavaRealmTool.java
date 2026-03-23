@@ -59,6 +59,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
+    private volatile boolean dataConfigDirty = false;
+    private int autoSaveTaskId = -1;
     
     // pending world creation/chat actions are handled via pendingActions and a new enum value
 
@@ -451,6 +453,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Start anti-lag ground item cleanup (configurable)
         startAntiLagCleanup();
 
+        // Start auto-save task (every 5 seconds) to prevent main-thread lag during heavy usage
+        autoSaveTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
+            if (dataConfigDirty) {
+                performDataSave();
+            }
+        }, 100L, 100L);
+
         getLogger().info("Drowsy Management Tool Fully Loaded!");
         } catch (Throwable t) {
             getLogger().severe("Failed to enable DrowsyManagementTool: " + t.getClass().getName() + ": " + t.getMessage());
@@ -464,6 +473,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             webServer.stop();
         }
 
+        if (autoSaveTaskId != -1) {
+            Bukkit.getScheduler().cancelTask(autoSaveTaskId);
+        }
+
         for (MinerState ms : personalMiners.values()) {
             if (ms.taskId != -1) Bukkit.getScheduler().cancelTask(ms.taskId);
             unforceChunkForMiner(ms);
@@ -475,6 +488,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         personalMiners.clear();
 
         saveDataFile();
+        if (dataConfigDirty) {
+            try {
+                dataConfig.save(dataFile);
+            } catch (IOException e) {
+                getLogger().log(Level.SEVERE, "Could not save data on disable", e);
+            }
+        }
         getLogger().info("DrowsyManagementTool has been disabled.");
     }
 
@@ -512,10 +532,25 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public void saveDataFile() {
+        dataConfigDirty = true;
+    }
+
+    private void performDataSave() {
+        dataConfigDirty = false;
         try {
-            dataConfig.save(dataFile);
-        } catch (IOException e) {
-            getLogger().log(java.util.logging.Level.SEVERE, "Could not save data to " + dataFile, e);
+            // Serialize synchronously to avoid SnakeYAML NullPointerExceptions caused by race conditions
+            final String serializedData = dataConfig.saveToString();
+            
+            // Write to disk asynchronously so it doesn't freeze the server
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                try (java.io.Writer writer = new java.io.OutputStreamWriter(new java.io.FileOutputStream(dataFile), StandardCharsets.UTF_8)) {
+                    writer.write(serializedData);
+                } catch (java.io.IOException e) {
+                    getLogger().log(Level.SEVERE, "Could not save data to " + dataFile, e);
+                }
+            });
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "Failed to serialize data.yml", e);
         }
     }
 
