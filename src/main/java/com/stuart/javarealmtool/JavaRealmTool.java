@@ -1383,9 +1383,61 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
                     if (args.length < 2) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt world select <world> | /dmt world <world> <lock|unlock> | /dmt world separate_world [<world>] | /dmt world unseparate_world [<world>]");
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt world select <world> | /dmt world <world> <lock|unlock|separate_world|unseparate_world|status> | /dmt world separate_world [<world>] | /dmt world unseparate_world [<world>]");
                         return true;
                     }
+
+                    // support: /dmt world <world> <action>
+                    if (args.length == 3 && !args[1].equalsIgnoreCase("select") && !args[1].equalsIgnoreCase("status")
+                            && !args[1].equalsIgnoreCase("separate_world") && !args[1].equalsIgnoreCase("unseparate_world")) {
+                        String worldName = args[1];
+                        String action = args[2].toLowerCase();
+                        World w = Bukkit.getWorld(worldName);
+                        if (w == null) {
+                            w = Bukkit.createWorld(new org.bukkit.WorldCreator(worldName));
+                        }
+                        if (w == null) {
+                            p.sendMessage(ChatColor.RED + "World '" + worldName + "' not found.");
+                            return true;
+                        }
+                        if (action.equals("separate_world") || action.equals("seperate_world")) {
+                            dataConfig.set("worlds." + worldName + ".separate", true);
+                            saveDataFile();
+                            p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' is now separated (own inventory/settings).\n");
+                            applyWorldSettings(w);
+                            return true;
+                        }
+                        if (action.equals("unseparate_world") || action.equals("unseperate_world")) {
+                            dataConfig.set("worlds." + worldName + ".separate", false);
+                            saveDataFile();
+                            p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' is now normal shared mode.\n");
+                            applyWorldSettings(w);
+                            return true;
+                        }
+                        if (action.equals("lock") || action.equals("unlock")) {
+                            boolean lock = action.equals("lock");
+                            dataConfig.set("worldlocks." + worldName, lock);
+                            saveDataFile();
+                            refreshTeleportHologramsForWorld(worldName);
+                            p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' is now " + (lock ? "locked" : "unlocked") + ".");
+                            return true;
+                        }
+                        if (action.equals("status")) {
+                            boolean separated = dataConfig.getBoolean("worlds." + worldName + ".separate", false);
+                            boolean lockedStatus = dataConfig.getBoolean("worldlocks." + worldName, false);
+                            boolean mobspawns = dataConfig.getBoolean("worlds." + worldName + ".mobspawns", true);
+                            String gm = dataConfig.getString("worlds." + worldName + ".gamemode", "default");
+                            p.sendMessage(ChatColor.AQUA + "----- World Status: " + worldName + " -----");
+                            p.sendMessage(ChatColor.GREEN + "Separated: " + (separated ? "Yes" : "No"));
+                            p.sendMessage(ChatColor.GREEN + "Locked: " + (lockedStatus ? "Yes" : "No"));
+                            p.sendMessage(ChatColor.GREEN + "Mob Spawns: " + (mobspawns ? "Enabled" : "Disabled"));
+                            p.sendMessage(ChatColor.GREEN + "Gamemode: " + gm);
+                            p.sendMessage(ChatColor.GREEN + "Loaded: " + (w != null ? "Yes" : "No"));
+                            p.sendMessage(ChatColor.AQUA + "-----------------------------------");
+                            return true;
+                        }
+                    }
+
                     String worldSub = args[1].toLowerCase();
                     if (worldSub.equals("select")) {
                         if (args.length != 3) {
@@ -1507,6 +1559,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         boolean lockSel = item.equals("lock");
                         dataConfig.set("worldlocks." + sel, lockSel);
                         saveDataFile();
+                        refreshTeleportHologramsForWorld(sel);
                         p.sendMessage(ChatColor.GREEN + "World '" + sel + "' " + (lockSel ? "locked" : "unlocked") + ".");
                         return true;
                     }
@@ -1668,6 +1721,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.AQUA + "/dmt hologram list" + ChatColor.WHITE + " - Show teleport holograms");
                         p.sendMessage(ChatColor.AQUA + "/dmt hologram select <id>" + ChatColor.WHITE + " - Select a hologram for editing");
                         p.sendMessage(ChatColor.AQUA + "/dmt hologram edit" + ChatColor.WHITE + " - Edit selected hologram");
+                        p.sendMessage(ChatColor.AQUA + "/dmt hologram delete <id>" + ChatColor.WHITE + " - Delete a teleport hologram");
                         p.sendMessage(ChatColor.AQUA + "/dmt hologram clear" + ChatColor.WHITE + " - Clear selected hologram");
                         return true;
                     }
@@ -1701,6 +1755,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     if (sub.equals("clear")) {
                         selectedHologram.remove(p.getUniqueId());
                         p.sendMessage(ChatColor.GREEN + "Hologram selection cleared.");
+                        return true;
+                    }
+                    if (sub.equals("delete") && args.length >= 3) {
+                        String id = args[2];
+                        if (!dataConfig.contains("holograms." + id)) {
+                            p.sendMessage(ChatColor.RED + "Hologram not found: " + id);
+                            return true;
+                        }
+                        dataConfig.set("holograms." + id, null);
+                        dataConfig.set("holograms." + id + ".lines", null);
+                        dataConfig.set("holograms." + id + ".type", null);
+                        dataConfig.set("holograms." + id + ".title", null);
+                        dataConfig.set("holograms." + id + ".world", null);
+                        dataConfig.set("holograms." + id + ".online", null);
+                        dataConfig.set("holograms." + id + ".version", null);
+                        saveDataFile();
+                        if (id.equals(selectedHologram.get(p.getUniqueId()))) {
+                            selectedHologram.remove(p.getUniqueId());
+                        }
+                        p.sendMessage(ChatColor.GREEN + "Hologram " + id + " deleted.");
                         return true;
                     }
                     if (sub.equals("edit")) {
@@ -3141,7 +3215,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     return out;
                 }
                 if (sub.equals("hologram")) {
-                    List<String> subs = Arrays.asList("list", "select", "edit", "clear");
+                    List<String> subs = Arrays.asList("list", "select", "edit", "delete", "clear");
                     String start = args[1].toLowerCase();
                     List<String> out = new ArrayList<>();
                     for (String s : subs) {
@@ -6698,6 +6772,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 loadInventoryFromShared(e.getPlayer());
             }
             applyWorldSettings(e.getTo().getWorld());
+            applyPlayerGamemodeForWorld(e.getPlayer(), e.getTo().getWorld());
         }
 
         // catch teleport commands / plugins
@@ -7050,6 +7125,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             loadInventoryFromShared(e.getPlayer());
         }
         applyWorldSettings(e.getPlayer().getWorld());
+        applyPlayerGamemodeForWorld(e.getPlayer(), e.getPlayer().getWorld());
 
         if (isPunished(uuid)) {
             if (!punishTeam.hasEntry(e.getPlayer().getName())) {
@@ -7561,6 +7637,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Locks are already handled elsewhere via worldlocks events.
     }
 
+    private void applyPlayerGamemodeForWorld(Player p, World world) {
+        if (p == null || world == null) return;
+        String worldName = world.getName();
+        if (!dataConfig.contains("worlds." + worldName + ".gamemode")) return;
+        String gm = dataConfig.getString("worlds." + worldName + ".gamemode", "");
+        if (gm == null || gm.isEmpty()) return;
+        try {
+            GameMode mode = GameMode.valueOf(gm.toUpperCase());
+            p.setGameMode(mode);
+        } catch (Exception ignored) {
+        }
+    }
+
     private String generateHologramId() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     }
@@ -7588,6 +7677,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             spawnHologram(p, lines);
         }
     }
+
+    private void refreshTeleportHologramsForWorld(String worldName) {
+        if (!dataConfig.contains("holograms")) return;
+        boolean worldExists = Bukkit.getWorld(worldName) != null;
+        boolean worldLocked = dataConfig.getBoolean("worldlocks." + worldName, false);
+        boolean online = worldExists && !worldLocked;
+        String worldVersion = Bukkit.getBukkitVersion();
+
+        for (String hologramId : dataConfig.getConfigurationSection("holograms").getKeys(false)) {
+            String type = dataConfig.getString("holograms." + hologramId + ".type", "");
+            if (!type.equalsIgnoreCase("teleport")) continue;
+            String targetWorld = dataConfig.getString("holograms." + hologramId + ".world", "");
+            if (!worldName.equals(targetWorld)) continue;
+            dataConfig.set("holograms." + hologramId + ".online", online);
+            dataConfig.set("holograms." + hologramId + ".version", worldVersion);
+            List<String> lines = dataConfig.getStringList("holograms." + hologramId + ".lines");
+            if (lines.size() >= 3) {
+                String newStatusLine = (online ? ChatColor.GREEN : ChatColor.RED) + (online ? "Online" : "Offline") + " (" + worldVersion + ")";
+                lines.set(2, newStatusLine);
+                dataConfig.set("holograms." + hologramId + ".lines", lines);
+            }
+        }
+        saveDataFile();
+    }
+
     private Location getLoc(String p) {
         if (!dataConfig.contains(p)) return null;
         try {
