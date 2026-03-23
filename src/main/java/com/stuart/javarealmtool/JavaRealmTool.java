@@ -38,6 +38,8 @@ import java.util.logging.Filter;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
@@ -7770,20 +7772,68 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     }
 
+    private String styleHologramText(String text, ChatColor color) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(ChatColor.BOLD).append(color);
+        boolean inNumber = false;
+        for (char c : text.toCharArray()) {
+            if (Character.isDigit(c) || c == '.') {
+                if (!inNumber) {
+                    sb.append(ChatColor.WHITE);
+                    inNumber = true;
+                }
+                sb.append(c);
+            } else {
+                if (inNumber) {
+                    sb.append(ChatColor.BOLD).append(color);
+                    inNumber = false;
+                }
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private String normalizeVersion(String v) {
+        if (v == null) return "";
+        String[] parts = v.split(" ");
+        if (parts.length == 0) return v;
+        String candidate = parts[0];
+        // Treat as dot-separated numbers, else preserve first token
+        if (candidate.matches("[0-9]+(\\.[0-9]+)*")) {
+            return candidate;
+        }
+        // fallback: keep numeric prefix if possible
+        Matcher m = java.util.regex.Pattern.compile("([0-9]+(\\.[0-9]+)*)").matcher(v);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return candidate;
+    }
+
     private void saveTeleportHologram(String id, String title, String season, String worldName, boolean online, String version, Location location) {
         dataConfig.set("holograms." + id + ".type", "teleport");
         dataConfig.set("holograms." + id + ".title", title);
         dataConfig.set("holograms." + id + ".season", season);
         dataConfig.set("holograms." + id + ".world", worldName);
+        String normalizedVersion = normalizeVersion(version);
         dataConfig.set("holograms." + id + ".online", online);
-        dataConfig.set("holograms." + id + ".version", version);
+        dataConfig.set("holograms." + id + ".version", normalizedVersion);
         dataConfig.set("holograms." + id + ".location", location.getWorld().getName() + "," + location.getX() + "," + location.getY() + "," + location.getZ());
         List<String> lines = new ArrayList<>();
-        lines.add(title);
-        lines.add(season);
-        lines.add((online ? ChatColor.GREEN : ChatColor.RED) + (online ? "Online" : "Offline") + " (" + version + ")");
+        lines.add(styleHologramText(title, ChatColor.AQUA));
+        lines.add(styleHologramText(season, ChatColor.YELLOW));
+        String statusPrefix = online ? styleHologramText("Online", ChatColor.GREEN) : styleHologramText("Offline", ChatColor.RED);
+        lines.add(statusPrefix + ChatColor.WHITE + " (" + normalizedVersion + ")");
         dataConfig.set("holograms." + id + ".lines", lines);
         saveDataFile();
+
+        // Force respawn updated formatted hologram where stored
+        cleanupTeleportHologramEntities(id);
+        Location loc = getSavedTeleportHologramLocation(id);
+        if (loc != null) {
+            spawnHologram(loc, lines);
+        }
     }
 
     private Location getSavedTeleportHologramLocation(String id) {
@@ -7870,7 +7920,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if (ent instanceof Entity) {
                     org.bukkit.entity.Entity entity = (org.bukkit.entity.Entity) ent;
                     entity.setCustomNameVisible(visible);
-                    if (visible) {
+                    if (!visible) {
+                        entity.setCustomName(null);
+                    } else {
                         String npcName = null;
                         try {
                             Method getName = npc.getClass().getMethod("getName");
@@ -7899,7 +7951,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         // no setter available
                     }
                     if (setMethod != null) {
-                        String[] keys = {"nametag-visible", "nameplate-visible", "nametag", "nametag-always-visible"};
+                        String[] keys = {"nametag-visible", "nametag-always-visible", "nametag", "nameplate-visible", "nametag-visibility"};
                         for (String key : keys) {
                             try {
                                 setMethod.invoke(dataObj, key, visible);
@@ -7907,6 +7959,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             } catch (Throwable ignored) {
                             }
                         }
+                    }
+
+                    try {
+                        Method getMethod = dataObj.getClass().getMethod("get", String.class);
+                        for (String key : new String[]{"nametag-visible", "nametag-always-visible", "nameplate-visible"}) {
+                            try {
+                                Object val = getMethod.invoke(dataObj, key);
+                                if (val != null) {
+                                    applied = true;
+                                }
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    } catch (Throwable ignored) {
                     }
                 }
             } catch (Throwable ignored) {
@@ -8001,21 +8067,27 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         boolean worldExists = Bukkit.getWorld(worldName) != null;
         boolean worldLocked = dataConfig.getBoolean("worldlocks." + worldName, false);
         boolean online = worldExists && !worldLocked;
-        String worldVersion = Bukkit.getBukkitVersion();
+        String worldVersion = normalizeVersion(Bukkit.getBukkitVersion());
 
         for (String hologramId : dataConfig.getConfigurationSection("holograms").getKeys(false)) {
             String type = dataConfig.getString("holograms." + hologramId + ".type", "");
             if (!type.equalsIgnoreCase("teleport")) continue;
             String targetWorld = dataConfig.getString("holograms." + hologramId + ".world", "");
             if (!worldName.equals(targetWorld)) continue;
+
             dataConfig.set("holograms." + hologramId + ".online", online);
             dataConfig.set("holograms." + hologramId + ".version", worldVersion);
-            List<String> lines = dataConfig.getStringList("holograms." + hologramId + ".lines");
-            if (lines.size() >= 3) {
-                String newStatusLine = (online ? ChatColor.GREEN : ChatColor.RED) + (online ? "Online" : "Offline") + " (" + worldVersion + ")";
-                lines.set(2, newStatusLine);
-                dataConfig.set("holograms." + hologramId + ".lines", lines);
-            }
+
+            String title = dataConfig.getString("holograms." + hologramId + ".title", "");
+            String season = dataConfig.getString("holograms." + hologramId + ".season", "");
+
+            List<String> lines = new ArrayList<>();
+            lines.add(styleHologramText(title, ChatColor.AQUA));
+            lines.add(styleHologramText(season, ChatColor.YELLOW));
+            String statusPrefix = online ? styleHologramText("Online", ChatColor.GREEN) : styleHologramText("Offline", ChatColor.RED);
+            lines.add(statusPrefix + ChatColor.WHITE + " (" + worldVersion + ")");
+
+            dataConfig.set("holograms." + hologramId + ".lines", lines);
         }
         saveDataFile();
     }
