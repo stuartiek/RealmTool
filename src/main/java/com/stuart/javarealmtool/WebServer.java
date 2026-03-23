@@ -541,56 +541,62 @@ public class WebServer {
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> banned = new ArrayList<>();
                 SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                for (Object obj : profileBanList.getEntries()) {
-                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                    Map<String, Object> map = new HashMap<>();
-                    Object target = entry.getTarget();
-                    String name = "Unknown";
-                    if (target instanceof org.bukkit.profile.PlayerProfile) {
-                        org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) target;
-                        name = pp.getName();
-                        if (name == null && pp.getUniqueId() != null) name = pp.getUniqueId().toString();
-                    } else if (target != null) {
-                        name = target.toString();
+
+                try {
+                    for (org.bukkit.OfflinePlayer p : Bukkit.getBannedPlayers()) {
+                        Map<String, Object> map = new HashMap<>();
+                        String name = p.getName() != null ? p.getName() : (p.getUniqueId() != null ? p.getUniqueId().toString() : "Unknown");
+                        map.put("name", name);
+                        map.put("target", name);
+
+                        String reason = "No reason";
+                        String source = "Unknown";
+                        String created = "Unknown";
+                        String expiration = "Never";
+
+                        try {
+                            org.bukkit.BanEntry entry = null;
+                            try {
+                                entry = (org.bukkit.BanEntry) Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getBanEntry(p.getName());
+                            } catch (Throwable ignored) {}
+
+                            if (entry != null) {
+                                reason = entry.getReason() != null ? entry.getReason() : reason;
+                                source = entry.getSource() != null ? entry.getSource() : source;
+                                created = entry.getCreated() != null ? sdf.format(entry.getCreated()) : created;
+                                expiration = entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : expiration;
+                            }
+                        } catch (Exception ignored) {}
+
+                        map.put("reason", reason);
+                        map.put("source", source);
+                        map.put("created", created);
+                        map.put("expiration", expiration);
+                        banned.add(map);
                     }
-                    if (name == null || name.isEmpty()) continue;
-                    map.put("name", name);
-                    map.put("target", name);
-                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
-                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
-                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
-                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
-                    banned.add(map);
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Error parsing banned players: " + e.getMessage());
                 }
-                org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
-                for (Object obj : nameBanList.getEntries()) {
-                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                    String name = entry.getTarget() != null ? entry.getTarget().toString() : null;
-                    if (name == null || name.isEmpty() || banned.stream().anyMatch(m -> name.equals(m.get("name")))) continue;
-                    Map<String, Object> map = new HashMap<>();
-                    map.put("name", name);
-                    map.put("target", name);
-                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
-                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
-                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
-                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
-                    banned.add(map);
+
+                try {
+                    org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
+                    for (Object obj : ipBanList.getEntries()) {
+                        org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
+                        String ip = entry.getTarget() != null ? entry.getTarget().toString() : null;
+                        if (ip == null || ip.isEmpty() || banned.stream().anyMatch(m -> ip.equals(m.get("name")))) continue;
+                        Map<String, Object> map = new HashMap<>();
+                        map.put("name", ip);
+                        map.put("target", ip);
+                        map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
+                        map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
+                        map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
+                        map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
+                        banned.add(map);
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Error parsing IP bans: " + e.getMessage());
                 }
-                org.bukkit.BanList ipBanList = Bukkit.getBanList(org.bukkit.BanList.Type.IP);
-                for (Object obj : ipBanList.getEntries()) {
-                    org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                    String ip = entry.getTarget() != null ? entry.getTarget().toString() : null;
-                    if (ip == null || ip.isEmpty() || banned.stream().anyMatch(m -> ip.equals(m.get("name")))) continue;
-                    Map<String, Object> map = new HashMap<>();
-                    map.put("name", ip);
-                    map.put("target", ip);
-                    map.put("reason", entry.getReason() != null ? entry.getReason() : "No reason");
-                    map.put("source", entry.getSource() != null ? entry.getSource() : "Unknown");
-                    map.put("created", entry.getCreated() != null ? sdf.format(entry.getCreated()) : "Unknown");
-                    map.put("expiration", entry.getExpiration() != null ? sdf.format(entry.getExpiration()) : "Never");
-                    banned.add(map);
-                }
+
                 return banned;
             });
             ctx.json(future.get());
@@ -680,42 +686,16 @@ public class WebServer {
                     }
                     else if (action.equals("ban")) {
                         String banReason = val != null ? val : "No reason";
-                        org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
-                        nameBanList.addBan(targetName, banReason, (java.util.Date) null, "Web Admin");
-                        org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
-                        if (op != null && op.getPlayerProfile() != null) {
-                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                            profileBanList.addBan(op.getPlayerProfile(), banReason, (java.util.Date) null, "Web Admin");
-                        }
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ban " + targetName + " " + banReason);
                         if (p != null) p.kickPlayer(ChatColor.RED + "You have been banned: " + banReason);
                         plugin.addChatLog("System", "[BAN] " + targetName + ": " + banReason);
                         plugin.logAction("WebAdmin", "banned", targetName + " (" + banReason + ")");
                         plugin.fireDiscordEvent("bans", "Player Banned", "**" + targetName + "** was banned.\nReason: " + banReason, 0xe74c3c, targetName);
                     }
                     else if (action.equals("unban")) {
-                        try { Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(targetName); } catch (Exception ignored) {}
-                        try { Bukkit.getBanList(org.bukkit.BanList.Type.IP).pardon(targetName); } catch (Exception ignored) {}
-                        try {
-                            org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                            List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
-                            for (Object obj : profileBanList.getEntries()) {
-                                org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                                Object eTarget = entry.getTarget();
-                                if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
-                                    org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
-                                    if (targetName.equalsIgnoreCase(pp.getName()) || targetName.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                        profilesToPardon.add(pp);
-                                    }
-                                }
-                            }
-                            for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
-                                try { profileBanList.pardon(pp); } catch (Exception ignored) {}
-                            }
-                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
-                            if (op != null && op.getPlayerProfile() != null) {
-                                try { profileBanList.pardon(op.getPlayerProfile()); } catch (Exception ignored) {}
-                            }
-                        } catch (Exception ignored) {}
+                        // Use the built-in vanilla command to cleanly resolve and remove the profile/name ban
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "pardon " + targetName);
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "pardon-ip " + targetName);
                         try { plugin.removePunishment(uuid); } catch (Exception ignored) {}
                         plugin.logAction("WebAdmin", "unbanned", targetName);
                     }
@@ -1432,39 +1412,13 @@ public class WebServer {
                         if (target.isEmpty()) continue;
                         UUID uuid = Bukkit.getOfflinePlayer(target).getUniqueId();
                         if ("ban".equals(fAction)) {
-                            org.bukkit.BanList nameBanList = Bukkit.getBanList(org.bukkit.BanList.Type.NAME);
-                            nameBanList.addBan(target, fReason, (java.util.Date) null, "WebAdmin");
-                            org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
-                            if (op != null && op.getPlayerProfile() != null) {
-                                org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                                profileBanList.addBan(op.getPlayerProfile(), fReason, (java.util.Date) null, "WebAdmin");
-                            }
+                            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "ban " + target + " " + (fReason != null ? fReason : ""));
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.kickPlayer(ChatColor.RED + "Banned: " + (fReason != null ? fReason : ""));
                         } else if ("unban".equals(fAction)) {
-                                try { Bukkit.getBanList(org.bukkit.BanList.Type.NAME).pardon(target); } catch (Exception ignored) {}
-                                try { Bukkit.getBanList(org.bukkit.BanList.Type.IP).pardon(target); } catch (Exception ignored) {}
-                                try {
-                                    org.bukkit.BanList profileBanList = Bukkit.getBanList(org.bukkit.BanList.Type.PROFILE);
-                                    List<org.bukkit.profile.PlayerProfile> profilesToPardon = new ArrayList<>();
-                                    for (Object obj : profileBanList.getEntries()) {
-                                        org.bukkit.BanEntry entry = (org.bukkit.BanEntry) obj;
-                                        Object eTarget = entry.getTarget();
-                                        if (eTarget instanceof org.bukkit.profile.PlayerProfile) {
-                                            org.bukkit.profile.PlayerProfile pp = (org.bukkit.profile.PlayerProfile) eTarget;
-                                            if (target.equalsIgnoreCase(pp.getName()) || target.equals(pp.getUniqueId() != null ? pp.getUniqueId().toString() : "")) {
-                                                profilesToPardon.add(pp);
-                                            }
-                                    }
-                                }
-                                    for (org.bukkit.profile.PlayerProfile pp : profilesToPardon) {
-                                        try { profileBanList.pardon(pp); } catch (Exception ignored) {}
-                                    }
-                                    org.bukkit.OfflinePlayer op = Bukkit.getOfflinePlayer(target);
-                                    if (op != null && op.getPlayerProfile() != null) {
-                                        try { profileBanList.pardon(op.getPlayerProfile()); } catch (Exception ignored) {}
-                                    }
-                                } catch (Exception ignored) {}
+                                // Use the built-in vanilla command to cleanly resolve and remove the profile/name ban
+                                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "pardon " + target);
+                                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "pardon-ip " + target);
                                 try { plugin.removePunishment(uuid); } catch (Exception ignored) {}
                         } else if ("kick".equals(fAction)) {
                             Player pl = Bukkit.getPlayer(target);
