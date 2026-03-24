@@ -4088,20 +4088,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private boolean isDrowsyCoin(ItemStack item) {
-        if (item == null || item.getType() != Material.GOLD_NUGGET) return false;
+        if (item == null || item.getType() == Material.AIR) return false;
         ItemMeta meta = item.getItemMeta();
         if (meta == null || !meta.hasDisplayName()) return false;
-        if (!meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins")) return false;
-        if (!meta.hasEnchant(Enchantment.LUCK_OF_THE_SEA)) return false;
-        return true;
+        
+        // TODO: Update this to match exactly how the DrowsyCoin plugin identifies a coin.
+        // Example 1: By exact name (make sure color codes match exactly)
+        // return meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins");
+        
+        // Example 2: By CustomModelData
+        // return meta.hasCustomModelData() && meta.getCustomModelData() == 12345;
+        
+        // Example 3: By NamespacedKey (PersistentDataContainer)
+        // return meta.getPersistentDataContainer().has(new org.bukkit.NamespacedKey("drowsycoin", "coin"), org.bukkit.persistence.PersistentDataType.BYTE);
+        
+        return meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins");
     }
 
     private ItemStack makeDrowsyCoinStack(int amount) {
+        // TODO: Replicate the EXACT item created by your DrowsyCoin plugin here
         ItemStack coin = new ItemStack(Material.GOLD_NUGGET, amount);
         ItemMeta meta = coin.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(ChatColor.GOLD + "Drowsy Coins");
-            meta.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            // Example: meta.setCustomModelData(12345);
+            // Example: meta.getPersistentDataContainer().set(new org.bukkit.NamespacedKey("drowsycoin", "coin"), org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
             coin.setItemMeta(meta);
         }
         return coin;
@@ -4138,6 +4149,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void giveDrowsyCoins(Player p, long amount) {
+        // Option 1: If your DrowsyCoin plugin has a command to give coins, you can uncomment this line and comment out Option 2:
+        // Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "drowsycoin give " + p.getName() + " " + amount);
+        
+        // Option 2: Give the item built by makeDrowsyCoinStack() directly
         while (amount > 0) {
             int give = (int) Math.min(64, amount);
             ItemStack stack = makeDrowsyCoinStack(give);
