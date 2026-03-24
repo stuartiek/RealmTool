@@ -2257,6 +2257,48 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 return true;
             }
 
+            String sub = args[0].toLowerCase();
+            if (sub.equals("withdraw") || sub.equals("deposit")) {
+                if (args.length != 2) {
+                    p.sendMessage(ChatColor.RED + "Usage: /balance " + sub + " <amount>");
+                    return true;
+                }
+
+                long amount;
+                try {
+                    amount = Long.parseLong(args[1]);
+                } catch (NumberFormatException ex) {
+                    p.sendMessage(ChatColor.RED + "Invalid amount.");
+                    return true;
+                }
+                if (amount <= 0) {
+                    p.sendMessage(ChatColor.RED + "Amount must be positive.");
+                    return true;
+                }
+
+                if (sub.equals("withdraw")) {
+                    long coins = getCoins(p.getUniqueId());
+                    if (coins < amount) {
+                        p.sendMessage(ChatColor.RED + "Insufficient balance. You have " + coins + " Drowsy coins.");
+                        return true;
+                    }
+                    addCoins(p.getUniqueId(), -amount);
+                    giveDrowsyCoins(p, amount);
+                    p.sendMessage(ChatColor.GREEN + "Withdrew " + amount + " Drowsy coins. Your new balance is " + (coins - amount) + " Drowsy coins.");
+                    return true;
+                } else {
+                    long held = countDrowsyCoins(p);
+                    if (held < amount) {
+                        p.sendMessage(ChatColor.RED + "You only have " + held + " Drowsy coins in your inventory.");
+                        return true;
+                    }
+                    removeDrowsyCoins(p, amount);
+                    addCoins(p.getUniqueId(), amount);
+                    p.sendMessage(ChatColor.GREEN + "Deposited " + amount + " Drowsy coins. Your new balance is " + (getCoins(p.getUniqueId())) + " Drowsy coins.");
+                    return true;
+                }
+            }
+
             if (!p.hasPermission("dmt.admin")) {
                 p.sendMessage(ChatColor.RED + "You do not have permission to manage other players' balance.");
                 return true;
@@ -3022,6 +3064,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/bounty" + ChatColor.WHITE + " - View the bounty board");
         p.sendMessage(ChatColor.GREEN + "/bounty set <player> <amount>" + ChatColor.WHITE + " - Place a bounty");
         p.sendMessage(ChatColor.GREEN + "/balance" + ChatColor.WHITE + " - Show XP level & coin balance");
+        p.sendMessage(ChatColor.GREEN + "/balance withdraw <amount>" + ChatColor.WHITE + " - Convert balance to Drowsy Coins (enchanted golden nugget)");
+        p.sendMessage(ChatColor.GREEN + "/balance deposit <amount>" + ChatColor.WHITE + " - Deposit Drowsy Coins into your balance");
         p.sendMessage(ChatColor.GREEN + "/shop" + ChatColor.WHITE + " - Browse player shops");
         p.sendMessage(ChatColor.GREEN + "/shop sell <item> <amount> <price>" + ChatColor.WHITE + " - Sell an item (coins)");
         p.sendMessage(ChatColor.GREEN + "/quest" + ChatColor.WHITE + " - View quests & claim rewards");
@@ -3086,6 +3130,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/balance <player> add <amount>" + ChatColor.WHITE + " - Add Drowsy coins to a player");
             p.sendMessage(ChatColor.AQUA + "/balance <player> remove <amount>" + ChatColor.WHITE + " - Remove Drowsy coins from a player");
             p.sendMessage(ChatColor.AQUA + "/balance <player> reset" + ChatColor.WHITE + " - Reset a player's Drowsy coins");
+            p.sendMessage(ChatColor.AQUA + "/balance withdraw <amount>" + ChatColor.WHITE + " - Player withdrawal of Drowsy coins");
+            p.sendMessage(ChatColor.AQUA + "/balance deposit <amount>" + ChatColor.WHITE + " - Player deposit of Drowsy coins");
             p.sendMessage(ChatColor.AQUA + "/economy reset" + ChatColor.WHITE + " - Reset all player balances");
         }
 
@@ -4039,6 +4085,68 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void addCoins(UUID uuid, long delta) {
         long cur = getCoins(uuid);
         setCoins(uuid, cur + delta);
+    }
+
+    private boolean isDrowsyCoin(ItemStack item) {
+        if (item == null || item.getType() != Material.GOLD_NUGGET) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null || !meta.hasDisplayName()) return false;
+        if (!meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins")) return false;
+        if (!meta.hasEnchant(Enchantment.LUCK_OF_THE_SEA)) return false;
+        return true;
+    }
+
+    private ItemStack makeDrowsyCoinStack(int amount) {
+        ItemStack coin = new ItemStack(Material.GOLD_NUGGET, amount);
+        ItemMeta meta = coin.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.GOLD + "Drowsy Coins");
+            meta.addEnchant(Enchantment.LUCK_OF_THE_SEA, 1, true);
+            coin.setItemMeta(meta);
+        }
+        return coin;
+    }
+
+    private long countDrowsyCoins(Player p) {
+        long total = 0;
+        for (ItemStack item : p.getInventory().getContents()) {
+            if (isDrowsyCoin(item)) {
+                total += item.getAmount();
+            }
+        }
+        return total;
+    }
+
+    private long removeDrowsyCoins(Player p, long amount) {
+        long remaining = amount;
+        Inventory inv = p.getInventory();
+        for (int i = 0; i < inv.getSize() && remaining > 0; i++) {
+            ItemStack item = inv.getItem(i);
+            if (isDrowsyCoin(item)) {
+                int stack = item.getAmount();
+                if (stack <= remaining) {
+                    remaining -= stack;
+                    inv.setItem(i, null);
+                } else {
+                    item.setAmount((int) (stack - remaining));
+                    inv.setItem(i, item);
+                    remaining = 0;
+                }
+            }
+        }
+        return amount - remaining;
+    }
+
+    private void giveDrowsyCoins(Player p, long amount) {
+        while (amount > 0) {
+            int give = (int) Math.min(64, amount);
+            ItemStack stack = makeDrowsyCoinStack(give);
+            Map<Integer, ItemStack> leftover = p.getInventory().addItem(stack);
+            for (ItemStack item : leftover.values()) {
+                p.getWorld().dropItemNaturally(p.getLocation(), item);
+            }
+            amount -= give;
+        }
     }
 
     private String eventKeyFromDisplay(String disp) {
@@ -6810,6 +6918,38 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             currentChunk.put(p.getUniqueId(), newChunk);
         }
     }
+    @EventHandler
+    public void onPrepareItemCraft(PrepareItemCraftEvent e) {
+        CraftingInventory inv = e.getInventory();
+        if (inv == null) return;
+        for (ItemStack item : inv.getMatrix()) {
+            if (isDrowsyCoin(item)) {
+                inv.setResult(new ItemStack(Material.AIR));
+                return;
+            }
+        }
+    }
+
+    @EventHandler
+    public void onCraftItem(CraftItemEvent e) {
+        CraftingInventory inv = e.getInventory();
+        for (ItemStack item : inv.getMatrix()) {
+            if (isDrowsyCoin(item)) {
+                e.setCancelled(true);
+                return;
+            }
+        }
+    }
+
+    @EventHandler
+    public void onPrepareAnvil(PrepareAnvilEvent e) {
+        AnvilInventory inv = e.getInventory();
+        if (inv == null) return;
+        if (isDrowsyCoin(inv.getFirstItem()) || isDrowsyCoin(inv.getSecondItem())) {
+            e.setResult(new ItemStack(Material.AIR));
+        }
+    }
+
     @EventHandler
     public void onPlayerPortal(PlayerPortalEvent e) {
         // prevent players from using portals when locks are enabled
