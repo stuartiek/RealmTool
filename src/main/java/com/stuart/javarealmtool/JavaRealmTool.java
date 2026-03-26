@@ -1409,7 +1409,53 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.RED + "Usage: /dmt gamemode <survival|spectator>");
                     }
                     return true;
+                case "playerwarp":
+                    if (args.length != 4) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt playerwarp <player> add|remove <number>");
+                        return true;
+                    }
+                    String targetPlayerName = args[1];
+                    String operation = args[2].toLowerCase();
+                    int amount;
+                    try {
+                        amount = Integer.parseInt(args[3]);
+                    } catch (NumberFormatException e) {
+                        p.sendMessage(ChatColor.RED + "Invalid number: " + args[3]);
+                        return true;
+                    }
+                    if (amount < 0) {
+                        p.sendMessage(ChatColor.RED + "Number must be non-negative.");
+                        return true;
+                    }
+
+                    OfflinePlayer targetOffline = Bukkit.getOfflinePlayer(targetPlayerName);
+                    UUID targetId = targetOffline.getUniqueId();
+                    int currentLimit = getPwarpLimit(targetId);
+                    int newLimit;
+                    if (operation.equals("add")) {
+                        newLimit = currentLimit + amount;
+                    } else if (operation.equals("remove")) {
+                        newLimit = Math.max(0, currentLimit - amount);
+                    } else {
+                        p.sendMessage(ChatColor.RED + "Unknown operation: " + operation + ". Use add or remove.");
+                        return true;
+                    }
+
+                    setPwarpLimit(targetId, newLimit);
+                    p.sendMessage(ChatColor.GREEN + "Player warp slots for " + targetPlayerName + " set from " + currentLimit + " to " + newLimit + ".");
+                    if (targetOffline.isOnline()) {
+                        Player tp = targetOffline.getPlayer();
+                        if (tp != null) {
+                            tp.sendMessage(ChatColor.AQUA + "Your player warp slots are now " + newLimit + " (was " + currentLimit + ").");
+                        }
+                    }
+                    int existingWarps = getPwarpCount(targetId);
+                    if (existingWarps > newLimit) {
+                        p.sendMessage(ChatColor.YELLOW + "Warning: player currently has " + existingWarps + " warps (over limit).");
+                    }
+                    return true;
                 case "tp":
+
                     if (!hasDmtCommandPermission(p, "tp")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
                         return true;
@@ -2791,14 +2837,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 int cost = dataConfig.getInt("pwarp_cost", 5);
                 if (p.getLevel() < cost) { p.sendMessage(ChatColor.RED + "Need " + cost + " XP levels to create a warp."); return true; }
                 // Limit per player
-                int max = dataConfig.getInt("pwarp_max", 3);
+                int max = getPwarpLimit(p.getUniqueId());
                 int count = 0;
                 if (dataConfig.contains("pwarps")) {
                     for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
                         if (dataConfig.getString("pwarps." + id + ".owner", "").equals(p.getUniqueId().toString())) count++;
                     }
                 }
-                if (count >= max) { p.sendMessage(ChatColor.RED + "Max " + max + " player warps."); return true; }
+                if (count >= max) {
+                    p.sendMessage(ChatColor.RED + "Max " + max + " player warps.");
+                    p.sendMessage(ChatColor.RED + "Use /dmt playerwarp " + p.getName() + " add <number> to give yourself more slots.");
+                    return true;
+                }
                 p.setLevel(p.getLevel() - cost);
                 String id = warpName.toLowerCase().replace(" ", "_");
                 dataConfig.set("pwarps." + id + ".name", warpName);
@@ -3104,7 +3154,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/dmt gamemode <survival|spectator>" + ChatColor.WHITE + " - Set your game mode (Helpers/Mods)");
         p.sendMessage(ChatColor.GRAY + "Use the player menu to access your custom enchantments (unlocked via quests)");
 
-        if (p.hasPermission("dmt.admin")) {
+        if (p.isOp() || isStaffTagged(p)) {
             p.sendMessage("");
             p.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "Admin Commands:");
             p.sendMessage(ChatColor.AQUA + "/dmt menu" + ChatColor.WHITE + " - Opens the management GUI");
@@ -3113,6 +3163,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
             p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail");
             p.sendMessage(ChatColor.AQUA + "/dmt tp world <name>" + ChatColor.WHITE + " - Teleport to another world");
+            p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> add <number>" + ChatColor.WHITE + " - Add player warp slots");
+            p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> remove <number>" + ChatColor.WHITE + " - Remove player warp slots");
             p.sendMessage(ChatColor.AQUA + "/dmt summon <name>" + ChatColor.WHITE + " - Spawn a configurable NPC (shop/teleport)");
             p.sendMessage(ChatColor.AQUA + "/dmt list npcs" + ChatColor.WHITE + " - List available NPC skins (from minecraft.tools)");
             p.sendMessage(ChatColor.AQUA + "/dmt npc add <username>" + ChatColor.WHITE + " - Add a skin to the library (uses minecraft.tools)");
@@ -3199,6 +3251,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.AQUA + "/dmt world unseparate_world [<world>]" + ChatColor.WHITE + " - Disable separate-server mode");
                 p.sendMessage(ChatColor.AQUA + "/dmt world <world> lock" + ChatColor.WHITE + " - Lock a world (prevents /hub and /dmt tp world)");
                 p.sendMessage(ChatColor.AQUA + "/dmt world <world> unlock" + ChatColor.WHITE + " - Unlock a world");
+                break;
+            case "playerwarp":
+                p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> add <number>" + ChatColor.WHITE + " - Add pwarp slots to a player");
+                p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> remove <number>" + ChatColor.WHITE + " - Remove pwarp slots from a player");
                 break;
             case "tp":
                 p.sendMessage(ChatColor.AQUA + "/dmt tp world <name>" + ChatColor.WHITE + " - Teleport to a world (saves last location)");
@@ -6957,12 +7013,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             currentChunk.put(p.getUniqueId(), newChunk);
         }
     }
+    private boolean isDrowsyTool(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return false;
+        ItemMeta meta = item.getItemMeta();
+        return TOOL_NAME.equals(meta.getDisplayName());
+    }
+
     @EventHandler
     public void onPrepareItemCraft(PrepareItemCraftEvent e) {
         CraftingInventory inv = e.getInventory();
         if (inv == null) return;
         for (ItemStack item : inv.getMatrix()) {
-            if (isDrowsyCoin(item)) {
+            if (isDrowsyCoin(item) || isDrowsyTool(item)) {
                 inv.setResult(new ItemStack(Material.AIR));
                 return;
             }
@@ -6973,7 +7035,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onCraftItem(CraftItemEvent e) {
         CraftingInventory inv = e.getInventory();
         for (ItemStack item : inv.getMatrix()) {
-            if (isDrowsyCoin(item)) {
+            if (isDrowsyCoin(item) || isDrowsyTool(item)) {
                 e.setCancelled(true);
                 return;
             }
@@ -7134,13 +7196,66 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         }
     }
+
+    @EventHandler
+    public void onPistonExtend(BlockPistonExtendEvent e) {
+        Location pistonLoc = e.getBlock().getLocation();
+        String pistonChunk = getChunkKey(pistonLoc);
+        UUID pistonOwner = getChunkOwner(pistonChunk);
+
+        for (Block moved : e.getBlocks()) {
+            Location dest = moved.getLocation().add(e.getDirection().getDirection());
+            String destChunk = getChunkKey(dest);
+            if (isChunkClaimed(destChunk)) {
+                UUID destOwner = getChunkOwner(destChunk);
+                if (pistonOwner == null || !pistonOwner.equals(destOwner)) {
+                    e.setCancelled(true);
+                    return;
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    public void onPistonRetract(BlockPistonRetractEvent e) {
+        if (!e.isSticky()) return;
+
+        Location pistonLoc = e.getBlock().getLocation();
+        String pistonChunk = getChunkKey(pistonLoc);
+        UUID pistonOwner = getChunkOwner(pistonChunk);
+
+        for (Block moved : e.getBlocks()) {
+            Location dest = moved.getLocation().add(e.getDirection().getDirection());
+            String destChunk = getChunkKey(dest);
+            if (isChunkClaimed(destChunk)) {
+                UUID destOwner = getChunkOwner(destChunk);
+                if (pistonOwner == null || !pistonOwner.equals(destOwner)) {
+                    e.setCancelled(true);
+                    return;
+                }
+            }
+        }
+    }
+
     @EventHandler
     public void onChestAccess(InventoryOpenEvent e) {
         if (e.getPlayer() instanceof Player) {
             lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         }
-        if (e.getInventory().getType() == InventoryType.CHEST) {
-            saveLog(e.getInventory().getLocation(), ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
+
+        Location invLocation = e.getInventory().getLocation();
+        if (invLocation != null) {
+            String chunkKey = getChunkKey(invLocation);
+            Player p = (Player) e.getPlayer();
+            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+                e.setCancelled(true);
+                p.sendMessage(ChatColor.RED + "You cannot access containers in this claimed chunk!");
+                return;
+            }
+        }
+
+        if (e.getInventory().getType() == InventoryType.CHEST && invLocation != null) {
+            saveLog(invLocation, ChatColor.YELLOW + "Opened by " + e.getPlayer().getName());
         }
     }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -9943,6 +10058,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     @EventHandler
     public void onBlockBreakEnchant(BlockBreakEvent e) {
+        if (e.isCancelled()) return;
         Player p = e.getPlayer();
         ItemStack held = p.getInventory().getItemInMainHand();
         if (held == null || !held.hasItemMeta() || !held.getItemMeta().hasLore()) return;
@@ -10178,6 +10294,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         back.setItemMeta(bMeta);
         gui.setItem(53, back);
         p.openInventory(gui);
+    }
+
+    private int getPwarpLimit(UUID uuid) {
+        String key = "pwarp_slots." + uuid;
+        int slots = dataConfig.getInt(key, -1);
+        if (slots >= 0) return slots;
+        return dataConfig.getInt("pwarp_max", 3);
+    }
+
+    private void setPwarpLimit(UUID uuid, int limit) {
+        if (limit < 0) limit = 0;
+        dataConfig.set("pwarp_slots." + uuid, limit);
+        saveDataFile();
+    }
+
+    private int getPwarpCount(UUID uuid) {
+        int count = 0;
+        if (!dataConfig.contains("pwarps")) return 0;
+        for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+            if (dataConfig.getString("pwarps." + id + ".owner", "").equals(uuid.toString())) count++;
+        }
+        return count;
     }
 
     // ========== ACHIEVEMENTS GUI ==========
