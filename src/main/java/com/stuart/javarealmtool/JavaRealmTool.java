@@ -63,6 +63,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
     private volatile boolean dataConfigDirty = false;
     private int autoSaveTaskId = -1;
+    private final Object saveLock = new Object();
     
     // pending world creation/chat actions are handled via pendingActions and a new enum value
 
@@ -492,7 +493,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         saveDataFile();
         if (dataConfigDirty) {
             try {
-                dataConfig.save(dataFile);
+                synchronized (saveLock) {
+                    dataConfig.save(dataFile);
+                }
             } catch (IOException e) {
                 getLogger().log(Level.SEVERE, "Could not save data on disable", e);
             }
@@ -545,10 +548,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             
             // Write to disk asynchronously so it doesn't freeze the server
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                try (java.io.Writer writer = new java.io.OutputStreamWriter(new java.io.FileOutputStream(dataFile), StandardCharsets.UTF_8)) {
-                    writer.write(serializedData);
-                } catch (java.io.IOException e) {
-                    getLogger().log(Level.SEVERE, "Could not save data to " + dataFile, e);
+                synchronized (saveLock) {
+                    try (java.io.Writer writer = new java.io.OutputStreamWriter(new java.io.FileOutputStream(dataFile), StandardCharsets.UTF_8)) {
+                        writer.write(serializedData);
+                    } catch (java.io.IOException e) {
+                        getLogger().log(Level.SEVERE, "Could not save data to " + dataFile, e);
+                    }
                 }
             });
         } catch (Exception e) {
@@ -1189,6 +1194,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         if (cmd.getName().equalsIgnoreCase("drowsytool")) {
+            boolean hasTool = false;
+            for (ItemStack item : p.getInventory().getContents()) {
+                if (item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName())) {
+                    hasTool = true;
+                    break;
+                }
+            }
+            if (hasTool) {
+                p.sendMessage(ChatColor.YELLOW + "You already have the Drowsy Tool in your inventory.");
+                ensurePlayerHasTool(p); // Enforces correct slot placement
+                return true;
+            }
             ensurePlayerHasTool(p);
             p.sendMessage(ChatColor.GREEN + "You have received the Drowsy Tool. It is in your hotbar slot 9.");
             return true;
@@ -5898,7 +5915,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }
             } else if (itemName.equals("TP Spawn")) {
                 p.closeInventory();
-                p.performCommand("spawn");
+                Location spawnLoc = getLoc("server_spawn");
+                if (spawnLoc != null) {
+                    p.teleport(spawnLoc);
+                    p.sendMessage(ChatColor.AQUA + "Teleported to spawn.");
+                } else {
+                    p.teleport(Bukkit.getWorlds().get(0).getSpawnLocation());
+                    p.sendMessage(ChatColor.AQUA + "Teleported to spawn.");
+                }
             } else if (itemName.equals("Set Warp")) {
                 p.closeInventory();
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.SET_WARP));
@@ -7098,8 +7122,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (m.name().contains("ORE")) {
                 trackQuestProgress(p, "break_ores", 1);
                 if (dataConfig.getBoolean("mining_coins.enabled", true)) {
-                    if (Math.random() < dataConfig.getDouble("mining_coins.chance", 0.3)) {
-                        int amount = dataConfig.getInt("mining_coins.amount", 2);
+                    if (Math.random() < dataConfig.getDouble("mining_coins.chance", 0.05)) {
+                        int amount = dataConfig.getInt("mining_coins.amount", 1);
                         addCoins(p.getUniqueId(), amount);
                         try {
                             p.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, 
@@ -7342,7 +7366,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (item != null && item.hasItemMeta() && TOOL_NAME.equals(item.getItemMeta().getDisplayName())) {
             e.setCancelled(true);
             e.getPlayer().sendMessage(ChatColor.RED + "You cannot drop the Drowsy tool.");
-            ensurePlayerHasTool(e.getPlayer());
         }
     }
 
@@ -7568,7 +7591,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 dataConfig.set("daily_login." + uuid + ".total", dataConfig.getInt("daily_login." + uuid + ".total", 0) + 1);
                 saveDataFile();
                 int xpReward = dataConfig.getInt("daily_login_base_xp", 10) + (streak * dataConfig.getInt("daily_login_streak_bonus", 2));
-                int coinsReward = dataConfig.getInt("daily_login_base_coins", 50) + (streak * dataConfig.getInt("daily_login_streak_coins", 10));
+                int coinsReward = dataConfig.getInt("daily_login_base_coins", 10) + (streak * dataConfig.getInt("daily_login_streak_coins", 2));
                 if (xpReward > 0) e.getPlayer().giveExp(xpReward);
                 if (coinsReward > 0) {
                     addCoins(e.getPlayer().getUniqueId(), coinsReward);
@@ -7671,13 +7694,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             inv.setItem(8, inv.getItem(toolSlot));
             inv.setItem(toolSlot, existing);
         }
-
-        // If tool exists but isn't in the locked slot, move it there.
-        if (toolSlot != 8) {
-            ItemStack existing = inv.getItem(8);
-            inv.setItem(8, inv.getItem(toolSlot));
-            inv.setItem(toolSlot, existing);
-        }
     }
 
     @EventHandler
@@ -7700,6 +7716,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         this.trackSession(uuid, e.getPlayer().getName(), false);
         this.logAction("System", "player_left", e.getPlayer().getName());
         fireDiscordEvent("leaves", "Player Left", "**" + e.getPlayer().getName() + "** left the server.", 0xe74c3c, e.getPlayer().getName());
+        
+        // Force an immediate save to prevent data loss if the server crashes shortly after
+        performDataSave();
     }
 
     @EventHandler
@@ -7847,73 +7866,113 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return dataConfig.getBoolean("worlds." + worldName + ".separate", false);
     }
 
+    private String itemStackArrayToBase64(ItemStack[] items) {
+        try {
+            java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream();
+            org.bukkit.util.io.BukkitObjectOutputStream dataOutput = new org.bukkit.util.io.BukkitObjectOutputStream(outputStream);
+            dataOutput.writeInt(items.length);
+            for (ItemStack item : items) {
+                dataOutput.writeObject(item);
+            }
+            dataOutput.close();
+            return java.util.Base64.getEncoder().encodeToString(outputStream.toByteArray());
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "Failed to serialize inventory to Base64", e);
+            return "";
+        }
+    }
+
+    private ItemStack[] itemStackArrayFromBase64(String data) {
+        try {
+            java.io.ByteArrayInputStream inputStream = new java.io.ByteArrayInputStream(java.util.Base64.getDecoder().decode(data));
+            org.bukkit.util.io.BukkitObjectInputStream dataInput = new org.bukkit.util.io.BukkitObjectInputStream(inputStream);
+            ItemStack[] items = new ItemStack[dataInput.readInt()];
+            for (int i = 0; i < items.length; i++) {
+                items[i] = (ItemStack) dataInput.readObject();
+            }
+            dataInput.close();
+            return items;
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "Failed to deserialize inventory from Base64", e);
+            return new ItemStack[0];
+        }
+    }
+
     private void saveInventoryToConfig(Player p, String worldName) {
         String base = "worlds." + worldName + ".inventory." + p.getUniqueId();
-        dataConfig.set(base + ".contents", Arrays.asList(p.getInventory().getContents()));
-        dataConfig.set(base + ".armor", Arrays.asList(p.getInventory().getArmorContents()));
+        dataConfig.set(base + ".contents_b64", itemStackArrayToBase64(p.getInventory().getContents()));
+        dataConfig.set(base + ".armor_b64", itemStackArrayToBase64(p.getInventory().getArmorContents()));
+        dataConfig.set(base + ".contents", null);
+        dataConfig.set(base + ".armor", null);
         saveDataFile();
     }
 
     private void loadInventoryFromConfig(Player p, String worldName) {
         String base = "worlds." + worldName + ".inventory." + p.getUniqueId();
-        if (dataConfig.contains(base + ".contents")) {
+        p.getInventory().clear();
+        if (dataConfig.contains(base + ".contents_b64")) {
+            p.getInventory().setContents(itemStackArrayFromBase64(dataConfig.getString(base + ".contents_b64")));
+        } else if (dataConfig.contains(base + ".contents")) {
             List<ItemStack> contents = (List<ItemStack>) dataConfig.getList(base + ".contents");
-            p.getInventory().clear();
             if (contents != null) {
                 for (int i = 0; i < contents.size(); i++) {
-                    if (i < p.getInventory().getSize()) {
-                        p.getInventory().setItem(i, contents.get(i));
-                    }
+                    if (i < p.getInventory().getSize()) p.getInventory().setItem(i, contents.get(i));
                 }
             }
         }
-        if (dataConfig.contains(base + ".armor")) {
+        if (dataConfig.contains(base + ".armor_b64")) {
+            p.getInventory().setArmorContents(itemStackArrayFromBase64(dataConfig.getString(base + ".armor_b64")));
+        } else if (dataConfig.contains(base + ".armor")) {
             List<ItemStack> armor = (List<ItemStack>) dataConfig.getList(base + ".armor");
-            if (armor != null && armor.size() == 4) {
-                p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
-            }
+            if (armor != null && armor.size() == 4) p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
         }
     }
 
     private void saveInventoryToShared(Player p) {
         String base = "worlds.shared.inventory." + p.getUniqueId();
-        dataConfig.set(base + ".contents", Arrays.asList(p.getInventory().getContents()));
-        dataConfig.set(base + ".armor", Arrays.asList(p.getInventory().getArmorContents()));
+        dataConfig.set(base + ".contents_b64", itemStackArrayToBase64(p.getInventory().getContents()));
+        dataConfig.set(base + ".armor_b64", itemStackArrayToBase64(p.getInventory().getArmorContents()));
+        dataConfig.set(base + ".contents", null);
+        dataConfig.set(base + ".armor", null);
         saveDataFile();
     }
 
     private void loadInventoryFromShared(Player p) {
         String base = "worlds.shared.inventory." + p.getUniqueId();
-        if (dataConfig.contains(base + ".contents")) {
+        p.getInventory().clear();
+        if (dataConfig.contains(base + ".contents_b64")) {
+            p.getInventory().setContents(itemStackArrayFromBase64(dataConfig.getString(base + ".contents_b64")));
+        } else if (dataConfig.contains(base + ".contents")) {
             List<ItemStack> contents = (List<ItemStack>) dataConfig.getList(base + ".contents");
-            p.getInventory().clear();
             if (contents != null) {
                 for (int i = 0; i < contents.size(); i++) {
-                    if (i < p.getInventory().getSize()) {
-                        p.getInventory().setItem(i, contents.get(i));
-                    }
+                    if (i < p.getInventory().getSize()) p.getInventory().setItem(i, contents.get(i));
                 }
             }
         }
-        if (dataConfig.contains(base + ".armor")) {
+        if (dataConfig.contains(base + ".armor_b64")) {
+            p.getInventory().setArmorContents(itemStackArrayFromBase64(dataConfig.getString(base + ".armor_b64")));
+        } else if (dataConfig.contains(base + ".armor")) {
             List<ItemStack> armor = (List<ItemStack>) dataConfig.getList(base + ".armor");
-            if (armor != null && armor.size() == 4) {
-                p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
-            }
+            if (armor != null && armor.size() == 4) p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
         }
     }
 
     private void clearInventoryForWorld(Player p, String worldName) {
         String base = "worlds." + worldName + ".inventory." + p.getUniqueId();
-        dataConfig.set(base + ".contents", new ArrayList<>());
-        dataConfig.set(base + ".armor", new ArrayList<>());
+        dataConfig.set(base + ".contents", null);
+        dataConfig.set(base + ".armor", null);
+        dataConfig.set(base + ".contents_b64", null);
+        dataConfig.set(base + ".armor_b64", null);
         saveDataFile();
     }
 
     private void clearSharedInventory(Player p) {
         String base = "worlds.shared.inventory." + p.getUniqueId();
-        dataConfig.set(base + ".contents", new ArrayList<>());
-        dataConfig.set(base + ".armor", new ArrayList<>());
+        dataConfig.set(base + ".contents", null);
+        dataConfig.set(base + ".armor", null);
+        dataConfig.set(base + ".contents_b64", null);
+        dataConfig.set(base + ".armor_b64", null);
         saveDataFile();
     }
 
@@ -8641,8 +8700,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Store original blocks and change to glowstone
         for (Location corner : corners) {
             String key = corner.getBlockX() + ":" + corner.getBlockY() + ":" + corner.getBlockZ() + ":" + world.getName();
-            Material original = corner.getBlock().getType();
-            chunksCornerBlocks.put(key, original);
+            if (!chunksCornerBlocks.containsKey(key)) {
+                chunksCornerBlocks.put(key, corner.getBlock().getType());
+            }
             corner.getBlock().setType(Material.GLOWSTONE);
         }
         
@@ -9436,15 +9496,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
             if (!(e.getEntity() instanceof Player) && e.getEntity() instanceof Monster) {
                 if (dataConfig.getBoolean("mob_coins.enabled", true)) {
-                    int min = dataConfig.getInt("mob_coins.min", 1);
-                    int max = dataConfig.getInt("mob_coins.max", 5);
-                    int amount = min + (max > min ? new Random().nextInt(max - min + 1) : 0);
-                    if (amount > 0) {
-                        addCoins(killer.getUniqueId(), amount);
-                        try {
-                            killer.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, 
-                                net.md_5.bungee.api.chat.TextComponent.fromLegacyText(ChatColor.GOLD + "+" + amount + " Coins"));
-                        } catch (Exception ignored) {}
+                    // Add a chance roll so mobs don't drop coins 100% of the time
+                    if (Math.random() < dataConfig.getDouble("mob_coins.chance", 0.1)) {
+                        int min = dataConfig.getInt("mob_coins.min", 1);
+                        int max = dataConfig.getInt("mob_coins.max", 2);
+                        int amount = min + (max > min ? new Random().nextInt(max - min + 1) : 0);
+                        if (amount > 0) {
+                            addCoins(killer.getUniqueId(), amount);
+                            try {
+                                killer.spigot().sendMessage(net.md_5.bungee.api.ChatMessageType.ACTION_BAR, 
+                                    net.md_5.bungee.api.chat.TextComponent.fromLegacyText(ChatColor.GOLD + "+" + amount + " Coins"));
+                            } catch (Exception ignored) {}
+                        }
                     }
                 }
             }

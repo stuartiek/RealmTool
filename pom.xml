@@ -6,7 +6,7 @@
 
     <groupId>com.stuart</groupId>
     <artifactId>DrowsyManagementTool</artifactId>
-    <version>1.1.8</version>
+    <version>1.1.9</version>
     <packaging>jar</packaging>
 
     <name>Drowsy Management Tool</name>
@@ -18,7 +18,7 @@
     </properties>
 
     <build>
-        <finalName>DrowsyManagementTool-1.1.8</finalName>
+        <finalName>DrowsyManagementTool-1.1.9</finalName>
         <defaultGoal>clean package</defaultGoal>
         <plugins>
             <plugin>

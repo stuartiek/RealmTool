@@ -21,6 +21,9 @@ commands:
   hub:
     description: Teleport to the hub location
     usage: /hub
+  spawn:
+    description: Teleport to the server spawn location
+    usage: /spawn
   shop:
     description: Player shop system
     usage: /shop [sell <item> <amount> <price>]
