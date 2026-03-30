@@ -3659,20 +3659,21 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     pendingActions.remove(p.getUniqueId());
                     break;
                 case SET_WARP:
-                    String warpName = reason.trim().replaceAll("[^A-Za-z0-9_\\-]", "");
-                    if (warpName.isEmpty()) {
+                    String rawName = reason.trim();
+                    String id = rawName.toLowerCase().replace(" ", "_").replaceAll("[^a-z0-9_\\-]", "");
+                    if (id.isEmpty()) {
                         p.sendMessage(ChatColor.RED + "Invalid warp name. Use letters, numbers, underscore, or dash.");
                         break;
                     }
 
-                    int ownersWarpCount = 0;
-                    if (dataConfig.contains("warps")) {
-                        for (String id : dataConfig.getConfigurationSection("warps").getKeys(false)) {
-                            if (p.getUniqueId().toString().equals(dataConfig.getString("warps." + id + ".owner", ""))) {
-                                ownersWarpCount++;
-                            }
-                        }
+                    int cost = dataConfig.getInt("pwarp_cost", 5);
+                    if (p.getLevel() < cost) {
+                        p.sendMessage(ChatColor.RED + "Need " + cost + " XP levels to create a warp.");
+                        pendingActions.remove(p.getUniqueId());
+                        break;
                     }
+
+                    int ownersWarpCount = getPwarpCount(p.getUniqueId());
 
                     int maxWarps = getPwarpLimit(p.getUniqueId());
                     if (ownersWarpCount >= maxWarps) {
@@ -3681,25 +3682,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         break;
                     }
 
-                    if (dataConfig.contains("pwarps." + warpName)) {
-                        String ownerStr = dataConfig.getString("pwarps." + warpName + ".owner");
+                    if (dataConfig.contains("pwarps." + id)) {
+                        String ownerStr = dataConfig.getString("pwarps." + id + ".owner");
                         if (ownerStr != null && !ownerStr.equals(p.getUniqueId().toString())) {
                             p.sendMessage(ChatColor.RED + "A warp with that name already exists!");
                             break;
                         }
                     }
 
-                    dataConfig.set("pwarps." + warpName + ".name", warpName);
-                    dataConfig.set("pwarps." + warpName + ".owner", p.getUniqueId().toString());
-                    dataConfig.set("pwarps." + warpName + ".ownerName", p.getName());
-                    dataConfig.set("pwarps." + warpName + ".x", p.getLocation().getX());
-                    dataConfig.set("pwarps." + warpName + ".y", p.getLocation().getY());
-                    dataConfig.set("pwarps." + warpName + ".z", p.getLocation().getZ());
-                    dataConfig.set("pwarps." + warpName + ".world", p.getWorld().getName());
-                    dataConfig.set("pwarps." + warpName + ".visits", 0);
+                    p.setLevel(p.getLevel() - cost);
+
+                    dataConfig.set("pwarps." + id + ".name", rawName);
+                    dataConfig.set("pwarps." + id + ".owner", p.getUniqueId().toString());
+                    dataConfig.set("pwarps." + id + ".ownerName", p.getName());
+                    dataConfig.set("pwarps." + id + ".x", p.getLocation().getX());
+                    dataConfig.set("pwarps." + id + ".y", p.getLocation().getY());
+                    dataConfig.set("pwarps." + id + ".z", p.getLocation().getZ());
+                    dataConfig.set("pwarps." + id + ".world", p.getWorld().getName());
+                    dataConfig.set("pwarps." + id + ".visits", 0);
 
                     saveDataFile();
-                    p.sendMessage(ChatColor.GREEN + "Player warp '" + warpName + "' set! Use the Player Warps menu to teleport.");
+                    p.sendMessage(ChatColor.GREEN + "Player warp '" + rawName + "' set! Use the Player Warps menu to teleport.");
+                    logAction(p.getName(), "pwarp_created", rawName);
                     pendingActions.remove(p.getUniqueId());
                     break;
                 case HOLOGRAM:
