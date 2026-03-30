@@ -3650,7 +3650,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             if (applyCustomEnchant(item, ctx.targetName)) {
                                 p.sendMessage(ChatColor.GREEN + "Enchantment " + ctx.targetName + " applied to slot " + entered + "!");
                             } else {
-                                p.sendMessage(ChatColor.YELLOW + "Could not apply enchant (maybe already present).");
+                                p.sendMessage(ChatColor.YELLOW + "Could not apply enchant (already present or invalid item).");
                             }
                         }
                     } catch (NumberFormatException ex) {
@@ -5230,16 +5230,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             gui.setItem(22, createGuiItem(Material.EMERALD, ChatColor.GREEN + "Resolution: " + resolution));
         }
 
+        boolean isAdmin = p.hasPermission("dmt.admin") || p.hasPermission("realmtool.admin");
+
         // Action buttons row
         gui.setItem(28, createGuiItem(Material.WRITABLE_BOOK, ChatColor.GREEN + "Add Response", Collections.singletonList(ChatColor.GRAY + "Click to type a response")));
-        gui.setItem(29, createGuiItem(Material.ARROW, ChatColor.AQUA + "Set In Progress"));
-        gui.setItem(30, createGuiItem(Material.GOLD_INGOT, ChatColor.YELLOW + "Set Priority"));
-        gui.setItem(31, createGuiItem(Material.ARMOR_STAND, ChatColor.BLUE + "Assign to Me"));
-        gui.setItem(32, createGuiItem(Material.EMERALD_BLOCK, ChatColor.GREEN + "Resolve"));
+        if (isAdmin) {
+            gui.setItem(29, createGuiItem(Material.ARROW, ChatColor.AQUA + "Set In Progress"));
+            gui.setItem(30, createGuiItem(Material.GOLD_INGOT, ChatColor.YELLOW + "Set Priority"));
+            gui.setItem(31, createGuiItem(Material.ARMOR_STAND, ChatColor.BLUE + "Assign to Me"));
+            gui.setItem(32, createGuiItem(Material.EMERALD_BLOCK, ChatColor.GREEN + "Resolve"));
+        }
         gui.setItem(33, createGuiItem(Material.BARRIER, ChatColor.RED + "Close Ticket"));
 
         // Teleport to location (slot 34)
-        if (dataConfig.contains(base + ".world")) {
+        if (isAdmin && dataConfig.contains(base + ".world")) {
             gui.setItem(34, createGuiItem(Material.ENDER_PEARL, ChatColor.LIGHT_PURPLE + "Teleport to Location"));
         }
 
@@ -5260,7 +5264,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             respSlot++;
         }
 
-        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Ticket List"));
+        gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + (isAdmin ? "Back to Ticket List" : "Back to My Tickets")));
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
         p.openInventory(gui);
@@ -6858,19 +6862,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         } else if (title.startsWith(GUI_TICKET_DETAIL)) {
             String ticketId = title.replace(GUI_TICKET_DETAIL, "").trim();
-            if (type == Material.REDSTONE) { openTicketListMenu(p); return; }
+            boolean isAdmin = p.hasPermission("dmt.admin") || p.hasPermission("realmtool.admin");
+            if (type == Material.REDSTONE) { 
+                if (isAdmin) {
+                    openTicketListMenu(p); 
+                } else {
+                    openMyTicketsMenu(p);
+                }
+                return; 
+            }
             if (type == Material.WRITABLE_BOOK) {
                 // Add response via chat
                 p.closeInventory();
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(ticketId, ActionType.TICKET_RESPOND));
                 p.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Type your response for ticket #" + ticketId + ":");
             } else if (type == Material.ARROW) {
+                if (!isAdmin) return;
                 // Set in progress
                 dataConfig.set("tickets." + ticketId + ".status", "in_progress");
                 saveDataFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " set to in_progress.");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.GOLD_INGOT) {
+                if (!isAdmin) return;
                 // Cycle priority
                 String current = dataConfig.getString("tickets." + ticketId + ".priority", "medium");
                 String next;
@@ -6885,12 +6899,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " priority set to " + next + ".");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.ARMOR_STAND) {
+                if (!isAdmin) return;
                 // Assign to me
                 dataConfig.set("tickets." + ticketId + ".assignee", p.getName());
                 saveDataFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " assigned to you.");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.EMERALD_BLOCK) {
+                if (!isAdmin) return;
                 // Resolve
                 p.closeInventory();
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(ticketId, ActionType.TICKET_RESOLVE));
@@ -6906,8 +6922,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if (target != null && target.isOnline()) {
                     target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + ticketId + " has been closed by " + p.getName() + ".");
                 }
-                openTicketListMenu(p);
+                if (isAdmin) {
+                    openTicketListMenu(p);
+                } else {
+                    openMyTicketsMenu(p);
+                }
             } else if (type == Material.ENDER_PEARL) {
+                if (!isAdmin) return;
                 // Teleport to ticket location
                 String world = dataConfig.getString("tickets." + ticketId + ".world");
                 if (world != null && Bukkit.getWorld(world) != null) {
@@ -9638,7 +9659,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
         resetGridSlots();
-        List<String> order = Arrays.asList("enchant_timber","enchant_veinminer","enchant_smelting","enchant_telepathy");
+        List<String> order = Arrays.asList("enchant_timber","enchant_veinminer","enchant_smelting","enchant_telepathy", "enchant_excavator");
 
         if (dataConfig.contains("quests")) {
             List<String> questIds = new ArrayList<>(dataConfig.getConfigurationSection("quests").getKeys(false));
@@ -9958,6 +9979,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             dataConfig.set("quests.enchant_telepathy.reward_enchant", "Telepathy");
             dataConfig.set("quests.enchant_telepathy.active", true);
         }
+        if (!dataConfig.contains("quests.enchant_excavator")) {
+            dataConfig.set("quests.enchant_excavator.name", "Excavator");
+            dataConfig.set("quests.enchant_excavator.description", "Mine 1500 stone blocks");
+            dataConfig.set("quests.enchant_excavator.type", "mine_stone");
+            dataConfig.set("quests.enchant_excavator.goal", 1500);
+            dataConfig.set("quests.enchant_excavator.reward_enchant", "Excavator");
+            dataConfig.set("quests.enchant_excavator.active", true);
+        }
         saveDataFile();
     }
 
@@ -10146,7 +10175,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         ensurePlayerHasTool(p);
 
         // determine first pending enchant quest and notify
-        List<String> order = Arrays.asList("Timber", "Vein Miner", "Smelting Touch", "Telepathy");
+        List<String> order = Arrays.asList("Timber", "Vein Miner", "Smelting Touch", "Telepathy", "Excavator");
         for (String ench : order) {
             if (!hasUnlockedEnchant(p, ench)) {
                 p.sendMessage(ChatColor.AQUA + "Quest available: earn the " + ench + " enchant! Use /quest to view.");
@@ -10209,6 +10238,36 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     for (ItemStack o : overflow.values()) p.getWorld().dropItemNaturally(p.getLocation(), o);
                 }
             }
+            // Excavator enchant - 3x3 area for pickaxes
+            if (stripped.equalsIgnoreCase("Excavator") && held.getType().name().endsWith("_PICKAXE")) {
+                org.bukkit.util.RayTraceResult trace = p.rayTraceBlocks(6.0, org.bukkit.FluidCollisionMode.NEVER);
+                BlockFace face;
+                if (trace != null && trace.getHitBlockFace() != null) {
+                    face = trace.getHitBlockFace();
+                } else {
+                    float pitch = p.getLocation().getPitch();
+                    if (pitch < -45) face = BlockFace.UP;
+                    else if (pitch > 45) face = BlockFace.DOWN;
+                    else face = p.getFacing().getOppositeFace();
+                }
+                Location center = e.getBlock().getLocation();
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dz == 0) continue;
+                        int xOffset = 0, yOffset = 0, zOffset = 0;
+                        if (face == BlockFace.UP || face == BlockFace.DOWN) { xOffset = dx; zOffset = dz; }
+                        else if (face == BlockFace.NORTH || face == BlockFace.SOUTH) { xOffset = dx; yOffset = dz; }
+                        else if (face == BlockFace.EAST || face == BlockFace.WEST) { zOffset = dx; yOffset = dz; }
+                        Block b = center.clone().add(xOffset, yOffset, zOffset).getBlock();
+                        if (b.getType() != Material.BEDROCK && b.getType() != Material.BARRIER && b.getType() != Material.END_PORTAL_FRAME && b.getType() != Material.END_PORTAL && b.getType() != Material.COMMAND_BLOCK && b.getType() != Material.AIR) {
+                            String bChunk = getChunkKey(b.getLocation());
+                            if (!isChunkClaimed(bChunk) || isTrustedInChunk(p, bChunk)) {
+                                b.breakNaturally(held);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -10239,6 +10298,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     // Apply custom enchantment to item
     public boolean applyCustomEnchant(ItemStack item, String enchantName) {
         if (item == null || item.getType() == Material.AIR) return false;
+        
+        if (enchantName.equalsIgnoreCase("Excavator") && !item.getType().name().endsWith("_PICKAXE")) {
+            return false;
+        }
         ItemMeta meta = item.getItemMeta();
         List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
         // Check if already has it

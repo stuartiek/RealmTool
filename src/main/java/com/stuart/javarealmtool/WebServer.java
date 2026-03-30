@@ -2228,6 +2228,7 @@ public class WebServer {
             enchants.add(Map.of("name", "Vein Miner", "description", "Breaks connected ores when mining"));
             enchants.add(Map.of("name", "Smelting Touch", "description", "Auto-smelts mined ores"));
             enchants.add(Map.of("name", "Telepathy", "description", "Sends block drops directly to inventory"));
+            enchants.add(Map.of("name", "Excavator", "description", "Mines a 3x3 area (Pickaxes only)"));
             ctx.json(enchants);
         });
 
