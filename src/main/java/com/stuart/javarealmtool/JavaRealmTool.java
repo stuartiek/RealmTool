@@ -7243,7 +7243,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onPrepareAnvil(PrepareAnvilEvent e) {
         AnvilInventory inv = e.getInventory();
         if (inv == null) return;
-        if (isDrowsyCoin(inv.getFirstItem()) || isDrowsyCoin(inv.getSecondItem())) {
+        if (isDrowsyCoin(inv.getFirstItem()) || isDrowsyCoin(inv.getSecondItem()) ||
+            isDrowsyTool(inv.getFirstItem()) || isDrowsyTool(inv.getSecondItem())) {
+            e.setResult(new ItemStack(Material.AIR));
+        }
+    }
+
+    @EventHandler
+    public void onPrepareGrindstone(PrepareGrindstoneEvent e) {
+        Inventory inv = e.getInventory();
+        if (inv == null) return;
+        if (isDrowsyTool(inv.getItem(0)) || isDrowsyTool(inv.getItem(1)) ||
+            isDrowsyCoin(inv.getItem(0)) || isDrowsyCoin(inv.getItem(1))) {
             e.setResult(new ItemStack(Material.AIR));
         }
     }
