@@ -26,6 +26,8 @@ import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.server.ServerListPingEvent;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.*;
@@ -231,6 +233,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private final Map<UUID, Long> reportCooldowns = new HashMap<>();
     private final Set<UUID> toolRespawnQueue = new HashSet<>();
+
+    // Invisible staff monitoring state
+    private final Set<UUID> invisiblePlayers = ConcurrentHashMap.newKeySet();
 
     // Simple anti-xray tracking
     private final Map<UUID, List<Long>> oreBreakTimestamps = new HashMap<>();
@@ -681,6 +686,63 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private boolean isStaffTagged(Player p) {
         return isHelper(p) || isModerator(p) || isAdminTag(p) || isManagerTag(p) || isOwnerTag(p) || isHeadAdminTag(p);
+    }
+
+    private boolean canUseInvisible(Player p) {
+        return p.isOp() || p.hasPermission("dmt.admin") || isModerator(p) || isAdminTag(p) || isOwnerTag(p);
+    }
+
+    private boolean isInvisible(Player p) {
+        return invisiblePlayers.contains(p.getUniqueId());
+    }
+
+    private void updateInvisibleVisibility(Player target, boolean invisible) {
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer.equals(target)) continue;
+            if (invisible) {
+                if (canUseInvisible(viewer)) {
+                    viewer.showPlayer(this, target);
+                } else {
+                    viewer.hidePlayer(this, target);
+                }
+            } else {
+                viewer.showPlayer(this, target);
+            }
+        }
+
+        if (invisible) {
+            target.setGameMode(GameMode.SPECTATOR);
+            target.setInvisible(true);
+            target.setCollidable(false);
+            target.setSilent(true);
+            target.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 1, false, false, false));
+            removePlayerFromRankTeams(target, null);
+            try {
+                target.setPlayerListName(ChatColor.GRAY + target.getName());
+            } catch (Exception ignored) {}
+        } else {
+            if (target.getGameMode() == GameMode.SPECTATOR) {
+                target.setGameMode(GameMode.SURVIVAL);
+            }
+            target.setInvisible(false);
+            target.setCollidable(true);
+            target.setSilent(false);
+            target.removePotionEffect(PotionEffectType.INVISIBILITY);
+            applyRankToPlayer(target);
+        }
+    }
+
+    private void refreshInvisibleVisibilityFor(Player viewer) {
+        for (UUID uuid : invisiblePlayers) {
+            Player hidden = Bukkit.getPlayer(uuid);
+            if (hidden == null || !hidden.isOnline()) continue;
+            if (viewer.equals(hidden)) continue;
+            if (canUseInvisible(viewer)) {
+                viewer.showPlayer(this, hidden);
+            } else {
+                viewer.hidePlayer(this, hidden);
+            }
+        }
     }
 
     private void setMenuOrigin(Player p, String origin) {
@@ -2317,6 +2379,44 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return true;
         }
 
+        if (cmd.getName().equalsIgnoreCase("invisible")) {
+            if (!canUseInvisible(p)) {
+                p.sendMessage(ChatColor.RED + "You do not have permission to use /invisible.");
+                return true;
+            }
+
+            if (args.length == 0) {
+                p.sendMessage(ChatColor.YELLOW + "Usage: /invisible on|off");
+                return true;
+            }
+
+            String mode = args[0].toLowerCase(Locale.ROOT);
+            if (mode.equals("on")) {
+                if (isInvisible(p)) {
+                    p.sendMessage(ChatColor.YELLOW + "You are already invisible.");
+                    return true;
+                }
+                invisiblePlayers.add(p.getUniqueId());
+                updateInvisibleVisibility(p, true);
+                p.sendMessage(ChatColor.GREEN + "You are now invisible. Spectator mode enabled and hidden from non-staff.");
+                return true;
+            }
+
+            if (mode.equals("off")) {
+                if (!isInvisible(p)) {
+                    p.sendMessage(ChatColor.YELLOW + "You are not invisible.");
+                    return true;
+                }
+                invisiblePlayers.remove(p.getUniqueId());
+                updateInvisibleVisibility(p, false);
+                p.sendMessage(ChatColor.GREEN + "You are now visible. Gamemode set to SURVIVAL.");
+                return true;
+            }
+
+            p.sendMessage(ChatColor.YELLOW + "Usage: /invisible on|off");
+            return true;
+        }
+
 
 
         if (cmd.getName().equalsIgnoreCase("balance")) {
@@ -3378,6 +3478,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if ("miner".equalsIgnoreCase(args[1])) {
                     return Collections.singletonList("collect");
                 }
+            }
+            return Collections.emptyList();
+        }
+
+        if (cmd.getName().equalsIgnoreCase("invisible")) {
+            if (args.length == 1) {
+                return Arrays.asList("on", "off");
             }
             return Collections.emptyList();
         }
@@ -7787,6 +7894,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // --- PERMISSION GROUPS ---
         applyPermissionGroup(e.getPlayer());
 
+        // Maintain invisible / spectator staff state on join
+        if (isInvisible(e.getPlayer())) {
+            updateInvisibleVisibility(e.getPlayer(), true);
+            e.getPlayer().sendMessage(ChatColor.GRAY + "You are currently in invisible spectator mode.");
+        }
+        refreshInvisibleVisibilityFor(e.getPlayer());
+
         // --- DAILY LOGIN REWARDS ---
         if (dataConfig.getBoolean("daily_login_enabled", false)) {
             long lastLogin = dataConfig.getLong("daily_login." + uuid + ".last", 0);
@@ -9083,6 +9197,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void applyRankToPlayer(Player p) {
+        if (isInvisible(p)) {
+            // maintain invisible tab state and do not expose via normal rank name updates
+            removePlayerFromRankTeams(p, null);
+            String invisibleListName = ChatColor.GRAY + p.getName();
+            if (!invisibleListName.equals(p.getPlayerListName())) {
+                p.setPlayerListName(invisibleListName);
+            }
+            return;
+        }
+
         String rank = getPlayerRank(p.getUniqueId());
         String group = getPlayerGroup(p.getUniqueId());
         String displayRank = rank != null ? rank : group;
