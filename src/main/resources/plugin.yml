@@ -78,6 +78,9 @@ commands:
   staff:
     description: View online staff tags
     usage: /staff
+  invisible:
+    description: Toggle staff invisible spectator mode
+    usage: /invisible on|off
 permissions:
   dmt.admin:
     description: Allows use of admin tools
