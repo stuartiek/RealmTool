@@ -336,6 +336,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("report") != null) { getCommand("report").setExecutor(this); getCommand("report").setTabCompleter(this); }
             if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
+            if (getCommand("discord") != null) { getCommand("discord").setExecutor(this); getCommand("discord").setTabCompleter(this); }
             if (getCommand("spawn") != null) { getCommand("spawn").setExecutor(this); getCommand("spawn").setTabCompleter(this); }
             if (getCommand("personal") != null) { getCommand("personal").setExecutor(this); getCommand("personal").setTabCompleter(this); }
 
@@ -452,8 +453,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         }
 
-        ensureDefaultEnchantQuests();
-
         // Apply ranks + permissions for online players in case of reload
         for (Player p : Bukkit.getOnlinePlayers()) {
             applyRankToPlayer(p);
@@ -533,6 +532,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public String getApiKey() { return apiKey; }
+
+    private boolean isDiscordLinkRequiredAndNotLinked(Player p) {
+        if (getConfig().getBoolean("discord.link_required", false)) {
+            if (p.isOp() || p.hasPermission("dmt.admin")) {
+                return false; // bypass for admins
+            }
+            String discordLink = getDiscordLink(p.getUniqueId());
+            return discordLink == null || discordLink.isEmpty();
+        }
+        return false;
+    }
 
     private void createDataFile() {
         dataFile = new File(getDataFolder(), "data.yml");
@@ -1367,6 +1377,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
 
             switch(subcommand) {
+                case "discord":
+                    if (!hasDmtCommandPermission(p, "discord.check")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt discord <player>");
+                        return true;
+                    }
+                    String targetName = args[1];
+                    OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
+                    if (target == null || !target.hasPlayedBefore()) {
+                        p.sendMessage(ChatColor.RED + "Player not found.");
+                        return true;
+                    }
+                    String discordLink = getDiscordLink(target.getUniqueId());
+                    if (discordLink != null && !discordLink.isEmpty()) {
+                        p.sendMessage(ChatColor.GREEN + target.getName() + "'s linked Discord is: " + ChatColor.WHITE + discordLink);
+                    } else {
+                        p.sendMessage(ChatColor.YELLOW + target.getName() + " has not linked their Discord account.");
+                    }
+                    break;
                 case "setpunishloc":
                     if (!hasDmtCommandPermission(p, "setpunishloc")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
@@ -1410,15 +1442,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     String durationStr = args[2];
                     long durationMs = parseDuration(durationStr);
                     if (durationMs == -1) {
-                        p.sendMessage(ChatColor.RED + "Invalid duration format. Use: 20s, 5m, 2hr");
+                        p.sendMessage(ChatColor.RED + "Invalid duration format. Use: 20s, 5m, 2hr, 2.5hr");
                         return true;
                     }
-                    Player target = Bukkit.getPlayer(targetName);
-                    if (target == null) {
+                    OfflinePlayer targetOffline = Bukkit.getOfflinePlayer(targetName);
+                    if (!targetOffline.hasPlayedBefore() && !targetOffline.isOp()) {
                         p.sendMessage(ChatColor.RED + "Player not found.");
                         return true;
                     }
-                    setPunished(target.getUniqueId(), durationMs);
+                    setPunished(targetOffline.getUniqueId(), durationMs);
                     p.sendMessage(ChatColor.GREEN + "Punished " + targetName + " for " + durationStr);
                     logAction(p.getName(), "punished", targetName + " (" + durationStr + ")");
                     break;
@@ -2379,6 +2411,34 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return true;
         }
 
+        if (cmd.getName().equalsIgnoreCase("discord")) {
+            if (args.length >= 2 && args[0].equalsIgnoreCase("link")) {
+                String discordUsername = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
+                // New validation for Discord unique usernames (2-32 chars, a-z, 0-9, _, .)
+                // Usernames are case-insensitive and forced lowercase, so we'll do that for them.
+                String cleanUsername = discordUsername.toLowerCase(Locale.ROOT);
+
+                if (cleanUsername.length() < 2 || cleanUsername.length() > 32) {
+                    p.sendMessage(ChatColor.RED + "Invalid Discord username: must be 2-32 characters long.");
+                    return true;
+                }
+                if (cleanUsername.contains("..")) {
+                    p.sendMessage(ChatColor.RED + "Invalid Discord username: cannot contain consecutive periods (..).");
+                    return true;
+                }
+                if (!cleanUsername.matches("^[a-z0-9_.]+$")) {
+                    p.sendMessage(ChatColor.RED + "Invalid Discord username: can only contain letters, numbers, underscores, and periods.");
+                    return true;
+                }
+                getDataConfig().set("discord_links." + p.getUniqueId().toString(), cleanUsername);
+                saveDataFile();
+                p.sendMessage(ChatColor.GREEN + "Your Discord account (" + cleanUsername + ") has been linked!");
+            } else {
+                p.sendMessage(ChatColor.RED + "Usage: /discord link <YourDiscordUsername>");
+            }
+            return true;
+        }
+
         if (cmd.getName().equalsIgnoreCase("invisible")) {
             if (!canUseInvisible(p)) {
                 p.sendMessage(ChatColor.RED + "You do not have permission to use /invisible.");
@@ -3251,6 +3311,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/tpa accept|deny <player>" + ChatColor.WHITE + " - Teleport requests");
         p.sendMessage(ChatColor.GREEN + "/nick <name>" + ChatColor.WHITE + " - Set your nickname (& color codes)");
         p.sendMessage(ChatColor.GREEN + "/rules" + ChatColor.WHITE + " - View server rules");
+        p.sendMessage(ChatColor.GREEN + "/discord link <username>" + ChatColor.WHITE + " - Link your Discord account");
         p.sendMessage(ChatColor.GREEN + "/duel <player> [wager]" + ChatColor.WHITE + " - Challenge to a duel");
         p.sendMessage(ChatColor.GREEN + "/pwarp" + ChatColor.WHITE + " - Browse player warps");
         p.sendMessage(ChatColor.GREEN + "/pwarp set <name>" + ChatColor.WHITE + " - Create a player warp");
@@ -3271,6 +3332,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt setjailloc" + ChatColor.WHITE + " - Set jail location");
             p.sendMessage(ChatColor.AQUA + "/dmt tpjail" + ChatColor.WHITE + " - Teleport to jail");
             p.sendMessage(ChatColor.AQUA + "/dmt tp world <name>" + ChatColor.WHITE + " - Teleport to another world");
+            p.sendMessage(ChatColor.AQUA + "/dmt discord <player>" + ChatColor.WHITE + " - Check a player's linked Discord");
             p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> add <number>" + ChatColor.WHITE + " - Add player warp slots");
             p.sendMessage(ChatColor.AQUA + "/dmt playerwarp <player> remove <number>" + ChatColor.WHITE + " - Remove player warp slots");
             p.sendMessage(ChatColor.AQUA + "/dmt summon <name>" + ChatColor.WHITE + " - Spawn a configurable NPC (shop/teleport)");
@@ -3492,7 +3554,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (cmd.getName().equalsIgnoreCase("dmt")) {
             if (args.length == 1) {
                 List<String> subs = Arrays.asList(
-                    "help","setpunishloc","setjailloc","tpjail","punish","menu","tp","world","selection","summon","list","npc","hub","sethub","unsethub",
+                    "help","discord","setpunishloc","setjailloc","tpjail","punish","menu","tp","world","selection","summon","list","npc","hub","sethub","unsethub",
                     "setserverspawn","clearserverspawn","spawnlast","spawn","killall","gencloud","rank","antlag","documentation","docs", "leaderboard"
                 );
                 String start = args[0].toLowerCase();
@@ -3506,7 +3568,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // complete the second argument for multi-word subcommands
             if (args.length == 2) {
                 String sub = args[0].toLowerCase();
-                if (sub.equals("punish") || (sub.equals("tp") && args[1].isEmpty())) {
+                if (sub.equals("punish") || sub.equals("discord") || (sub.equals("tp") && args[1].isEmpty())) {
                     // suggest online player names (punish) or world (tp) when starting
                     List<String> names = new ArrayList<>();
                     for (Player pl : Bukkit.getOnlinePlayers()) names.add(pl.getName());
@@ -3684,6 +3746,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     return filtered;
                 }
             }
+        }
+
+        if (cmd.getName().equalsIgnoreCase("discord")) {
+            if (args.length == 1) {
+                return Arrays.asList("link");
+            }
+            return Collections.emptyList();
         }
 
         if (cmd.getName().equalsIgnoreCase("balance")) {
@@ -4243,6 +4312,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private String getDocumentationUrl() {
         return "http://" + (Bukkit.getServer().getIp().isEmpty() ? "localhost" : Bukkit.getServer().getIp()) + ":8091/docs.pdf";
+    }
+
+    public String getDiscordLink(UUID uuid) {
+        return dataConfig.getString("discord_links." + uuid.toString());
     }
 
     private File generateDocumentationPdf() throws IOException {
@@ -7169,6 +7242,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     // --- LISTENERS ---
     @EventHandler
     public void onPlayerMove(PlayerMoveEvent e) {
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) {
+                e.setCancelled(true);
+                // To avoid spam, only message occasionally.
+                if (System.currentTimeMillis() % 5000 < 50) { // roughly every 5 seconds
+                    String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+                    e.getPlayer().sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+                }
+            }
+            return;
+        }
+
         if (isPunished(e.getPlayer().getUniqueId())) {
             // Prevent punished players from moving
             if (e.getFrom().getX() != e.getTo().getX() || e.getFrom().getZ() != e.getTo().getZ()) {
@@ -7349,6 +7434,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent e) {
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            e.setCancelled(true);
+            String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+            e.getPlayer().sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+            return;
+        }
+
         lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
         else {
@@ -7364,6 +7456,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            e.setCancelled(true);
+            String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+            e.getPlayer().sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+            return;
+        }
+
         Player p = e.getPlayer();
         lastActivity.put(p.getUniqueId(), System.currentTimeMillis());
 
@@ -7470,6 +7569,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onInventoryClickForAfk(InventoryClickEvent e) {
         lastActivity.put(e.getWhoClicked().getUniqueId(), System.currentTimeMillis());
     }
+    @EventHandler
+    public void onPlayerInteract(PlayerInteractEvent e) {
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            e.setCancelled(true);
+        }
+    }
+
     @EventHandler
     public void onWandUse(PlayerInteractEvent e) {
         if ((e.getAction() == Action.RIGHT_CLICK_BLOCK || e.getAction() == Action.RIGHT_CLICK_AIR) && e.getItem() != null && e.getItem().hasItemMeta()) {
@@ -7732,10 +7838,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         String msgLower = rawMsg.toLowerCase(Locale.ROOT);
         if (!msgLower.startsWith("/")) return;
 
+        Player p = e.getPlayer();
+        if (isDiscordLinkRequiredAndNotLinked(p)) {
+            if (!msgLower.startsWith("/discord")) {
+                e.setCancelled(true);
+                String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+                p.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+                return;
+            }
+        }
+
         // Hide /personal actions from console / command log by handling in preprocess and cancelling default execution.
         if (msgLower.startsWith("/personal")) {
             e.setCancelled(true);
-            Player p = e.getPlayer();
             if (!hasPersonalCommandAccess(p)) {
                 p.sendMessage(ChatColor.RED + "No permission.");
                 return;
@@ -7788,12 +7903,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onLogin(PlayerLoginEvent e) {
         if (dataConfig.getBoolean("maintenance.enabled", false)) {
-            String name = e.getPlayer().getName();
+            Player p = e.getPlayer();
+            String name = p.getName();
             List<String> whitelist = dataConfig.getStringList("maintenance.whitelist");
             boolean isExempt = whitelist.contains(name);
             if (!isExempt) {
                 String msg = dataConfig.getString("maintenance.message", "Server is under maintenance...");
                 e.disallow(PlayerLoginEvent.Result.KICK_OTHER, ChatColor.RED + msg);
+                return;
+            }
+        }
+
+        // Discord link check
+        if (getConfig().getBoolean("discord.link_required", false)) {
+            Player p = e.getPlayer();
+            if (!p.isOp()) { // OPs can bypass, permission check is risky here
+                String discordLink = getDiscordLink(p.getUniqueId());
+                if (discordLink == null || discordLink.isEmpty()) {
+                    String kickMessage = getConfig().getString("discord.link_message", "Please link your Discord account to play!\nUse the command: /discord link <YourDiscordUsername>");
+                    e.disallow(PlayerLoginEvent.Result.KICK_OTHER, ChatColor.translateAlternateColorCodes('&', kickMessage));
+                }
             }
         }
     }
@@ -8088,6 +8217,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
         lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            e.setCancelled(true);
+            String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+            e.getPlayer().sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+            return;
+        }
+
         if (isMuted(e.getPlayer().getUniqueId())) {
             e.setCancelled(true);
             e.getPlayer().sendMessage(ChatColor.RED + "You are muted and cannot chat.");

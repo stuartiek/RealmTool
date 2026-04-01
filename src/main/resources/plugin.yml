@@ -81,6 +81,9 @@ commands:
   invisible:
     description: Toggle staff invisible spectator mode
     usage: /invisible on|off
+  discord:
+    description: Link your Discord account
+    usage: /discord link <YourDiscordTag>
 permissions:
   dmt.admin:
     description: Allows use of admin tools

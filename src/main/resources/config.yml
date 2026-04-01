@@ -4,6 +4,11 @@
 # If you leave this blank or delete it, a new one will be generated automatically.
 api-key: "qs1a_k7OacJtpUAN-9WIJuYVl0DNgght"
 
+# Discord Integration
+discord:
+  link_required: false # Set to true to require players to link their Discord account to play.
+  link_message: "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>"
+
 # Settings for the Jail feature
 settings:
   jail_location: ""

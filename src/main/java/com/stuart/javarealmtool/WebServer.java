@@ -278,6 +278,7 @@ public class WebServer {
                     m.put("playtime", plugin.getPlaytimeHours(p.getUniqueId()));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
                     m.put("coins", plugin.getDataConfig().getLong("coins." + p.getUniqueId(), 0));
+                    m.put("discord", plugin.getDiscordLink(p.getUniqueId()));
                     String rank = plugin.getPlayerRank(p.getUniqueId());
                     if (rank == null) rank = plugin.getPlayerGroup(p.getUniqueId());
                     m.put("rank", rank);
