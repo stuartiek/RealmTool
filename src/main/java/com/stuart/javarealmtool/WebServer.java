@@ -12,6 +12,8 @@ import org.bukkit.Material;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 import java.util.stream.Collectors;
@@ -277,7 +279,7 @@ public class WebServer {
                     m.put("warnings", plugin.getDataConfig().getStringList("warnings." + p.getUniqueId()).size());
                     m.put("playtime", plugin.getPlaytimeHours(p.getUniqueId()));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
-                    m.put("coins", plugin.getDataConfig().getLong("coins." + p.getUniqueId(), 0));
+                    m.put("coins", plugin.getCoins(p.getUniqueId()));
                     m.put("discord", plugin.getDiscordLink(p.getUniqueId()));
                     String rank = plugin.getPlayerRank(p.getUniqueId());
                     if (rank == null) rank = plugin.getPlayerGroup(p.getUniqueId());
@@ -302,7 +304,7 @@ public class WebServer {
             String status = ctx.queryParam("status");
             String priority = ctx.queryParam("priority");
             
-            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+            Callable<List<Map<String, Object>>> task = () -> {
                 List<Map<String, Object>> tickets = new ArrayList<>();
                 if (plugin.getDataConfig().contains("tickets")) {
                     for (String key : plugin.getDataConfig().getConfigurationSection("tickets").getKeys(false)) {
@@ -326,8 +328,13 @@ public class WebServer {
                     }
                 }
                 return tickets;
-            });
-            ctx.json(future.get());
+            };
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, task);
+            try {
+                ctx.json(future.get());
+            } catch (InterruptedException | ExecutionException e) {
+                ctx.status(500).json(Map.of("error", "Failed to fetch tickets"));
+            }
         });
 
         app.get("/api/appeals", ctx -> {
@@ -717,15 +724,11 @@ public class WebServer {
                         long duration = 3600000L; // Default 1h
                         if ("3h".equals(val)) duration = 10800000L;
                         if ("24h".equals(val)) duration = 86400000L;
-                        plugin.getDataConfig().set("punishments." + uuid, System.currentTimeMillis() + duration);
-                        plugin.saveDataFile();
-                        if (p != null) p.sendMessage(ChatColor.RED + "You have been punished for " + val);
+                    plugin.setPunished(uuid, duration);
                         plugin.logAction("WebAdmin", "punished", targetName + " (" + val + ")");
                     }
                     else if (action.equals("unpunish")) {
-                        plugin.getDataConfig().set("punishments." + uuid, null);
-                        plugin.saveDataFile();
-                        if (p != null) p.sendMessage(ChatColor.GREEN + "Your punishment has been lifted.");
+                    plugin.removePunishment(uuid);
                         plugin.logAction("WebAdmin", "unpunished", targetName);
                     }
                     else if (action.equals("addnote")) {
@@ -3151,11 +3154,12 @@ public class WebServer {
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> list = new ArrayList<>();
                 var data = plugin.getDataConfig();
-                if (data.contains("coins")) {
-                    for (String uuid : data.getConfigurationSection("coins").getKeys(false)) {
+                var economyData = plugin.getEconomyConfig();
+                if (economyData.contains("coins")) {
+                    for (String uuid : economyData.getConfigurationSection("coins").getKeys(false)) {
                         Map<String, Object> map = new HashMap<>();
                         map.put("uuid", uuid);
-                        map.put("balance", data.getLong("coins." + uuid, 0));
+                        map.put("balance", economyData.getLong("coins." + uuid, 0));
                         map.put("earned", 0);
                         map.put("spent", 0);
                         try {

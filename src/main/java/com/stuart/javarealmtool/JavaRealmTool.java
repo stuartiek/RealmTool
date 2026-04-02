@@ -64,6 +64,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
     private volatile boolean dataConfigDirty = false;
+    private File playersFile;
+    private FileConfiguration playersConfig;
+    private volatile boolean playersConfigDirty = false;
+    private File economyFile;
+    private FileConfiguration economyConfig;
+    private volatile boolean economyConfigDirty = false;
     private int autoSaveTaskId = -1;
     private final Object saveLock = new Object();
     
@@ -267,7 +273,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         try {
             saveDefaultConfig();
             setupConfig();
-            createDataFile();
+            setupDataFiles();
             ensureDefaultNpcLibrary();
             ensureDefaultEnchantQuests();
             setupPunishTeam();
@@ -464,7 +470,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Start auto-save task (every 5 seconds) to prevent main-thread lag during heavy usage
         autoSaveTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
-            if (dataConfigDirty) {
+            if (dataConfigDirty || playersConfigDirty || economyConfigDirty) {
                 performDataSave();
             }
         }, 100L, 100L);
@@ -497,6 +503,24 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         personalMiners.clear();
 
         saveDataFile();
+        if (playersConfigDirty) {
+            try {
+                synchronized (saveLock) {
+                    playersConfig.save(playersFile);
+                }
+            } catch (IOException e) {
+                getLogger().log(Level.SEVERE, "Could not save players.yml on disable", e);
+            }
+        }
+        if (economyConfigDirty) {
+            try {
+                synchronized (saveLock) {
+                    economyConfig.save(economyFile);
+                }
+            } catch (IOException e) {
+                getLogger().log(Level.SEVERE, "Could not save economy.yml on disable", e);
+            }
+        }
         if (dataConfigDirty) {
             try {
                 synchronized (saveLock) {
@@ -510,11 +534,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public FileConfiguration getDataConfig() { return dataConfig; }
+    public FileConfiguration getEconomyConfig() { return economyConfig; }
     public String fetchApiKey() { return apiKey; }
 
     public boolean isPunished(UUID u) {
-        if (!dataConfig.contains("punishments." + u)) return false;
-        long expiry = dataConfig.getLong("punishments." + u);
+        if (!playersConfig.contains("punishments." + u)) return false;
+        long expiry = playersConfig.getLong("punishments." + u);
         if (System.currentTimeMillis() > expiry) {
             removePunishment(u);
             return false;
@@ -544,37 +569,91 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return false;
     }
 
-    private void createDataFile() {
+    private void setupDataFiles() {
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) {
             dataFile.getParentFile().mkdirs();
             try { dataFile.createNewFile(); } catch (IOException ignored) {}
         }
         dataConfig = YamlConfiguration.loadConfiguration(dataFile);
+
+        playersFile = new File(getDataFolder(), "players.yml");
+        if (!playersFile.exists()) {
+            try { playersFile.createNewFile(); } catch (IOException ignored) {}
+        }
+        playersConfig = YamlConfiguration.loadConfiguration(playersFile);
+
+        // One-time migration
+        if (dataConfig.contains("punishments") && !playersConfig.contains("punishments")) {
+            playersConfig.set("punishments", dataConfig.getConfigurationSection("punishments").getValues(true));
+            dataConfig.set("punishments", null);
+            saveDataFile();
+            savePlayersFile();
+            getLogger().info("Migrated punishments to players.yml");
+        }
+
+        economyFile = new File(getDataFolder(), "economy.yml");
+        if (!economyFile.exists()) {
+            try { economyFile.createNewFile(); } catch (IOException ignored) {}
+        }
+        economyConfig = YamlConfiguration.loadConfiguration(economyFile);
+
+        // One-time migration for economy
+        if (dataConfig.contains("coins") && !economyConfig.contains("coins")) {
+            economyConfig.set("coins", dataConfig.getConfigurationSection("coins").getValues(true));
+            dataConfig.set("coins", null);
+            
+            if (dataConfig.contains("drowsy_coins")) {
+                economyConfig.set("drowsy_coins", dataConfig.getConfigurationSection("drowsy_coins").getValues(true));
+                dataConfig.set("drowsy_coins", null);
+            }
+            saveDataFile();
+            saveEconomyFile();
+            getLogger().info("Migrated economy to economy.yml");
+        }
     }
 
     public void saveDataFile() {
         dataConfigDirty = true;
     }
 
+    public void savePlayersFile() {
+        playersConfigDirty = true;
+    }
+
+    public void saveEconomyFile() {
+        economyConfigDirty = true;
+    }
+
     private void performDataSave() {
-        dataConfigDirty = false;
+        if (dataConfigDirty) {
+            dataConfigDirty = false;
+            saveYamlAsync(dataConfig, dataFile);
+        }
+        if (playersConfigDirty) {
+            playersConfigDirty = false;
+            saveYamlAsync(playersConfig, playersFile);
+        }
+        if (economyConfigDirty) {
+            economyConfigDirty = false;
+            saveYamlAsync(economyConfig, economyFile);
+        }
+    }
+
+    private void saveYamlAsync(FileConfiguration config, File file) {
         try {
-            // Serialize synchronously to avoid SnakeYAML NullPointerExceptions caused by race conditions
-            final String serializedData = dataConfig.saveToString();
-            
-            // Write to disk asynchronously so it doesn't freeze the server
+            final String serializedData = config.saveToString();
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
                 synchronized (saveLock) {
-                    try (java.io.Writer writer = new java.io.OutputStreamWriter(new java.io.FileOutputStream(dataFile), StandardCharsets.UTF_8)) {
+                    try (java.io.Writer writer = new java.io.OutputStreamWriter(new java.io.FileOutputStream(file), StandardCharsets.UTF_8)) {
                         writer.write(serializedData);
                     } catch (java.io.IOException e) {
-                        getLogger().log(Level.SEVERE, "Could not save data to " + dataFile, e);
+                        getLogger().log(Level.SEVERE, "Could not save data to " + file.getName(), e);
                     }
                 }
             });
         } catch (Exception e) {
-            getLogger().log(Level.SEVERE, "Failed to serialize data.yml", e);
+            getLogger().log(Level.SEVERE, "Failed to serialize " + file.getName(), e);
         }
     }
 
@@ -1386,17 +1465,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.RED + "Usage: /dmt discord <player>");
                         return true;
                     }
-                    String targetName = args[1];
-                    OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
-                    if (target == null || !target.hasPlayedBefore()) {
+                    String discordTargetName = args[1];
+                    OfflinePlayer discordTarget = Bukkit.getOfflinePlayer(discordTargetName);
+                    if (discordTarget == null || !discordTarget.hasPlayedBefore()) {
                         p.sendMessage(ChatColor.RED + "Player not found.");
                         return true;
                     }
-                    String discordLink = getDiscordLink(target.getUniqueId());
+                    String discordLink = getDiscordLink(discordTarget.getUniqueId());
                     if (discordLink != null && !discordLink.isEmpty()) {
-                        p.sendMessage(ChatColor.GREEN + target.getName() + "'s linked Discord is: " + ChatColor.WHITE + discordLink);
+                        p.sendMessage(ChatColor.GREEN + discordTarget.getName() + "'s linked Discord is: " + ChatColor.WHITE + discordLink);
                     } else {
-                        p.sendMessage(ChatColor.YELLOW + target.getName() + " has not linked their Discord account.");
+                        p.sendMessage(ChatColor.YELLOW + discordTarget.getName() + " has not linked their Discord account.");
                     }
                     break;
                 case "setpunishloc":
@@ -1524,9 +1603,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
 
-                    OfflinePlayer targetOffline = Bukkit.getOfflinePlayer(targetPlayerName);
-                    UUID targetId = targetOffline.getUniqueId();
-                    int currentLimit = getPwarpLimit(targetId);
+                    OfflinePlayer pwarpTarget = Bukkit.getOfflinePlayer(targetPlayerName);
+                    UUID pwarpTargetId = pwarpTarget.getUniqueId();
+                    int currentLimit = getPwarpLimit(pwarpTargetId);
                     int newLimit;
                     if (operation.equals("add")) {
                         newLimit = currentLimit + amount;
@@ -1537,20 +1616,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
 
-                    setPwarpLimit(targetId, newLimit);
+                    setPwarpLimit(pwarpTargetId, newLimit);
                     p.sendMessage(ChatColor.GREEN + "Player warp slots for " + targetPlayerName + " set from " + currentLimit + " to " + newLimit + ".");
-                    if (targetOffline.isOnline()) {
-                        Player tp = targetOffline.getPlayer();
+                    if (pwarpTarget.isOnline()) {
+                        Player tp = pwarpTarget.getPlayer();
                         if (tp != null) {
                             tp.sendMessage(ChatColor.AQUA + "Your player warp slots are now " + newLimit + " (was " + currentLimit + ").");
                         }
                     }
-                    int existingWarps = getPwarpCount(targetId);
+                    int existingWarps = getPwarpCount(pwarpTargetId);
                     if (existingWarps > newLimit) {
-                        int removed = prunePwarpsToLimit(targetId, newLimit);
+                        int removed = prunePwarpsToLimit(pwarpTargetId, newLimit);
                         p.sendMessage(ChatColor.YELLOW + "Player had " + existingWarps + " warps, " + removed + " were removed to meet the new limit.");
-                        if (targetOffline.isOnline()) {
-                            Player tp = targetOffline.getPlayer();
+                        if (pwarpTarget.isOnline()) {
+                            Player tp = pwarpTarget.getPlayer();
                             if (tp != null) tp.sendMessage(ChatColor.RED + "Your warp slots were reduced to " + newLimit + " and " + removed + " warps were removed.");
                         }
                     }
@@ -2589,8 +2668,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 return true;
             }
             if (args.length == 1 && args[0].equalsIgnoreCase("reset")) {
-                dataConfig.set("coins", null);
-                saveDataFile();
+                economyConfig.set("coins", null);
+                economyConfig.set("drowsy_coins", null);
+                saveEconomyFile();
                 p.sendMessage(ChatColor.GREEN + "Economy reset: all player balances cleared.");
                 return true;
             }
@@ -4343,31 +4423,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     // --- coin economy helpers ---
-    private long getCoins(UUID uuid) {
+    public long getCoins(UUID uuid) {
         String key = "coins." + uuid;
-        long amount = dataConfig.getLong(key, Long.MIN_VALUE);
+        long amount = economyConfig.getLong(key, Long.MIN_VALUE);
         if (amount != Long.MIN_VALUE) {
             return amount;
         }
         // Legacy support: some installs may store under drowsy_coins
         String legacyKey = "drowsy_coins." + uuid;
-        amount = dataConfig.getLong(legacyKey, Long.MIN_VALUE);
+        amount = economyConfig.getLong(legacyKey, Long.MIN_VALUE);
         if (amount != Long.MIN_VALUE) {
             // migrate to new key
-            dataConfig.set(key, amount);
-            dataConfig.set(legacyKey, null);
-            saveDataFile();
+            economyConfig.set(key, amount);
+            economyConfig.set(legacyKey, null);
+            saveEconomyFile();
             return amount;
         }
         return 0;
     }
-    private void setCoins(UUID uuid, long amount) {
-        dataConfig.set("coins." + uuid, amount);
+    public void setCoins(UUID uuid, long amount) {
+        economyConfig.set("coins." + uuid, amount);
         // Keep legacy key in sync for older config readers
-        dataConfig.set("drowsy_coins." + uuid, amount);
-        saveDataFile();
+        economyConfig.set("drowsy_coins." + uuid, amount);
+        saveEconomyFile();
     }
-    private void addCoins(UUID uuid, long delta) {
+    public void addCoins(UUID uuid, long delta) {
         long cur = getCoins(uuid);
         setCoins(uuid, cur + delta);
     }
@@ -4980,8 +5060,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Calculate stats
         int total = Bukkit.getOnlinePlayers().size();
         int punished = 0;
-        if (dataConfig.contains("punishments")) {
-            for (String key : dataConfig.getConfigurationSection("punishments").getKeys(false)) {
+        if (playersConfig.contains("punishments")) {
+            for (String key : playersConfig.getConfigurationSection("punishments").getKeys(false)) {
                 if (isPunished(UUID.fromString(key))) punished++;
             }
         }
@@ -5652,8 +5732,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openPunishedPlayersMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 54, ChatColor.RED + "Punished Players");
         resetGridSlots();
-        if (dataConfig.contains("punishments")) {
-            for (String key : dataConfig.getConfigurationSection("punishments").getKeys(false)) {
+        if (playersConfig.contains("punishments")) {
+            for (String key : playersConfig.getConfigurationSection("punishments").getKeys(false)) {
                 UUID uuid = UUID.fromString(key);
                 if (isPunished(uuid)) {
                     OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
@@ -8295,7 +8375,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public void setPunished(UUID u, long d) {
-        dataConfig.set("punishments." + u, System.currentTimeMillis() + d);
+        playersConfig.set("punishments." + u, System.currentTimeMillis() + d);
         
         Player p = Bukkit.getPlayer(u);
         if (p != null) {
@@ -8314,12 +8394,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.RED + "You have been teleported to the punishment location.");
             }
         }
-        saveDataFile();
+        savePlayersFile();
     }
     
     public void removePunishment(UUID u) {
-        dataConfig.set("punishments." + u, null);
-        saveDataFile();
+        playersConfig.set("punishments." + u, null);
+        savePlayersFile();
         Player p = Bukkit.getPlayer(u);
         // Restore player's original location
         Location originalLoc = getLoc("player_location." + u);
@@ -9319,12 +9399,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private void startPunishmentChecker() {
         Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
-            for (String key : dataConfig.getKeys(true)) {
-                if (key.startsWith("punishments.")) {
-                    String uuidStr = key.replace("punishments.", "");
+            ConfigurationSection section = playersConfig.getConfigurationSection("punishments");
+            if (section != null) {
+                for (String uuidStr : section.getKeys(false)) {
                     try {
                         UUID uuid = UUID.fromString(uuidStr);
-                        long expiry = dataConfig.getLong(key);
+                        long expiry = playersConfig.getLong("punishments." + uuidStr);
                         if (System.currentTimeMillis() > expiry) {
                             removePunishment(uuid);
                         }
@@ -11439,9 +11519,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         if (type.equals("coins")) {
             lines.add("&e&l★ Top 10 Wealthiest Players ★");
-            if (dataConfig.contains("coins")) {
-                for (String uuidStr : dataConfig.getConfigurationSection("coins").getKeys(false)) {
-                    long coins = dataConfig.getLong("coins." + uuidStr, 0);
+            if (economyConfig.contains("coins")) {
+                for (String uuidStr : economyConfig.getConfigurationSection("coins").getKeys(false)) {
+                    long coins = economyConfig.getLong("coins." + uuidStr, 0);
                     String name = dataConfig.getString("last_seen_name." + uuidStr, "Unknown");
                     scores.put(name, coins);
                 }
