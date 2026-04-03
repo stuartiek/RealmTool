@@ -3,6 +3,8 @@ package com.stuart.javarealmtool;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.websocket.WsContext;
+import com.stuart.javarealmtool.web.WebRankController;
+import com.stuart.javarealmtool.web.WebTicketController;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.GameRule;
@@ -28,10 +30,16 @@ import java.util.zip.ZipOutputStream;
 public class WebServer {
     private final JavaRealmTool plugin;
     private Javalin app;
+    private final WebTicketController ticketController;
+    private final WebRankController rankController;
     private final ConcurrentLinkedQueue<WsContext> sessions = new ConcurrentLinkedQueue<>();
     private final Map<String, String> userSessions = new HashMap<>();
 
-    public WebServer(JavaRealmTool plugin) { this.plugin = plugin; }
+    public WebServer(JavaRealmTool plugin) {
+        this.plugin = plugin;
+        this.ticketController = new WebTicketController(plugin, this);
+        this.rankController = new WebRankController(plugin, this);
+    }
 
     public void start() {
         ClassLoader pluginClassLoader = plugin.getClass().getClassLoader();
@@ -74,7 +82,7 @@ public class WebServer {
         serverThread.start();
     }
 
-    private boolean auth(io.javalin.http.Context ctx) {
+    public boolean auth(io.javalin.http.Context ctx) {
         String token = ctx.header("Authorization");
         if (token == null || !userSessions.containsKey(token)) {
             ctx.status(401).result("Unauthorized");
@@ -83,7 +91,7 @@ public class WebServer {
         return true;
     }
 
-    private boolean hasPermission(String token, String permission) {
+    public boolean hasPermission(String token, String permission) {
         String username = userSessions.get(token);
         if (username == null) return false;
 
@@ -100,13 +108,13 @@ public class WebServer {
             UUID uuid = offlinePlayer.getUniqueId();
             String group = plugin.getPlayerGroup(uuid);
             if (group != null) {
-                List<String> perms = plugin.getDataConfig().getStringList("groups." + group + ".permissions");
+                List<String> perms = plugin.getRankConfig().getStringList("groups." + group + ".permissions");
                 if (perms.contains(permission) || perms.contains("webapp.*")) return true;
             }
             
             String rank = plugin.getPlayerRank(uuid);
             if (rank != null) {
-                List<String> perms = plugin.getDataConfig().getStringList("ranks." + rank + ".permissions");
+                List<String> perms = plugin.getRankConfig().getStringList("ranks." + rank + ".permissions");
                 if (perms.contains(permission) || perms.contains("webapp.*")) return true;
             }
 
@@ -141,11 +149,11 @@ public class WebServer {
             UUID uuid = offlinePlayer.getUniqueId();
             String group = plugin.getPlayerGroup(uuid);
             if (group != null) {
-                permissions.addAll(plugin.getDataConfig().getStringList("groups." + group + ".permissions"));
+                permissions.addAll(plugin.getRankConfig().getStringList("groups." + group + ".permissions"));
             }
             String rank = plugin.getPlayerRank(uuid);
             if (rank != null) {
-                permissions.addAll(plugin.getDataConfig().getStringList("ranks." + rank + ".permissions"));
+                permissions.addAll(plugin.getRankConfig().getStringList("ranks." + rank + ".permissions"));
             }
             return permissions;
         });
@@ -159,14 +167,14 @@ public class WebServer {
 
     private String getRankHexColor(String rankOrGroup) {
         if (rankOrGroup == null || rankOrGroup.isEmpty()) return "#ffffff";
-        String c = plugin.getDataConfig().getString("ranks." + rankOrGroup + ".color");
+        String c = plugin.getRankConfig().getString("ranks." + rankOrGroup + ".color");
         if (c != null && !c.isEmpty() && !c.equals("#ffffff") && !c.equals("#aaaaaa")) return c;
         
-        c = plugin.getDataConfig().getString("groups." + rankOrGroup + ".color");
+        c = plugin.getRankConfig().getString("groups." + rankOrGroup + ".color");
         if (c != null && !c.isEmpty() && !c.equals("#ffffff") && !c.equals("#aaaaaa")) return c;
 
-        String pref = plugin.getDataConfig().getString("ranks." + rankOrGroup + ".prefix");
-        if (pref == null) pref = plugin.getDataConfig().getString("groups." + rankOrGroup + ".prefix", "");
+        String pref = plugin.getRankConfig().getString("ranks." + rankOrGroup + ".prefix");
+        if (pref == null) pref = plugin.getRankConfig().getString("groups." + rankOrGroup + ".prefix", "");
         return plugin.inferHexColorFromPrefix(pref);
     }
 
@@ -197,14 +205,14 @@ public class WebServer {
                     if (!hasAccess) {
                         String group = plugin.getPlayerGroup(uuid);
                         if (group != null) {
-                            List<String> perms = plugin.getDataConfig().getStringList("groups." + group + ".permissions");
+                            List<String> perms = plugin.getRankConfig().getStringList("groups." + group + ".permissions");
                             if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
                         }
                     }
                     if (!hasAccess) {
                         String rank = plugin.getPlayerRank(uuid);
                         if (rank != null) {
-                            List<String> perms = plugin.getDataConfig().getStringList("ranks." + rank + ".permissions");
+                            List<String> perms = plugin.getRankConfig().getStringList("ranks." + rank + ".permissions");
                             if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
                         }
                     }
@@ -298,44 +306,8 @@ public class WebServer {
             ctx.json(future.get());
         });
 
-        app.get("/api/tickets", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
-
-            String status = ctx.queryParam("status");
-            String priority = ctx.queryParam("priority");
-            
-            Callable<List<Map<String, Object>>> task = () -> {
-                List<Map<String, Object>> tickets = new ArrayList<>();
-                if (plugin.getDataConfig().contains("tickets")) {
-                    for (String key : plugin.getDataConfig().getConfigurationSection("tickets").getKeys(false)) {
-                        if (key.equals("next_id")) continue;
-                        String ticketStatus = plugin.getDataConfig().getString("tickets." + key + ".status", "open");
-                        String ticketPriority = plugin.getDataConfig().getString("tickets." + key + ".priority", "medium");
-                        
-                        if ((status == null || status.isEmpty() || status.equals(ticketStatus)) && 
-                            (priority == null || priority.isEmpty() || priority.equals(ticketPriority))) {
-                            Map<String, Object> t = new HashMap<>();
-                            t.put("id", key);
-                            t.put("player", plugin.getDataConfig().getString("tickets." + key + ".player"));
-                            t.put("message", plugin.getDataConfig().getString("tickets." + key + ".message"));
-                            t.put("status", ticketStatus);
-                            t.put("priority", ticketPriority);
-                            t.put("category", plugin.getDataConfig().getString("tickets." + key + ".category", "other"));
-                            t.put("assignee", plugin.getDataConfig().getString("tickets." + key + ".assignee", ""));
-                            t.put("time", plugin.getDataConfig().getString("tickets." + key + ".timestamp"));
-                            tickets.add(t);
-                        }
-                    }
-                }
-                return tickets;
-            };
-            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, task);
-            try {
-                ctx.json(future.get());
-            } catch (InterruptedException | ExecutionException e) {
-                ctx.status(500).json(Map.of("error", "Failed to fetch tickets"));
-            }
-        });
+        // Ticket endpoints moved to WebTicketController
+        ticketController.registerRoutes(app);
 
         app.get("/api/appeals", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
@@ -345,23 +317,23 @@ public class WebServer {
             
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> appeals = new ArrayList<>();
-                if (plugin.getDataConfig().contains("appeals")) {
-                    for (String key : plugin.getDataConfig().getConfigurationSection("appeals").getKeys(false)) {
+                if (plugin.getTicketConfig().contains("appeals")) {
+                    for (String key : plugin.getTicketConfig().getConfigurationSection("appeals").getKeys(false)) {
                         if (key.equals("next_id")) continue;
-                        String appealStatus = plugin.getDataConfig().getString("appeals." + key + ".status", "open");
-                        String appealPriority = plugin.getDataConfig().getString("appeals." + key + ".priority", "medium");
-                        
-                        if ((status == null || status.isEmpty() || status.equals(appealStatus)) && 
+                        String appealStatus = plugin.getTicketConfig().getString("appeals." + key + ".status", "open");
+                        String appealPriority = plugin.getTicketConfig().getString("appeals." + key + ".priority", "medium");
+
+                        if ((status == null || status.isEmpty() || status.equals(appealStatus)) &&
                             (priority == null || priority.isEmpty() || priority.equals(appealPriority))) {
                             Map<String, Object> t = new HashMap<>();
                             t.put("id", "-" + key);
-                            t.put("player", plugin.getDataConfig().getString("appeals." + key + ".player"));
-                            t.put("message", plugin.getDataConfig().getString("appeals." + key + ".message"));
+                            t.put("player", plugin.getTicketConfig().getString("appeals." + key + ".player"));
+                            t.put("message", plugin.getTicketConfig().getString("appeals." + key + ".message"));
                             t.put("status", appealStatus);
                             t.put("priority", appealPriority);
-                            t.put("category", plugin.getDataConfig().getString("appeals." + key + ".category", "other"));
-                            t.put("assignee", plugin.getDataConfig().getString("appeals." + key + ".assignee", ""));
-                            t.put("time", plugin.getDataConfig().getString("appeals." + key + ".timestamp"));
+                            t.put("category", plugin.getTicketConfig().getString("appeals." + key + ".category", "other"));
+                            t.put("assignee", plugin.getTicketConfig().getString("appeals." + key + ".assignee", ""));
+                            t.put("time", plugin.getTicketConfig().getString("appeals." + key + ".timestamp"));
                             t.put("type", "appeal");
                             appeals.add(t);
                         }
@@ -767,149 +739,7 @@ public class WebServer {
             ctx.result("OK");
         });
 
-        app.post("/api/ticket/close/{id}", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
-            
-            String id = ctx.pathParam("id");
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                int parsedId = Integer.parseInt(id);
-                String base = parsedId < 0 ? "appeals." + (-parsedId) : "tickets." + parsedId;
-                plugin.getDataConfig().set(base + ".status", "closed");
-                plugin.saveDataFile();
-                plugin.logAction("WebAdmin", "closed ticket", id);
-                // Notify player if online
-                String playerName = plugin.getDataConfig().getString(base + ".player", "");
-                Player target = Bukkit.getPlayer(playerName);
-                if (target != null && target.isOnline()) {
-                    target.sendMessage(ChatColor.GOLD + "[" + (parsedId < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.YELLOW + "Your " + (parsedId < 0 ? "appeal" : "ticket") + " #" + Math.abs(parsedId) + " has been closed.");
-                }
-            });
-            ctx.json(Map.of("success", true));
-        });
-
-        app.get("/api/ticket/{id}", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
-
-            String id = ctx.pathParam("id");
-            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () ->
-                plugin.getTicketData(Integer.parseInt(id))
-            );
-            ctx.json(future.get());
-        });
-
-        app.post("/api/ticket/{id}/response", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
-
-            String id = ctx.pathParam("id");
-            // Read from JSON body
-            String admin = null;
-            String message = null;
-            try {
-                String body = ctx.body();
-                if (body != null && !body.isEmpty()) {
-                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                    admin = (String) bodyMap.get("admin");
-                    message = (String) bodyMap.get("message");
-                }
-            } catch (Exception ignored) {}
-            // Fallback to query params
-            if (admin == null) admin = ctx.queryParam("admin");
-            if (message == null) message = ctx.queryParam("message");
-            
-            final String fAdmin = admin != null ? admin : "Admin";
-            final String fMessage = message != null ? message : "";
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                int parsedId = Integer.parseInt(id);
-                plugin.addTicketResponse(parsedId, fAdmin, fMessage);
-                plugin.logAction("WebAdmin", "added response to ticket", id);
-            });
-            ctx.json(Map.of("success", true));
-        });
-
-        app.patch("/api/ticket/{id}", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
-
-            String id = ctx.pathParam("id");
-            // Read from JSON body or query params
-            String priority = null, category = null, status = null, assignee = null;
-            boolean updateAssignee = false;
-            try {
-                String body = ctx.body();
-                if (body != null && !body.isEmpty()) {
-                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                    if (bodyMap.containsKey("priority")) priority = String.valueOf(bodyMap.get("priority"));
-                    if (bodyMap.containsKey("category")) category = String.valueOf(bodyMap.get("category"));
-                    if (bodyMap.containsKey("status")) status = String.valueOf(bodyMap.get("status"));
-                    if (bodyMap.containsKey("assignee")) {
-                        updateAssignee = true;
-                        Object aObj = bodyMap.get("assignee");
-                        if (aObj instanceof java.util.Map) {
-                            assignee = String.valueOf(((java.util.Map<?, ?>) aObj).get("name"));
-                        } else {
-                            assignee = aObj != null ? String.valueOf(aObj) : "";
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
-            if (priority == null) priority = ctx.queryParam("priority");
-            if (category == null) category = ctx.queryParam("category");
-            if (status == null) status = ctx.queryParam("status");
-            if (!updateAssignee && ctx.queryParam("assignee") != null) {
-                assignee = ctx.queryParam("assignee");
-                updateAssignee = true;
-            }
-
-            final String fPriority = priority, fCategory = category, fStatus = status, fAssignee = assignee;
-            final boolean fUpdateAssignee = updateAssignee;
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                int parsedId = Integer.parseInt(id);
-                if (fPriority != null && !fPriority.equals("null")) plugin.updateTicketField(parsedId, "priority", fPriority);
-                if (fCategory != null && !fCategory.equals("null")) plugin.updateTicketField(parsedId, "category", fCategory);
-                if (fStatus != null && !fStatus.equals("null")) {
-                    plugin.updateTicketField(parsedId, "status", fStatus);
-                    // Notify player of status change
-                    String base = parsedId < 0 ? "appeals." + (-parsedId) : "tickets." + parsedId;
-                    String playerName = plugin.getDataConfig().getString(base + ".player", "");
-                    Player target = Bukkit.getPlayer(playerName);
-                    if (target != null && target.isOnline()) {
-                        target.sendMessage(ChatColor.GOLD + "[" + (parsedId < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.YELLOW + "Your " + (parsedId < 0 ? "appeal" : "ticket") + " #" + Math.abs(parsedId) + " status changed to: " + ChatColor.WHITE + fStatus);
-                    }
-                }
-                if (fUpdateAssignee) {
-                    plugin.updateTicketField(parsedId, "assignee", fAssignee != null && !fAssignee.equals("null") ? fAssignee : "");
-                }
-                plugin.logAction("WebAdmin", "updated ticket", id);
-            });
-            ctx.json(Map.of("success", true));
-        });
-
-        app.post("/api/ticket/{id}/resolve", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
-
-            String id = ctx.pathParam("id");
-            // Read from JSON body or query params
-            String reason = null;
-            try {
-                String body = ctx.body();
-                if (body != null && !body.isEmpty()) {
-                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                    java.util.Map<String, Object> bodyMap = mapper.readValue(body, java.util.Map.class);
-                    reason = (String) bodyMap.get("reason");
-                }
-            } catch (Exception ignored) {}
-            if (reason == null) reason = ctx.queryParam("reason");
-            final String fReason = reason != null ? reason : "No reason";
-
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                int parsedId = Integer.parseInt(id);
-                plugin.resolveTicket(parsedId, fReason);
-                plugin.logAction("WebAdmin", "resolved ticket", id);
-            });
-            ctx.json(Map.of("success", true));
-        });
+        // Ticket endpoints moved to WebTicketController
 
         app.post("/api/command", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.run.command")) return;
@@ -3341,21 +3171,21 @@ public class WebServer {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.groups")) return;
             Future<Map<String, Object>> future4 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> groups = new ArrayList<>();
-                var section = plugin.getDataConfig().getConfigurationSection("groups");
+                var section = plugin.getRankConfig().getConfigurationSection("groups");
                 if (section != null) {
                     plugin.getLogger().info("[DEBUG] groups section: " + section.getKeys(false));
                     for (String name : section.getKeys(false)) {
                         Map<String, Object> g = new HashMap<>();
                         g.put("name", name);
-                        String c = plugin.getDataConfig().getString("groups." + name + ".color");
+                        String c = plugin.getRankConfig().getString("groups." + name + ".color");
                         if (c == null || c.isEmpty() || c.equals("#ffffff") || c.equals("#aaaaaa")) {
-                            String inf = plugin.inferHexColorFromPrefix(plugin.getDataConfig().getString("groups." + name + ".prefix", ""));
+                            String inf = plugin.inferHexColorFromPrefix(plugin.getRankConfig().getString("groups." + name + ".prefix", ""));
                             if (!inf.equals("#ffffff")) c = inf;
                         }
                         g.put("color", c);
-                        g.put("prefix", plugin.getDataConfig().getString("groups." + name + ".prefix", ""));
-                        g.put("permissions", plugin.getDataConfig().getStringList("groups." + name + ".permissions"));
-                        List<String> memberUuids = plugin.getDataConfig().getStringList("groups." + name + ".members");
+                        g.put("prefix", plugin.getRankConfig().getString("groups." + name + ".prefix", ""));
+                        g.put("permissions", plugin.getRankConfig().getStringList("groups." + name + ".permissions"));
+                        List<String> memberUuids = plugin.getRankConfig().getStringList("groups." + name + ".members");
                         List<Map<String, String>> members = new ArrayList<>();
                         for (String uuid : memberUuids) {
                             Map<String, String> m = new HashMap<>();
@@ -3392,14 +3222,14 @@ public class WebServer {
             String finalColor = color != null ? color : "#ffffff";
             String finalPrefix = prefix != null ? prefix : "";
             Future<Map<String, Object>> future5 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                if (plugin.getDataConfig().contains("groups." + finalName)) {
+                if (plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group already exists");
                 }
-                plugin.getDataConfig().set("groups." + finalName + ".color", finalColor);
-                plugin.getDataConfig().set("groups." + finalName + ".prefix", finalPrefix);
-                plugin.getDataConfig().set("groups." + finalName + ".permissions", new ArrayList<String>());
-                plugin.getDataConfig().set("groups." + finalName + ".members", new ArrayList<String>());
-                plugin.saveDataFile();
+                plugin.getRankConfig().set("groups." + finalName + ".color", finalColor);
+                plugin.getRankConfig().set("groups." + finalName + ".prefix", finalPrefix);
+                plugin.getRankConfig().set("groups." + finalName + ".permissions", new ArrayList<String>());
+                plugin.getRankConfig().set("groups." + finalName + ".members", new ArrayList<String>());
+                plugin.saveRankFile();
                 plugin.logAction("WebPanel", "group_create", finalName);
                 return Map.of("success", (Object) true);
             });
@@ -3416,11 +3246,11 @@ public class WebServer {
             if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
             String finalName = name;
             Future<Map<String, Object>> future6 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                if (!plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group not found");
                 }
-                plugin.getDataConfig().set("groups." + finalName, null);
-                plugin.saveDataFile();
+                plugin.getRankConfig().set("groups." + finalName, null);
+                plugin.saveRankFile();
                 plugin.refreshAllPermissions();
                 plugin.logAction("WebPanel", "group_delete", finalName);
                 return Map.of("success", (Object) true);
@@ -3442,12 +3272,12 @@ public class WebServer {
             String finalColor = color;
             String finalPrefix = prefix;
             Future<Map<String, Object>> future7 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                if (!plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group not found");
                 }
-                if (finalColor != null) plugin.getDataConfig().set("groups." + finalName + ".color", finalColor);
-                if (finalPrefix != null) plugin.getDataConfig().set("groups." + finalName + ".prefix", finalPrefix);
-                plugin.saveDataFile();
+                if (finalColor != null) plugin.getRankConfig().set("groups." + finalName + ".color", finalColor);
+                if (finalPrefix != null) plugin.getRankConfig().set("groups." + finalName + ".prefix", finalPrefix);
+                plugin.saveRankFile();
                 plugin.logAction("WebPanel", "group_update", finalName);
                 return Map.of("success", (Object) true);
             });
@@ -3466,10 +3296,10 @@ public class WebServer {
             String finalName = name;
             String finalPerm = permission.trim();
             Future<Map<String, Object>> future8 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                if (!plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group not found");
                 }
-                List<String> perms = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".permissions"));
+                List<String> perms = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + finalName + ".permissions"));
                 if (perms.contains(finalPerm)) return Map.of("error", (Object) "Permission already exists");
                 perms.add(finalPerm);
                 plugin.getDataConfig().set("groups." + finalName + ".permissions", perms);
@@ -3493,10 +3323,10 @@ public class WebServer {
             String finalName = name;
             String finalPerm = permission.trim();
             Future<Map<String, Object>> future9 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<String> perms = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".permissions"));
+                List<String> perms = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + finalName + ".permissions"));
                 perms.remove(finalPerm);
-                plugin.getDataConfig().set("groups." + finalName + ".permissions", perms);
-                plugin.saveDataFile();
+                plugin.getRankConfig().set("groups." + finalName + ".permissions", perms);
+                plugin.saveRankFile();
                 plugin.refreshAllPermissions();
                 plugin.logAction("WebPanel", "group_perm_remove", finalName + " " + finalPerm);
                 return Map.of("success", (Object) true);
@@ -3514,7 +3344,7 @@ public class WebServer {
             String finalName = name;
             String finalPlayer = playerName.trim();
             Future<Map<String, Object>> future10 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                if (!plugin.getDataConfig().contains("groups." + finalName)) {
+                if (!plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group not found");
                 }
                 // Resolve player UUID
@@ -3522,22 +3352,22 @@ public class WebServer {
                 UUID uuid = online != null ? online.getUniqueId() : Bukkit.getOfflinePlayer(finalPlayer).getUniqueId();
                 String uuidStr = uuid.toString();
                 // Remove from any existing group first
-                var groupsSection = plugin.getDataConfig().getConfigurationSection("groups");
+                var groupsSection = plugin.getRankConfig().getConfigurationSection("groups");
                 if (groupsSection != null) {
                     for (String gn : groupsSection.getKeys(false)) {
-                        List<String> gMembers = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + gn + ".members"));
+                        List<String> gMembers = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + gn + ".members"));
                         if (gMembers.remove(uuidStr)) {
-                            plugin.getDataConfig().set("groups." + gn + ".members", gMembers);
+                            plugin.getRankConfig().set("groups." + gn + ".members", gMembers);
                         }
                     }
                 }
                 // Add to new group
-                List<String> members = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".members"));
+                List<String> members = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + finalName + ".members"));
                 if (!members.contains(uuidStr)) members.add(uuidStr);
-                plugin.getDataConfig().set("groups." + finalName + ".members", members);
+                plugin.getRankConfig().set("groups." + finalName + ".members", members);
                 // Update last_seen_name for this uuid
                 plugin.getDataConfig().set("last_seen_name." + uuidStr, finalPlayer);
-                plugin.saveDataFile();
+                plugin.saveRankFile();
                 // Apply permissions if online
                 if (online != null) plugin.applyPermissionGroup(online);
                 plugin.logAction("WebPanel", "group_member_add", finalPlayer + " -> " + finalName);
@@ -3558,10 +3388,10 @@ public class WebServer {
             String finalName = name;
             String finalUuid = uuid;
             Future<Map<String, Object>> future11 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<String> members = new ArrayList<>(plugin.getDataConfig().getStringList("groups." + finalName + ".members"));
+                List<String> members = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + finalName + ".members"));
                 members.remove(finalUuid);
-                plugin.getDataConfig().set("groups." + finalName + ".members", members);
-                plugin.saveDataFile();
+                plugin.getRankConfig().set("groups." + finalName + ".members", members);
+                plugin.saveRankFile();
                 // Remove permissions if online
                 try {
                     Player online = Bukkit.getPlayer(UUID.fromString(finalUuid));
@@ -3574,167 +3404,9 @@ public class WebServer {
         });
 
         // ========== RANKS API (Synced with In-Game Ranks) ==========
-        app.get("/api/ranks", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.groups")) return;
-            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<Map<String, Object>> ranks = new ArrayList<>();
-                var section = plugin.getDataConfig().getConfigurationSection("ranks");
-                if (section != null) {
-                    for (String name : section.getKeys(false)) {
-                        Map<String, Object> r = new HashMap<>();
-                        String path = "ranks." + name;
-                        r.put("name", name);
-                        String c = plugin.getDataConfig().getString(path + ".color");
-                        if (c == null || c.isEmpty() || c.equals("#ffffff") || c.equals("#aaaaaa")) {
-                            String inf = plugin.inferHexColorFromPrefix(plugin.getDataConfig().getString(path + ".prefix", ""));
-                            if (!inf.equals("#ffffff")) c = inf;
-                        }
-                        r.put("color", c);
-                        r.put("prefix", plugin.getDataConfig().getString(path + ".prefix", ""));
-                        r.put("level", plugin.getDataConfig().getInt(path + ".level", 1));
-                        r.put("description", plugin.getDataConfig().getString(path + ".description", ""));
-                        ranks.add(r);
-                    }
-                }
-                return Map.of("ranks", (Object) ranks);
-            });
-            ctx.json(future.get());
-        });
+        // Rank endpoints moved to WebRankController
+        rankController.registerRoutes(app);
 
-        app.post("/api/ranks/create", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            String name = (String) body.get("name");
-            if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
-            String finalName = name.replaceAll("[^a-zA-Z0-9_-]", "");
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                String path = "ranks." + finalName;
-                if (!plugin.getDataConfig().contains(path)) {
-                    String hexColor = (String) body.getOrDefault("color", "#ffffff");
-                    plugin.getDataConfig().set(path + ".color", hexColor);
-                    plugin.getDataConfig().set(path + ".level", body.getOrDefault("level", 1));
-                    plugin.getDataConfig().set(path + ".description", body.getOrDefault("description", ""));
-                    
-                    String spigotColor = "";
-                    if (hexColor.startsWith("#") && hexColor.length() == 7) {
-                        spigotColor = "&x";
-                        for (char c : hexColor.substring(1).toCharArray()) {
-                            spigotColor += "&" + c;
-                        }
-                    } else {
-                        spigotColor = "&7";
-                    }
-                    plugin.getDataConfig().set(path + ".prefix", spigotColor + "[" + finalName + "] &r");
-                    plugin.getDataConfig().set(path + ".permissions", new ArrayList<String>());
-                    plugin.getDataConfig().set(path + ".members", new ArrayList<String>());
-                    plugin.saveDataFile();
-                    plugin.logAction("WebAdmin", "created rank", finalName);
-                }
-            });
-            ctx.json(Map.of("status", true));
-        });
-
-        app.post("/api/ranks/update", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            String name = (String) body.get("name");
-            if (name == null) { ctx.status(400).json(Map.of("error", "Name required")); return; }
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                String path = "ranks." + name;
-                if (plugin.getDataConfig().contains(path)) {
-                    if (body.containsKey("description")) plugin.getDataConfig().set(path + ".description", body.get("description"));
-                    if (body.containsKey("level")) plugin.getDataConfig().set(path + ".level", body.get("level"));
-                    if (body.containsKey("color")) {
-                        String hexColor = (String) body.get("color");
-                        plugin.getDataConfig().set(path + ".color", hexColor);
-                        
-                        String spigotColor = "";
-                        if (hexColor.startsWith("#") && hexColor.length() == 7) {
-                            spigotColor = "&x";
-                            for (char c : hexColor.substring(1).toCharArray()) {
-                                spigotColor += "&" + c;
-                            }
-                        } else {
-                            spigotColor = "&7";
-                        }
-                        plugin.getDataConfig().set(path + ".prefix", spigotColor + "[" + name + "] &r");
-                    }
-                    plugin.saveDataFile();
-                    plugin.refreshAllPermissions();
-                    plugin.logAction("WebAdmin", "updated rank", name);
-                }
-            });
-            ctx.json(Map.of("status", true));
-        });
-
-        app.post("/api/ranks/delete", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            String name = (String) body.get("name");
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getDataConfig().set("ranks." + name, null);
-                // Remove from player assignments
-                if (plugin.getDataConfig().contains("player_rank")) {
-                    for (String uuidKey : plugin.getDataConfig().getConfigurationSection("player_rank").getKeys(false)) {
-                        String assigned = plugin.getDataConfig().getString("player_rank." + uuidKey);
-                        if (assigned != null && assigned.equals(name)) {
-                            plugin.getDataConfig().set("player_rank." + uuidKey, null);
-                        }
-                    }
-                }
-                plugin.saveDataFile();
-                plugin.refreshAllPermissions();
-                plugin.logAction("WebAdmin", "deleted rank", name);
-            });
-            ctx.json(Map.of("status", true));
-        });
-
-        app.post("/api/ranks/promote", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            String player = (String) body.get("player");
-            String rank = (String) body.get("rank");
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                String uuidStr = uuid.toString();
-                
-                plugin.setPlayerRank(uuid, rank);
-                
-                plugin.getDataConfig().set("users." + uuidStr + ".promotedBy", "WebAdmin");
-                plugin.getDataConfig().set("users." + uuidStr + ".promotionDate", System.currentTimeMillis());
-                
-                plugin.saveDataFile();
-                
-                Player p = Bukkit.getPlayer(uuid);
-                if (p != null) plugin.applyPermissionGroup(p);
-                
-                plugin.logAction("WebAdmin", "promoted " + player + " to", rank);
-            });
-            ctx.json(Map.of("status", true));
-        });
-
-        app.post("/api/ranks/demote", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.groups")) return;
-            var body = ctx.bodyAsClass(Map.class);
-            String player = (String) body.get("player");
-            
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                
-                plugin.setPlayerRank(uuid, null);
-                plugin.saveDataFile();
-                
-                Player p = Bukkit.getPlayer(uuid);
-                if (p != null) plugin.applyPermissionGroup(p);
-                
-                plugin.logAction("WebAdmin", "demoted", player);
-            });
-            ctx.json(Map.of("status", true));
-        });
 
         app.get("/api/allplayers", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
@@ -3783,10 +3455,10 @@ public class WebServer {
                 }
                 
                 // Offline (from ranks membership lists)
-                var ranksSection = plugin.getDataConfig().getConfigurationSection("ranks");
+                var ranksSection = plugin.getRankConfig().getConfigurationSection("ranks");
                 if (ranksSection != null) {
                     for (String g : ranksSection.getKeys(false)) {
-                        List<String> members = plugin.getDataConfig().getStringList("ranks." + g + ".members");
+                        List<String> members = plugin.getRankConfig().getStringList("ranks." + g + ".members");
                         for (String uuidStr : members) {
                             try {
                                 UUID uuid = UUID.fromString(uuidStr);
@@ -3808,10 +3480,10 @@ public class WebServer {
                 }
                 
                 // Offline (from groups membership lists)
-                var groupsSection = plugin.getDataConfig().getConfigurationSection("groups");
+                var groupsSection = plugin.getRankConfig().getConfigurationSection("groups");
                 if (groupsSection != null) {
                     for (String g : groupsSection.getKeys(false)) {
-                        List<String> members = plugin.getDataConfig().getStringList("groups." + g + ".members");
+                        List<String> members = plugin.getRankConfig().getStringList("groups." + g + ".members");
                         for (String uuidStr : members) {
                             try {
                                 UUID uuid = UUID.fromString(uuidStr);

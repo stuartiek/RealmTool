@@ -1,5 +1,10 @@
 package com.stuart.javarealmtool;
 
+import com.stuart.javarealmtool.commands.BalanceCommand;
+import com.stuart.javarealmtool.commands.TicketCommand;
+import com.stuart.javarealmtool.services.EconomyService;
+import com.stuart.javarealmtool.services.RankService;
+import com.stuart.javarealmtool.services.TicketService;
 import org.bukkit.*;
 import org.bukkit.GameRule;
 import org.bukkit.enchantments.Enchantment;
@@ -57,23 +62,32 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private File dataFile;
     private FileConfiguration dataConfig;
+    private File playersFile;
+    private FileConfiguration playersConfig;
+    private File economyFile;
+    private FileConfiguration economyConfig;
+    private File ticketFile;
+    private FileConfiguration ticketConfig;
+    private File rankFile;
+    private FileConfiguration rankConfig;
     private Scoreboard scoreboard;
     private Team punishTeam;
     private WebServer webServer;
+    private EconomyService economyService;
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
     private volatile boolean dataConfigDirty = false;
-    private File playersFile;
-    private FileConfiguration playersConfig;
     private volatile boolean playersConfigDirty = false;
-    private File economyFile;
-    private FileConfiguration economyConfig;
     private volatile boolean economyConfigDirty = false;
+    private volatile boolean ticketConfigDirty = false;
+    private volatile boolean rankConfigDirty = false;
     private int autoSaveTaskId = -1;
     private final Object saveLock = new Object();
     
     // pending world creation/chat actions are handled via pendingActions and a new enum value
+
+    private static final int CLAIM_PROXIMITY_RADIUS = 2; // blocks cannot be claimed within this chunk distance from existing claims
 
     private final Map<UUID, UUID> tpaRequests = new HashMap<>();
     private final Map<UUID, String> pendingWarpDelete = new HashMap<>();
@@ -219,7 +233,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     final Map<UUID, Integer> duelWagers = new HashMap<>();
     final Map<UUID, UUID> activeDuels = new HashMap<>();
     private final Map<UUID, Location> duelReturnLocations = new HashMap<>();
-    private final Map<UUID, Long> ticketCooldowns = new HashMap<>();
+    private TicketService ticketService;
+    private RankService rankService;
     private final String GUI_TICKET_DETAIL = ChatColor.GOLD + "Ticket #";
     private int christmasSnowTaskId = -1;
     private int halloweenTaskId = -1;
@@ -278,6 +293,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             ensureDefaultEnchantQuests();
             setupPunishTeam();
 
+            economyService = new EconomyService(this);
+            ticketService = new TicketService(this);
+            rankService = new RankService(this);
+
             Bukkit.getPluginManager().registerEvents(this, this);
             registerCitizensClickListener();
 
@@ -324,7 +343,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
             }
-            if (getCommand("ticket") != null) { getCommand("ticket").setExecutor(this); getCommand("ticket").setTabCompleter(this); }
+            if (getCommand("ticket") != null) {
+                TicketCommand ticketCmd = new TicketCommand(this);
+                getCommand("ticket").setExecutor(ticketCmd);
+                getCommand("ticket").setTabCompleter(ticketCmd);
+            }
             if (getCommand("tpa") != null) { getCommand("tpa").setExecutor(this); getCommand("tpa").setTabCompleter(this); }
             if (getCommand("kit") != null) { getCommand("kit").setExecutor(this); getCommand("kit").setTabCompleter(this); }
             if (getCommand("bounty") != null) { getCommand("bounty").setExecutor(this); getCommand("bounty").setTabCompleter(this); }
@@ -340,7 +363,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("achievements") != null) { getCommand("achievements").setExecutor(this); getCommand("achievements").setTabCompleter(this); }
             if (getCommand("stats") != null) { getCommand("stats").setExecutor(this); getCommand("stats").setTabCompleter(this); }
             if (getCommand("report") != null) { getCommand("report").setExecutor(this); getCommand("report").setTabCompleter(this); }
-            if (getCommand("balance") != null) { getCommand("balance").setExecutor(this); getCommand("balance").setTabCompleter(this); }
+            if (getCommand("balance") != null) {
+                BalanceCommand balanceCmd = new BalanceCommand(this);
+                getCommand("balance").setExecutor(balanceCmd);
+                getCommand("balance").setTabCompleter(balanceCmd);
+            }
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
             if (getCommand("discord") != null) { getCommand("discord").setExecutor(this); getCommand("discord").setTabCompleter(this); }
             if (getCommand("spawn") != null) { getCommand("spawn").setExecutor(this); getCommand("spawn").setTabCompleter(this); }
@@ -536,6 +563,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public FileConfiguration getDataConfig() { return dataConfig; }
     public FileConfiguration getEconomyConfig() { return economyConfig; }
     public String fetchApiKey() { return apiKey; }
+    public Map<UUID, Long> getTicketCooldowns() { return ticketService != null ? ticketService.getTicketCooldowns() : new HashMap<>(); }
 
     public boolean isPunished(UUID u) {
         if (!playersConfig.contains("punishments." + u)) return false;
@@ -598,6 +626,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         economyConfig = YamlConfiguration.loadConfiguration(economyFile);
 
+        ticketFile = new File(getDataFolder(), "tickets.yml");
+        if (!ticketFile.exists()) {
+            try { ticketFile.createNewFile(); } catch (IOException ignored) {}
+        }
+        ticketConfig = YamlConfiguration.loadConfiguration(ticketFile);
+
+        rankFile = new File(getDataFolder(), "ranks.yml");
+        if (!rankFile.exists()) {
+            try { rankFile.createNewFile(); } catch (IOException ignored) {}
+        }
+        rankConfig = YamlConfiguration.loadConfiguration(rankFile);
+
         // One-time migration for economy
         if (dataConfig.contains("coins") && !economyConfig.contains("coins")) {
             economyConfig.set("coins", dataConfig.getConfigurationSection("coins").getValues(true));
@@ -611,10 +651,67 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             saveEconomyFile();
             getLogger().info("Migrated economy to economy.yml");
         }
+
+        // One-time migration for tickets and appeals
+        if (dataConfig.contains("tickets") && !ticketConfig.contains("tickets")) {
+            ticketConfig.set("tickets", dataConfig.getConfigurationSection("tickets").getValues(true));
+            dataConfig.set("tickets", null);
+        }
+        if (dataConfig.contains("appeals") && !ticketConfig.contains("appeals")) {
+            ticketConfig.set("appeals", dataConfig.getConfigurationSection("appeals").getValues(true));
+            dataConfig.set("appeals", null);
+        }
+        if (!dataConfig.contains("tickets.next_id") && ticketConfig.contains("tickets.next_id")) {
+            ticketConfig.set("tickets.next_id", ticketConfig.getInt("tickets.next_id", 1));
+        }
+        if (dataConfig.contains("tickets.next_id")) {
+            ticketConfig.set("tickets.next_id", dataConfig.getInt("tickets.next_id", 1));
+            dataConfig.set("tickets.next_id", null);
+        }
+        if (dataConfig.contains("appeals.next_id")) {
+            ticketConfig.set("appeals.next_id", dataConfig.getInt("appeals.next_id", 1));
+            dataConfig.set("appeals.next_id", null);
+        }
+
+        // One-time migration for ranks and groups
+        if (dataConfig.contains("ranks") && !rankConfig.contains("ranks")) {
+            rankConfig.set("ranks", dataConfig.getConfigurationSection("ranks").getValues(true));
+            dataConfig.set("ranks", null);
+        }
+        if (dataConfig.contains("groups") && !rankConfig.contains("groups")) {
+            rankConfig.set("groups", dataConfig.getConfigurationSection("groups").getValues(true));
+            dataConfig.set("groups", null);
+        }
+
+        if (dataConfig.contains("groups")) { // this may be moved in above conditionally but preserve if left
+            rankConfig.set("groups", dataConfig.getConfigurationSection("groups").getValues(true));
+            dataConfig.set("groups", null);
+        }
+
+        if (dataConfig.contains("ranks")) {
+            rankConfig.set("ranks", dataConfig.getConfigurationSection("ranks").getValues(true));
+            dataConfig.set("ranks", null);
+        }
+
+        saveDataFile();
+        saveTicketFile();
+        saveRankFile();
     }
 
     public void saveDataFile() {
         dataConfigDirty = true;
+    }
+
+    public void saveDataFileSync() {
+        dataConfigDirty = false;
+        try {
+            synchronized (saveLock) {
+                dataConfig.save(dataFile);
+            }
+        } catch (IOException e) {
+            getLogger().log(Level.SEVERE, "Could not save data.yml synchronously", e);
+            dataConfigDirty = true;
+        }
     }
 
     public void savePlayersFile() {
@@ -623,6 +720,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     public void saveEconomyFile() {
         economyConfigDirty = true;
+    }
+
+    public void saveTicketFile() {
+        ticketConfigDirty = true;
+    }
+
+    public void saveRankFile() {
+        rankConfigDirty = true;
+    }
+
+    public FileConfiguration getTicketConfig() {
+        return ticketConfig;
+    }
+
+    public FileConfiguration getRankConfig() {
+        return rankConfig;
     }
 
     private void performDataSave() {
@@ -637,6 +750,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (economyConfigDirty) {
             economyConfigDirty = false;
             saveYamlAsync(economyConfig, economyFile);
+        }
+        if (ticketConfigDirty) {
+            ticketConfigDirty = false;
+            saveYamlAsync(ticketConfig, ticketFile);
+        }
+        if (rankConfigDirty) {
+            rankConfigDirty = false;
+            saveYamlAsync(rankConfig, rankFile);
         }
     }
 
@@ -788,36 +909,44 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void updateInvisibleVisibility(Player target, boolean invisible) {
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             if (viewer.equals(target)) continue;
-            if (invisible) {
-                if (canUseInvisible(viewer)) {
-                    viewer.showPlayer(this, target);
+            try {
+                if (invisible) {
+                    if (canUseInvisible(viewer)) {
+                        viewer.showPlayer(this, target);
+                    } else {
+                        viewer.hidePlayer(this, target);
+                    }
                 } else {
-                    viewer.hidePlayer(this, target);
+                    viewer.showPlayer(this, target);
                 }
-            } else {
-                viewer.showPlayer(this, target);
+            } catch (Exception e) {
+                getLogger().log(Level.WARNING, "Error updating player visibility for " + viewer.getName() + " to target " + target.getName(), e);
             }
         }
 
-        if (invisible) {
-            target.setGameMode(GameMode.SPECTATOR);
-            target.setInvisible(true);
-            target.setCollidable(false);
-            target.setSilent(true);
-            target.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 1, false, false, false));
-            removePlayerFromRankTeams(target, null);
-            try {
-                target.setPlayerListName(ChatColor.GRAY + target.getName());
-            } catch (Exception ignored) {}
-        } else {
-            if (target.getGameMode() == GameMode.SPECTATOR) {
-                target.setGameMode(GameMode.SURVIVAL);
+        try {
+            if (invisible) {
+                target.setGameMode(GameMode.SPECTATOR);
+                target.setInvisible(true);
+                target.setCollidable(false);
+                target.setSilent(true);
+                target.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, Integer.MAX_VALUE, 1, false, false, false));
+                removePlayerFromRankTeams(target, null);
+                try {
+                    target.setPlayerListName(ChatColor.GRAY + target.getName());
+                } catch (Exception ignored) {}
+            } else {
+                if (target.getGameMode() == GameMode.SPECTATOR) {
+                    target.setGameMode(GameMode.SURVIVAL);
+                }
+                target.setInvisible(false);
+                target.setCollidable(true);
+                target.setSilent(false);
+                target.removePotionEffect(PotionEffectType.INVISIBILITY);
+                applyRankToPlayer(target);
             }
-            target.setInvisible(false);
-            target.setCollidable(true);
-            target.setSilent(false);
-            target.removePotionEffect(PotionEffectType.INVISIBILITY);
-            applyRankToPlayer(target);
+        } catch (Exception e) {
+            getLogger().log(Level.WARNING, "Error applying invisible state to " + target.getName(), e);
         }
     }
 
@@ -884,142 +1013,56 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public String getPlayerGroup(UUID uuid) {
-        ConfigurationSection groupsSection = dataConfig.getConfigurationSection("groups");
-        if (groupsSection == null) return null;
-        for (String groupName : groupsSection.getKeys(false)) {
-            List<String> members = dataConfig.getStringList("groups." + groupName + ".members");
-            if (members.contains(uuid.toString())) return groupName;
-        }
-        return null;
+        return rankService != null ? rankService.getPlayerGroup(uuid) : null;
     }
 
-    /**
-     * Handles /dmt rank ... commands.
-     */
     private void handleRankCommand(Player p, String[] args) {
-        if (args.length == 0) {
-            p.sendMessage(ChatColor.RED + "Usage: /dmt rank <create|remove|list|info|add|addprefix|addperm> ...");
-            return;
-        }
-
-        // Support both:
-        //  - /dmt rank addperm <rank> <permission>
-        //  - /dmt rank <rank> addperm <permission>
-        // and similarly for add/addprefix.
-        String sub = args[0].toLowerCase();
-        String rank = null;
-        String action = null;
-        int actionIndex = 1;
-
-        // If the first argument is a known rank, treat it as the rank and parse the action after it.
-        String maybeRankKey = RANKS_PATH + "." + args[0];
-        if (args.length >= 2 && dataConfig.contains(maybeRankKey)) {
-            rank = args[0];
-            action = args[1].toLowerCase();
-            actionIndex = 2;
-        } else {
-            action = sub;
-        }
-
-        switch (action) {
-            case "create":
-                if (args.length < 2) {
-                    p.sendMessage(ChatColor.RED + "Usage: /dmt rank create <rank>");
-                    return;
-                }
-                createRank(p, args[1]);
-                break;
-            case "remove":
-                if (args.length < 2) {
-                    p.sendMessage(ChatColor.RED + "Usage: /dmt rank remove <rank>");
-                    return;
-                }
-                removeRank(p, args[1]);
-                break;
-            case "list":
-                showRankList(p);
-                break;
-            case "info":
-                // support both /dmt rank info <rank> and /dmt rank <rank> info
-                if (rank == null) {
-                    if (args.length < 2) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt rank info <rank>");
-                        return;
-                    }
-                    rank = args[1];
-                    actionIndex = 2;
-                }
-                showRankInfo(p, rank);
-                break;
-            case "add":
-                // support both /dmt rank add <rank> <player> and /dmt rank <rank> add <player>
-                if (rank == null) {
-                    if (args.length < 3) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt rank add <rank> <player>");
-                        return;
-                    }
-                    rank = args[1];
-                    actionIndex = 2;
-                }
-                if (args.length <= actionIndex) {
-                    p.sendMessage(ChatColor.RED + "Usage: /dmt rank " + rank + " add <player>");
-                    return;
-                }
-                addPlayerToRank(p, rank, args[actionIndex]);
-                break;
-            case "addprefix":
-                // support both /dmt rank addprefix <rank> <prefix> and /dmt rank <rank> addprefix <prefix>
-                if (rank == null) {
-                    if (args.length < 3) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt rank addprefix <rank> <prefix>");
-                        return;
-                    }
-                    rank = args[1];
-                    actionIndex = 2;
-                }
-                if (args.length <= actionIndex) {
-                    p.sendMessage(ChatColor.RED + "Usage: /dmt rank " + rank + " addprefix <prefix>");
-                    return;
-                }
-                addRankPrefix(p, rank, String.join(" ", Arrays.copyOfRange(args, actionIndex, args.length)));
-                break;
-            case "addperm":
-                // support both /dmt rank addperm <rank> <permission> and /dmt rank <rank> addperm <permission>
-                if (rank == null) {
-                    if (args.length < 3) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt rank addperm <rank> <permission>");
-                        return;
-                    }
-                    rank = args[1];
-                    actionIndex = 2;
-                }
-                if (args.length <= actionIndex) {
-                    p.sendMessage(ChatColor.RED + "Usage: /dmt rank " + rank + " addperm <permission>");
-                    return;
-                }
-                addRankPermission(p, rank, args[actionIndex]);
-                break;
-            default:
-                p.sendMessage(ChatColor.RED + "Unknown rank subcommand.");
-        }
+        if (rankService != null) rankService.handleRankCommand(p, args);
     }
 
     private void createRank(Player p, String rank) {
-        if (rank == null || rank.trim().isEmpty()) {
-            p.sendMessage(ChatColor.RED + "Invalid rank name.");
-            return;
+        if (rankService != null) rankService.createRank(p, rank);
+    }
+
+    public String getPlayerRank(UUID uuid) {
+        return rankService != null ? rankService.getPlayerRank(uuid) : null;
+    }
+
+    public void setPlayerRank(UUID uuid, String rank) {
+        if (rankService != null) rankService.setPlayerRank(uuid, rank);
+    }
+
+    public void removeRank(Player p, String rank) {
+        if (rankService != null) rankService.removeRank(p, rank);
+    }
+
+    public void addPlayerToRank(Player p, String rank, String playerName) {
+        if (rankService != null) rankService.addPlayerToRank(p, rank, playerName);
+    }
+
+    public void addRankPrefix(Player p, String rank, String prefix) {
+        if (rankService != null) rankService.addRankPrefix(p, rank, prefix);
+    }
+
+    public void addRankPermission(Player p, String rank, String perm) {
+        if (rankService != null) rankService.addRankPermission(p, rank, perm);
+    }
+
+    public void showRankList(Player p) {
+        if (rankService != null) rankService.showRankList(p);
+    }
+
+    public void showRankInfo(Player p, String rank) {
+        if (rankService != null) rankService.showRankInfo(p, rank);
+    }
+
+    public void refreshAllPermissions() {
+        if (rankService != null) {
+            rankService.getPlayerGroup(null); // keep behavior, but there is no direct refresh in service yet
         }
-        String key = RANKS_PATH + "." + rank;
-        if (dataConfig.contains(key)) {
-            p.sendMessage(ChatColor.YELLOW + "Rank already exists: " + rank);
-            return;
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            applyPermissionGroup(p);
         }
-        dataConfig.set(key + ".prefix", "&7[" + rank + "] ");
-        dataConfig.set(key + ".color", "#aaaaaa");
-        dataConfig.set(key + ".permissions", new ArrayList<>());
-        dataConfig.set(key + ".members", new ArrayList<>());
-        saveDataFile();
-        p.sendMessage(ChatColor.GREEN + "Rank created: " + rank);
     }
 
     public String inferHexColorFromPrefix(String prefix) {
@@ -1050,152 +1093,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             case '8': return "#555555"; case '9': return "#5555ff"; case 'a': return "#55ff55"; case 'b': return "#55ffff";
             case 'c': return "#ff5555"; case 'd': return "#ff55ff"; case 'e': return "#ffff55"; case 'f': return "#ffffff";
             default: return "#ffffff";
-        }
-    }
-
-    private void removeRank(Player p, String rank) {
-        String key = RANKS_PATH + "." + rank;
-        if (!dataConfig.contains(key)) {
-            p.sendMessage(ChatColor.RED + "Rank not found: " + rank);
-            return;
-        }
-        dataConfig.set(key, null);
-        // remove this rank assignment from any players
-        if (dataConfig.contains(PLAYER_RANK_PATH)) {
-            for (String uuidKey : dataConfig.getConfigurationSection(PLAYER_RANK_PATH).getKeys(false)) {
-                String assigned = dataConfig.getString(PLAYER_RANK_PATH + "." + uuidKey);
-                if (assigned != null && assigned.equals(rank)) {
-                    dataConfig.set(PLAYER_RANK_PATH + "." + uuidKey, null);
-                }
-            }
-        }
-        saveDataFile();
-        p.sendMessage(ChatColor.GREEN + "Rank removed: " + rank);
-    }
-
-    private void addPlayerToRank(Player p, String rank, String playerName) {
-        String key = RANKS_PATH + "." + rank;
-        if (!dataConfig.contains(key)) {
-            p.sendMessage(ChatColor.RED + "Rank not found: " + rank);
-            return;
-        }
-        OfflinePlayer target = Bukkit.getOfflinePlayer(playerName);
-        if (target == null || target.getUniqueId() == null) {
-            p.sendMessage(ChatColor.RED + "Player not found: " + playerName);
-            return;
-        }
-        setPlayerRank(target.getUniqueId(), rank);
-        Player online = target.getPlayer();
-        if (online != null) {
-            applyPermissionGroup(online);
-        }
-        p.sendMessage(ChatColor.GREEN + "Added " + playerName + " to rank " + rank);
-    }
-
-    private void addRankPrefix(Player p, String rank, String prefix) {
-        String key = RANKS_PATH + "." + rank;
-        if (!dataConfig.contains(key)) {
-            p.sendMessage(ChatColor.RED + "Rank not found: " + rank);
-            return;
-        }
-        dataConfig.set(key + ".prefix", prefix);
-        dataConfig.set(key + ".color", inferHexColorFromPrefix(prefix));
-        saveDataFile();
-        p.sendMessage(ChatColor.GREEN + "Set prefix for " + rank + " to: " + prefix);
-    }
-
-    private void addRankPermission(Player p, String rank, String perm) {
-        String key = RANKS_PATH + "." + rank + ".permissions";
-        if (!dataConfig.contains(RANKS_PATH + "." + rank)) {
-            p.sendMessage(ChatColor.RED + "Rank not found: " + rank);
-            return;
-        }
-        List<String> perms = new ArrayList<>(dataConfig.getStringList(key));
-        if (perms.contains(perm)) {
-            p.sendMessage(ChatColor.YELLOW + "Rank already has permission: " + perm);
-            return;
-        }
-        perms.add(perm);
-        dataConfig.set(key, perms);
-        saveDataFile();
-        p.sendMessage(ChatColor.GREEN + "Added permission " + perm + " to rank " + rank);
-    }
-
-    private void showRankList(Player p) {
-        if (!dataConfig.contains(RANKS_PATH)) {
-            p.sendMessage(ChatColor.YELLOW + "No ranks defined yet.");
-            return;
-        }
-
-        p.sendMessage(ChatColor.GOLD + "--- Defined Ranks ---");
-        for (String rank : dataConfig.getConfigurationSection(RANKS_PATH).getKeys(false)) {
-            String prefix = dataConfig.getString(RANKS_PATH + "." + rank + ".prefix", "");
-            List<String> perms = dataConfig.getStringList(RANKS_PATH + "." + rank + ".permissions");
-            List<String> members = dataConfig.getStringList(RANKS_PATH + "." + rank + ".members");
-
-            p.sendMessage(ChatColor.AQUA + rank + ChatColor.GRAY + " " + prefix);
-            p.sendMessage(ChatColor.GRAY + "  Permissions: " + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
-            p.sendMessage(ChatColor.GRAY + "  Members: " + (members.isEmpty() ? "<none>" : String.join(", ", members)));
-        }
-    }
-
-    private void showRankInfo(Player p, String rank) {
-        String key = RANKS_PATH + "." + rank;
-        if (!dataConfig.contains(key)) {
-            p.sendMessage(ChatColor.RED + "Rank not found: " + rank);
-            return;
-        }
-
-        String prefix = dataConfig.getString(key + ".prefix", "");
-        List<String> perms = dataConfig.getStringList(key + ".permissions");
-        List<String> members = dataConfig.getStringList(key + ".members");
-
-        p.sendMessage(ChatColor.GOLD + "--- Rank: " + rank + " ---");
-        p.sendMessage(ChatColor.AQUA + "Prefix: " + ChatColor.RESET + prefix);
-        p.sendMessage(ChatColor.AQUA + "Permissions: " + ChatColor.RESET + (perms.isEmpty() ? "<none>" : String.join(", ", perms)));
-        p.sendMessage(ChatColor.AQUA + "Members: " + ChatColor.RESET + (members.isEmpty() ? "<none>" : String.join(", ", members)));
-    }
-
-    public String getPlayerRank(UUID uuid) {
-        if (dataConfig.contains(PLAYER_RANK_PATH + "." + uuid)) {
-            return dataConfig.getString(PLAYER_RANK_PATH + "." + uuid);
-        }
-        // fallback: scan ranks membership
-        if (dataConfig.contains(RANKS_PATH)) {
-            for (String rank : dataConfig.getConfigurationSection(RANKS_PATH).getKeys(false)) {
-                List<String> members = dataConfig.getStringList(RANKS_PATH + "." + rank + ".members");
-                if (members.contains(uuid.toString())) return rank;
-            }
-        }
-        return null;
-    }
-
-    public void setPlayerRank(UUID uuid, String rank) {
-        // remove from existing ranks
-        if (dataConfig.contains(RANKS_PATH)) {
-            for (String existing : dataConfig.getConfigurationSection(RANKS_PATH).getKeys(false)) {
-                List<String> members = new ArrayList<>(dataConfig.getStringList(RANKS_PATH + "." + existing + ".members"));
-                if (members.remove(uuid.toString())) {
-                    dataConfig.set(RANKS_PATH + "." + existing + ".members", members);
-                }
-            }
-        }
-        if (rank != null && !rank.isEmpty()) {
-            List<String> members = new ArrayList<>(dataConfig.getStringList(RANKS_PATH + "." + rank + ".members"));
-            if (!members.contains(uuid.toString())) {
-                members.add(uuid.toString());
-                dataConfig.set(RANKS_PATH + "." + rank + ".members", members);
-            }
-            dataConfig.set(PLAYER_RANK_PATH + "." + uuid, rank);
-        } else {
-            dataConfig.set(PLAYER_RANK_PATH + "." + uuid, null);
-        }
-        saveDataFile();
-    }
-
-    public void refreshAllPermissions() {
-        for (Player p : Bukkit.getOnlinePlayers()) {
-            applyPermissionGroup(p);
         }
     }
 
@@ -2789,144 +2686,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return true;
         }
 
-        if (cmd.getName().equalsIgnoreCase("ticket")) {
-            if (args.length == 0) {
-                p.sendMessage(ChatColor.GOLD + "===== Ticket System =====");
-                p.sendMessage(ChatColor.YELLOW + "/ticket new [category] <message>" + ChatColor.GRAY + " - Create a ticket");
-                p.sendMessage(ChatColor.YELLOW + "/ticket list" + ChatColor.GRAY + " - View your tickets");
-                p.sendMessage(ChatColor.YELLOW + "/ticket view <id>" + ChatColor.GRAY + " - View ticket details");
-                p.sendMessage(ChatColor.YELLOW + "/ticket close <id>" + ChatColor.GRAY + " - Close your ticket");
-                p.sendMessage(ChatColor.GRAY + "Categories: bug, griefing, chat, item_loss, pvp, other");
-                return true;
-            }
-            String sub = args[0].toLowerCase();
-            if (sub.equals("new")) {
-                if (args.length < 2) {
-                    p.sendMessage(ChatColor.RED + "Usage: /ticket new [category] <message>");
-                    return true;
-                }
-                // Cooldown check (60 seconds)
-                long now = System.currentTimeMillis();
-                Long lastTicket = ticketCooldowns.get(p.getUniqueId());
-                if (lastTicket != null && (now - lastTicket) < 60000) {
-                    long remaining = (60000 - (now - lastTicket)) / 1000;
-                    p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before creating another ticket.");
-                    return true;
-                }
-                // Check if second arg is a category
-                Set<String> validCategories = new HashSet<>(Arrays.asList("bug", "griefing", "chat", "item_loss", "pvp", "other"));
-                String category = "other";
-                int messageStart = 1;
-                if (args.length > 2 && validCategories.contains(args[1].toLowerCase())) {
-                    category = args[1].toLowerCase();
-                    messageStart = 2;
-                }
-                if (messageStart >= args.length) {
-                    p.sendMessage(ChatColor.RED + "Please provide a message for your ticket.");
-                    return true;
-                }
-                int id = dataConfig.getInt("tickets.next_id", 1);
-                String path = "tickets." + id;
-                dataConfig.set(path + ".player", p.getName());
-                dataConfig.set(path + ".uuid", p.getUniqueId().toString());
-                dataConfig.set(path + ".message", String.join(" ", Arrays.copyOfRange(args, messageStart, args.length)));
-                dataConfig.set(path + ".status", "open");
-                dataConfig.set(path + ".priority", "medium");
-                dataConfig.set(path + ".category", category);
-                dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
-                // Save location
-                dataConfig.set(path + ".world", p.getWorld().getName());
-                dataConfig.set(path + ".x", p.getLocation().getBlockX());
-                dataConfig.set(path + ".y", p.getLocation().getBlockY());
-                dataConfig.set(path + ".z", p.getLocation().getBlockZ());
-                dataConfig.set("tickets.next_id", id + 1);
-                saveDataFile();
-                ticketCooldowns.put(p.getUniqueId(), now);
-                p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created (" + category + "). Staff will review it soon.");
-                // Notify online staff
-                for (Player staff : Bukkit.getOnlinePlayers()) {
-                    if (staff.hasPermission("realmtool.admin")) {
-                        staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + dataConfig.getString(path + ".message"));
-                    }
-                }
-                sendWebPush("New Ticket #" + id, p.getName() + " needs help: " + dataConfig.getString(path + ".message"));
-                return true;
-            }
-            if (sub.equals("list")) {
-                boolean found = false;
-                if (dataConfig.contains("tickets")) {
-                    for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
-                        if (key.equals("next_id")) continue;
-                        String ticketPlayer = dataConfig.getString("tickets." + key + ".player", "");
-                        if (ticketPlayer.equalsIgnoreCase(p.getName())) {
-                            String status = dataConfig.getString("tickets." + key + ".status", "open");
-                            String msg = dataConfig.getString("tickets." + key + ".message", "");
-                            ChatColor statusColor = status.equals("open") ? ChatColor.GREEN : status.equals("resolved") ? ChatColor.AQUA : ChatColor.GRAY;
-                            p.sendMessage(ChatColor.GOLD + "#" + key + " " + statusColor + "[" + status.toUpperCase() + "] " + ChatColor.WHITE + (msg.length() > 40 ? msg.substring(0, 40) + "..." : msg));
-                            found = true;
-                        }
-                    }
-                }
-                if (!found) p.sendMessage(ChatColor.YELLOW + "You have no tickets.");
-                return true;
-            }
-            if (sub.equals("view")) {
-                if (args.length < 2) { p.sendMessage(ChatColor.RED + "Usage: /ticket view <id>"); return true; }
-                String ticketId = args[1];
-                String base = "tickets." + ticketId;
-                if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return true; }
-                String ticketPlayer = dataConfig.getString(base + ".player", "");
-                if (!ticketPlayer.equalsIgnoreCase(p.getName()) && !p.hasPermission("realmtool.admin")) {
-                    p.sendMessage(ChatColor.RED + "You can only view your own tickets.");
-                    return true;
-                }
-                p.sendMessage(ChatColor.GOLD + "===== Ticket #" + ticketId + " =====");
-                p.sendMessage(ChatColor.YELLOW + "Player: " + ChatColor.WHITE + ticketPlayer);
-                p.sendMessage(ChatColor.YELLOW + "Status: " + ChatColor.WHITE + dataConfig.getString(base + ".status", "open"));
-                p.sendMessage(ChatColor.YELLOW + "Priority: " + ChatColor.WHITE + dataConfig.getString(base + ".priority", "medium"));
-                p.sendMessage(ChatColor.YELLOW + "Category: " + ChatColor.WHITE + dataConfig.getString(base + ".category", "other"));
-                p.sendMessage(ChatColor.YELLOW + "Message: " + ChatColor.WHITE + dataConfig.getString(base + ".message", ""));
-                p.sendMessage(ChatColor.YELLOW + "Created: " + ChatColor.WHITE + dataConfig.getString(base + ".timestamp", ""));
-                String resolution = dataConfig.getString(base + ".resolution");
-                if (resolution != null) p.sendMessage(ChatColor.YELLOW + "Resolution: " + ChatColor.WHITE + resolution);
-                List<String> responses = dataConfig.getStringList(base + ".responses");
-                if (!responses.isEmpty()) {
-                    p.sendMessage(ChatColor.GOLD + "--- Responses ---");
-                    for (String resp : responses) {
-                        String[] parts = resp.split(" \\| ", 3);
-                        if (parts.length == 3) {
-                            p.sendMessage(ChatColor.AQUA + parts[1] + ChatColor.GRAY + " (" + parts[0] + "): " + ChatColor.WHITE + parts[2]);
-                        } else {
-                            p.sendMessage(ChatColor.GRAY + resp);
-                        }
-                    }
-                }
-                return true;
-            }
-            if (sub.equals("close")) {
-                if (args.length < 2) { p.sendMessage(ChatColor.RED + "Usage: /ticket close <id>"); return true; }
-                String ticketId = args[1];
-                String base = "tickets." + ticketId;
-                if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return true; }
-                String ticketPlayer = dataConfig.getString(base + ".player", "");
-                if (!ticketPlayer.equalsIgnoreCase(p.getName()) && !p.hasPermission("realmtool.admin")) {
-                    p.sendMessage(ChatColor.RED + "You can only close your own tickets.");
-                    return true;
-                }
-                String currentStatus = dataConfig.getString(base + ".status", "open");
-                if (currentStatus.equals("closed")) {
-                    p.sendMessage(ChatColor.RED + "This ticket is already closed.");
-                    return true;
-                }
-                dataConfig.set(base + ".status", "closed");
-                saveDataFile();
-                p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " closed.");
-                return true;
-            }
-            p.sendMessage(ChatColor.RED + "Unknown subcommand. Use /ticket for help.");
-            return true;
-        }
-
         if (cmd.getName().equalsIgnoreCase("tpa")) {
             if (args.length == 0) {
                 p.sendMessage(ChatColor.RED + "Usage: /tpa accept <player> or /tpa deny <player>");
@@ -4422,111 +4181,61 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return null;
     }
 
-    // --- coin economy helpers ---
+    // --- coin economy helpers (delegated through EconomyService) ---
     public long getCoins(UUID uuid) {
-        String key = "coins." + uuid;
-        long amount = economyConfig.getLong(key, Long.MIN_VALUE);
-        if (amount != Long.MIN_VALUE) {
-            return amount;
-        }
-        // Legacy support: some installs may store under drowsy_coins
-        String legacyKey = "drowsy_coins." + uuid;
-        amount = economyConfig.getLong(legacyKey, Long.MIN_VALUE);
-        if (amount != Long.MIN_VALUE) {
-            // migrate to new key
-            economyConfig.set(key, amount);
-            economyConfig.set(legacyKey, null);
-            saveEconomyFile();
-            return amount;
-        }
-        return 0;
+        return economyService != null ? economyService.getCoins(uuid) : 0;
     }
+
     public void setCoins(UUID uuid, long amount) {
-        economyConfig.set("coins." + uuid, amount);
-        // Keep legacy key in sync for older config readers
-        economyConfig.set("drowsy_coins." + uuid, amount);
-        saveEconomyFile();
+        if (economyService != null) economyService.setCoins(uuid, amount);
     }
+
     public void addCoins(UUID uuid, long delta) {
-        long cur = getCoins(uuid);
-        setCoins(uuid, cur + delta);
+        if (economyService != null) economyService.addCoins(uuid, delta);
     }
 
-    private boolean isDrowsyCoin(ItemStack item) {
-        if (item == null || item.getType() == Material.AIR) return false;
-        ItemMeta meta = item.getItemMeta();
-        if (meta == null || !meta.hasDisplayName()) return false;
-        
-        // TODO: Update this to match exactly how the DrowsyCoin plugin identifies a coin.
-        // Example 1: By exact name (make sure color codes match exactly)
-        // return meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins");
-        
-        // Example 2: By CustomModelData
-        // return meta.hasCustomModelData() && meta.getCustomModelData() == 12345;
-        
-        // Example 3: By NamespacedKey (PersistentDataContainer)
-        // return meta.getPersistentDataContainer().has(new org.bukkit.NamespacedKey("drowsycoin", "coin"), org.bukkit.persistence.PersistentDataType.BYTE);
-        
-        return meta.getDisplayName().equals(ChatColor.GOLD + "Drowsy Coins");
+    public boolean isDrowsyCoin(ItemStack item) {
+        return economyService != null && economyService.isDrowsyCoin(item);
     }
 
-    private ItemStack makeDrowsyCoinStack(int amount) {
-        // TODO: Replicate the EXACT item created by your DrowsyCoin plugin here
-        ItemStack coin = new ItemStack(Material.GOLD_NUGGET, amount);
-        ItemMeta meta = coin.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(ChatColor.GOLD + "Drowsy Coins");
-            // Example: meta.setCustomModelData(12345);
-            // Example: meta.getPersistentDataContainer().set(new org.bukkit.NamespacedKey("drowsycoin", "coin"), org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
-            coin.setItemMeta(meta);
-        }
-        return coin;
+    public ItemStack makeDrowsyCoinStack(int amount) {
+        return economyService != null ? economyService.makeDrowsyCoinStack(amount) : null;
     }
 
-    private long countDrowsyCoins(Player p) {
-        long total = 0;
-        for (ItemStack item : p.getInventory().getContents()) {
-            if (isDrowsyCoin(item)) {
-                total += item.getAmount();
-            }
-        }
-        return total;
+    public long countDrowsyCoins(Player p) {
+        return economyService != null ? economyService.countDrowsyCoins(p) : 0;
     }
 
-    private long removeDrowsyCoins(Player p, long amount) {
-        long remaining = amount;
-        Inventory inv = p.getInventory();
-        for (int i = 0; i < inv.getSize() && remaining > 0; i++) {
-            ItemStack item = inv.getItem(i);
-            if (isDrowsyCoin(item)) {
-                int stack = item.getAmount();
-                if (stack <= remaining) {
-                    remaining -= stack;
-                    inv.setItem(i, null);
-                } else {
-                    item.setAmount((int) (stack - remaining));
-                    inv.setItem(i, item);
-                    remaining = 0;
-                }
-            }
-        }
-        return amount - remaining;
+    public long removeDrowsyCoins(Player p, long amount) {
+        return economyService != null ? economyService.removeDrowsyCoins(p, amount) : 0;
     }
 
-    private void giveDrowsyCoins(Player p, long amount) {
-        // Option 1: If your DrowsyCoin plugin has a command to give coins, you can uncomment this line and comment out Option 2:
-        // Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "drowsycoin give " + p.getName() + " " + amount);
-        
-        // Option 2: Give the item built by makeDrowsyCoinStack() directly
-        while (amount > 0) {
-            int give = (int) Math.min(64, amount);
-            ItemStack stack = makeDrowsyCoinStack(give);
-            Map<Integer, ItemStack> leftover = p.getInventory().addItem(stack);
-            for (ItemStack item : leftover.values()) {
-                p.getWorld().dropItemNaturally(p.getLocation(), item);
-            }
-            amount -= give;
-        }
+    public void giveDrowsyCoins(Player p, long amount) {
+        if (economyService != null) economyService.giveDrowsyCoins(p, amount);
+    }
+
+    public void createTicket(Player p, String text) {
+        if (ticketService != null) ticketService.createTicket(p, text);
+    }
+
+    public void createAppeal(Player p, String text) {
+        if (ticketService != null) ticketService.createAppeal(p, text);
+    }
+
+    public Map<String, Object> getTicketData(int id) {
+        return ticketService != null ? ticketService.getTicketData(id) : new HashMap<>();
+    }
+
+    public void addTicketResponse(int id, String admin, String message) {
+        if (ticketService != null) ticketService.addTicketResponse(id, admin, message);
+    }
+
+    public void updateTicketField(int id, String field, String value) {
+        if (ticketService != null) ticketService.updateTicketField(id, field, value);
+    }
+
+    public void resolveTicket(int id, String reason) {
+        if (ticketService != null) ticketService.resolveTicket(id, reason);
     }
 
     private String eventKeyFromDisplay(String disp) {
@@ -4550,94 +4259,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 break;
         }
         return result;
-    }
-
-    private void createTicket(Player p, String text) {
-        long now = System.currentTimeMillis();
-        Long lastTicket = ticketCooldowns.get(p.getUniqueId());
-        if (lastTicket != null && (now - lastTicket) < 60000) {
-            long remaining = (60000 - (now - lastTicket)) / 1000;
-            p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before creating another ticket.");
-            return;
-        }
-        Set<String> validCategories = new HashSet<>(Arrays.asList("bug", "griefing", "chat", "item_loss", "pvp", "other"));
-        String category = "other";
-        String message = text;
-        String[] parts = text.split(" ");
-        if (parts.length > 1 && validCategories.contains(parts[0].toLowerCase())) {
-            category = parts[0].toLowerCase();
-            message = String.join(" ", Arrays.copyOfRange(parts, 1, parts.length));
-        }
-        if (message == null || message.trim().isEmpty()) {
-            p.sendMessage(ChatColor.RED + "Please provide a message for your ticket.");
-            return;
-        }
-        int id = dataConfig.getInt("tickets.next_id", 1);
-        String path = "tickets." + id;
-        dataConfig.set(path + ".player", p.getName());
-        dataConfig.set(path + ".uuid", p.getUniqueId().toString());
-        dataConfig.set(path + ".message", message);
-        dataConfig.set(path + ".status", "open");
-        dataConfig.set(path + ".priority", "medium");
-        dataConfig.set(path + ".category", category);
-        dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
-        dataConfig.set(path + ".world", p.getWorld().getName());
-        dataConfig.set(path + ".x", p.getLocation().getBlockX());
-        dataConfig.set(path + ".y", p.getLocation().getBlockY());
-        dataConfig.set(path + ".z", p.getLocation().getBlockZ());
-        dataConfig.set("tickets.next_id", id + 1);
-        saveDataFile();
-        ticketCooldowns.put(p.getUniqueId(), now);
-        p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created (" + category + "). Staff will review it soon.");
-        for (Player staff : Bukkit.getOnlinePlayers()) {
-            if (staff.hasPermission("realmtool.admin")) {
-                staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + message);
-            }
-        }
-        sendWebPush("New Ticket #" + id, p.getName() + " needs help: " + message);
-        p.sendMessage(ChatColor.GREEN + "Your ticket has been submitted! A staff member will review it shortly.");
-    }
-
-    private void createAppeal(Player p, String text) {
-        long now = System.currentTimeMillis();
-        Long last = ticketCooldowns.get(p.getUniqueId()); // reuse same cooldown map
-        if (last != null && (now - last) < 60000) {
-            long remaining = (60000 - (now - last)) / 1000;
-            p.sendMessage(ChatColor.RED + "Please wait " + remaining + "s before creating another appeal.");
-            return;
-        }
-        Set<String> validCategories = new HashSet<>(Arrays.asList("bug", "griefing", "chat", "item_loss", "pvp", "other"));
-        String category = "other";
-        String message = text;
-        String[] parts = text.split(" ");
-        if (parts.length > 1 && validCategories.contains(parts[0].toLowerCase())) {
-            category = parts[0].toLowerCase();
-            message = String.join(" ", Arrays.copyOfRange(parts, 1, parts.length));
-        }
-        if (message == null || message.trim().isEmpty()) {
-            p.sendMessage(ChatColor.RED + "Please provide a message for your appeal.");
-            return;
-        }
-        int id = dataConfig.getInt("appeals.next_id", 1);
-        String path = "appeals." + id;
-        dataConfig.set(path + ".player", p.getName());
-        dataConfig.set(path + ".uuid", p.getUniqueId().toString());
-        dataConfig.set(path + ".message", message);
-        dataConfig.set(path + ".status", "open");
-        dataConfig.set(path + ".priority", "medium");
-        dataConfig.set(path + ".category", category);
-        dataConfig.set(path + ".timestamp", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
-        dataConfig.set("appeals.next_id", id + 1);
-        saveDataFile();
-        ticketCooldowns.put(p.getUniqueId(), now);
-        p.sendMessage(ChatColor.GREEN + "Appeal #" + id + " created (" + category + "). Staff will review it soon.");
-        for (Player staff : Bukkit.getOnlinePlayers()) {
-            if (staff.hasPermission("realmtool.admin")) {
-                staff.sendMessage(ChatColor.GOLD + "[Appeals] " + ChatColor.YELLOW + p.getName() + " created appeal #" + id + ": " + ChatColor.GRAY + message);
-            }
-        }
-        sendWebPush("New Appeal #" + id, p.getName() + " submitted an appeal: " + message);
-        p.sendMessage(ChatColor.GREEN + "Your appeal has been submitted! A staff member will review it shortly.");
     }
 
     // --- GUIS ---
@@ -5940,24 +5561,56 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
         
         String chunkKey = getChunkKey(p.getLocation());
-        String message = action.equals("claim") ? 
-            "Do you want to claim this chunk?" : 
-            "Do you want to unclaim this chunk?";
-        
-        ItemStack confirm = new ItemStack(Material.EMERALD_BLOCK);
+        UUID owner = getChunkOwner(chunkKey);
+        boolean chunkOwnedByOthers = (owner != null && !owner.equals(p.getUniqueId()));
+        boolean chunkOwnedByPlayer = (owner != null && owner.equals(p.getUniqueId()));
+
+        String message;
+        boolean confirmAllowed = true;
+
+        if (action.equals("claim")) {
+            UUID nearbyOwner = getNearbyClaimOwner(chunkKey, CLAIM_PROXIMITY_RADIUS);
+            boolean nearbyOther = nearbyOwner != null && !nearbyOwner.equals(p.getUniqueId());
+
+            if (chunkOwnedByOthers) {
+                message = "This chunk is already claimed by another player.";
+                confirmAllowed = false;
+            } else if (chunkOwnedByPlayer) {
+                message = "You already own this chunk.";
+                confirmAllowed = false;
+            } else if (nearbyOther) {
+                message = "This chunk is too close to another claim (in a " + CLAIM_PROXIMITY_RADIUS + "-chunk buffer).";
+                confirmAllowed = false;
+            } else {
+                message = "Do you want to claim this chunk?";
+            }
+        } else {
+            if (chunkOwnedByPlayer) {
+                message = "Do you want to unclaim this chunk?";
+            } else {
+                message = "You cannot unclaim a chunk you do not own.";
+                confirmAllowed = false;
+            }
+        }
+
+        ItemStack confirm = confirmAllowed ? new ItemStack(Material.EMERALD_BLOCK) : new ItemStack(Material.BARRIER);
         ItemMeta confMeta = confirm.getItemMeta();
-        confMeta.setDisplayName(ChatColor.GREEN + "Confirm");
+        confMeta.setDisplayName(confirmAllowed ? ChatColor.GREEN + "Confirm" : ChatColor.RED + "Not Allowed");
         confMeta.setLore(Arrays.asList(ChatColor.GRAY + message));
         confirm.setItemMeta(confMeta);
         gui.setItem(11, confirm);
-        
+
         ItemStack cancel = new ItemStack(Material.REDSTONE_BLOCK);
         ItemMeta canMeta = cancel.getItemMeta();
         canMeta.setDisplayName(ChatColor.RED + "Cancel");
         cancel.setItemMeta(canMeta);
         gui.setItem(15, cancel);
         
-        pendingClaimAction.put(p.getUniqueId(), action + ":" + chunkKey);
+        if (confirmAllowed) {
+            pendingClaimAction.put(p.getUniqueId(), action + ":" + chunkKey);
+        } else {
+            pendingClaimAction.remove(p.getUniqueId());
+        }
         p.openInventory(gui);
     }
 
@@ -6938,17 +6591,27 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 // Confirm
                 p.closeInventory();
                 if (actionType.equals("claim")) {
-                    int limit = getChunkLimit(p.getUniqueId());
-                    int claimed = getClaimedChunks(p.getUniqueId()).size();
-                    if (claimed < limit) {
-                        claimChunk(p.getUniqueId(), chunkKey);
-                        p.sendMessage(ChatColor.GREEN + "Chunk claimed!");
+                    UUID owner = getChunkOwner(chunkKey);
+                    if (owner != null && !owner.equals(p.getUniqueId())) {
+                        p.sendMessage(ChatColor.RED + "This chunk is already claimed by someone else.");
                     } else {
-                        p.sendMessage(ChatColor.RED + "You have reached your claim limit!");
+                        int limit = getChunkLimit(p.getUniqueId());
+                        int claimed = getClaimedChunks(p.getUniqueId()).size();
+                        if (claimed < limit) {
+                            claimChunk(p.getUniqueId(), chunkKey);
+                            p.sendMessage(ChatColor.GREEN + "Chunk claimed!");
+                        } else {
+                            p.sendMessage(ChatColor.RED + "You have reached your claim limit!");
+                        }
                     }
                 } else {
-                    unclaimChunk(p.getUniqueId(), chunkKey);
-                    p.sendMessage(ChatColor.GREEN + "Chunk unclaimed!");
+                    UUID owner = getChunkOwner(chunkKey);
+                    if (owner != null && owner.equals(p.getUniqueId())) {
+                        unclaimChunk(p.getUniqueId(), chunkKey);
+                        p.sendMessage(ChatColor.GREEN + "Chunk unclaimed!");
+                    } else {
+                        p.sendMessage(ChatColor.RED + "You cannot unclaim a chunk you do not own.");
+                    }
                 }
                 pendingClaimAction.remove(p.getUniqueId());
             } else if (type == Material.REDSTONE_BLOCK) {
@@ -7010,6 +6673,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     boolean currentNether = dataConfig.getBoolean("locks.nether", false);
                     dataConfig.set("locks.nether", !currentNether);
                     saveDataFile();
+                    saveDataFileSync();
                     p.sendMessage(ChatColor.AQUA + "Nether access " + (currentNether ? "unlocked" : "locked") + "!");
                     openMainMenu(p);
                     break;
@@ -7018,6 +6682,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     boolean currentEnd = dataConfig.getBoolean("locks.end", false);
                     dataConfig.set("locks.end", !currentEnd);
                     saveDataFile();
+                    saveDataFileSync();
                     p.sendMessage(ChatColor.AQUA + "The End access " + (currentEnd ? "unlocked" : "locked") + "!");
                     openMainMenu(p);
                     break;
@@ -7534,6 +7199,47 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             saveLog(e.getBlock().getLocation(), ChatColor.GREEN + "Placed by " + e.getPlayer().getName());
         }
     }
+
+    @EventHandler
+    public void onPlayerBucketEmpty(PlayerBucketEmptyEvent e) {
+        Player p = e.getPlayer();
+        if (isDiscordLinkRequiredAndNotLinked(p)) {
+            e.setCancelled(true);
+            String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+            p.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+            return;
+        }
+
+        lastActivity.put(p.getUniqueId(), System.currentTimeMillis());
+        if (isPunished(p.getUniqueId())) {
+            e.setCancelled(true);
+            return;
+        }
+
+        Location target = e.getBlockClicked().getRelative(e.getBlockFace()).getLocation();
+        String chunkKey = getChunkKey(target);
+        if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "You cannot place lava/water in this claimed chunk!");
+            return;
+        }
+        saveLog(target, ChatColor.GREEN + "Bucket used by " + p.getName());
+    }
+
+    @EventHandler
+    public void onBlockFromTo(BlockFromToEvent e) {
+        Material type = e.getBlock().getType();
+        if (type != Material.WATER && type != Material.LAVA && type != Material.WATER_CAULDRON && type != Material.LAVA_CAULDRON) {
+            return;
+        }
+
+        String chunkKey = getChunkKey(e.getToBlock().getLocation());
+        if (isChunkClaimed(chunkKey)) {
+            // Prevent fluid flow into claimed chunks to avoid griefing via lava/water spread
+            e.setCancelled(true);
+        }
+    }
+
     @EventHandler
     public void onBlockBreak(BlockBreakEvent e) {
         if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
@@ -9035,85 +8741,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         saveDataFile();
     }
 
-    public Map<String, Object> getTicketData(int id) {
-        Map<String, Object> m = new HashMap<>();
-        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
-        if (!dataConfig.contains(base)) return m;
-        m.put("id", Integer.toString(id));
-        m.put("player", dataConfig.getString(base + ".player", ""));
-        m.put("message", dataConfig.getString(base + ".message", ""));
-        m.put("status", dataConfig.getString(base + ".status", "open"));
-        m.put("priority", dataConfig.getString(base + ".priority", "medium"));
-        m.put("category", dataConfig.getString(base + ".category", "other"));
-        m.put("assignee", dataConfig.getString(base + ".assignee", ""));
-        m.put("timestamp", dataConfig.getString(base + ".timestamp", ""));
-        m.put("resolution", dataConfig.getString(base + ".resolution", ""));
-        // Location
-        if (dataConfig.contains(base + ".world")) {
-            Map<String, Object> loc = new HashMap<>();
-            loc.put("world", dataConfig.getString(base + ".world", ""));
-            loc.put("x", dataConfig.getInt(base + ".x", 0));
-            loc.put("y", dataConfig.getInt(base + ".y", 0));
-            loc.put("z", dataConfig.getInt(base + ".z", 0));
-            m.put("location", loc);
-        }
-        // Parse responses into proper objects
-        List<Map<String, String>> parsedResponses = new ArrayList<>();
-        for (String raw : dataConfig.getStringList(base + ".responses")) {
-            String[] parts = raw.split(" \\| ", 3);
-            Map<String, String> resp = new HashMap<>();
-            if (parts.length == 3) {
-                resp.put("timestamp", parts[0].trim());
-                resp.put("admin", parts[1].trim());
-                resp.put("message", parts[2].trim());
-            } else {
-                resp.put("timestamp", "");
-                resp.put("admin", "Unknown");
-                resp.put("message", raw);
-            }
-            parsedResponses.add(resp);
-        }
-        m.put("responses", parsedResponses);
-        return m;
-    }
-
-    public void addTicketResponse(int id, String admin, String message) {
-        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
-        String path = base + ".responses";
-        List<String> responses = dataConfig.getStringList(path);
-        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + admin + " | " + message;
-        responses.add(entry);
-        dataConfig.set(path, responses);
-        dataConfig.set(base + ".has_new_response", true);
-        saveDataFile();
-        // Notify player if online
-        String playerName = dataConfig.getString(base + ".player", "");
-        Player target = Bukkit.getPlayer(playerName);
-        if (target != null && target.isOnline()) {
-            target.playSound(target.getLocation(), org.bukkit.Sound.BLOCK_NOTE_BLOCK_PLING, 1F, 2F);
-            target.sendMessage(ChatColor.GOLD + "[" + (id < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.GREEN + admin + " responded to your " + (id < 0 ? "appeal" : "ticket") + " #" + Math.abs(id) + ": " + ChatColor.WHITE + message);
-        }
-    }
-
-    public void updateTicketField(int id, String field, String value) {
-        dataConfig.set((id < 0 ? "appeals." + (-id) : "tickets." + id) + "." + field, value);
-        saveDataFile();
-    }
-
-    public void resolveTicket(int id, String reason) {
-        String base = id < 0 ? "appeals." + (-id) : "tickets." + id;
-        dataConfig.set(base + ".status", "resolved");
-        dataConfig.set(base + ".resolution", reason);
-        dataConfig.set(base + ".has_new_response", true);
-        saveDataFile();
-        // Notify player if online
-        String playerName = dataConfig.getString(base + ".player", "");
-        Player target = Bukkit.getPlayer(playerName);
-        if (target != null && target.isOnline()) {
-            target.sendMessage(ChatColor.GOLD + "[" + (id < 0 ? "Appeals" : "Tickets") + "] " + ChatColor.GREEN + "Your " + (id < 0 ? "appeal" : "ticket") + " #" + Math.abs(id) + " has been resolved: " + ChatColor.WHITE + reason);
-        }
-    }
-
     public void mutePlayer(UUID u, String playerName, String reason) {
         List<String> m = new ArrayList<>(dataConfig.getStringList("muted"));
         // Remove existing entry for this player
@@ -9308,6 +8935,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void claimChunk(UUID uuid, String chunkKey) {
+        UUID owner = getChunkOwner(chunkKey);
+        if (owner != null) {
+            // Already claimed by someone
+            if (owner.equals(uuid)) return; // no-op for already-owned chunk
+            return;
+        }
+
+        UUID nearbyOwner = getNearbyClaimOwner(chunkKey, CLAIM_PROXIMITY_RADIUS);
+        if (nearbyOwner != null && !nearbyOwner.equals(uuid)) {
+            return; // no claim within radius from another player's claim
+        }
+
         String path = "claims." + uuid + ".claimed";
         List<String> claimed = dataConfig.getStringList(path);
         if (!claimed.contains(chunkKey)) {
@@ -9317,7 +8956,45 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
     }
 
+    private UUID getNearbyClaimOwner(String chunkKey, int radius) {
+        String[] parts = chunkKey.split(":");
+        if (parts.length != 3) return null;
+
+        String worldName = parts[0];
+        int targetX = Integer.parseInt(parts[1]);
+        int targetZ = Integer.parseInt(parts[2]);
+
+        for (String key : dataConfig.getKeys(true)) {
+            if (key.contains("claims") && key.contains("claimed")) {
+                String ownerId = key.split("\\.")[1];
+                List<String> chunks = dataConfig.getStringList(key);
+                for (String c : chunks) {
+                    String[] cParts = c.split(":");
+                    if (cParts.length != 3) continue;
+                    if (!worldName.equals(cParts[0])) continue;
+                    int chunkX = Integer.parseInt(cParts[1]);
+                    int chunkZ = Integer.parseInt(cParts[2]);
+                    int dx = Math.abs(chunkX - targetX);
+                    int dz = Math.abs(chunkZ - targetZ);
+                    if (dx <= radius && dz <= radius) {
+                        if (chunkX == targetX && chunkZ == targetZ) continue;
+                        try {
+                            return UUID.fromString(ownerId);
+                        } catch (IllegalArgumentException ignored) {
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private void unclaimChunk(UUID uuid, String chunkKey) {
+        UUID owner = getChunkOwner(chunkKey);
+        if (owner == null || !owner.equals(uuid)) {
+            return; // only owner can unclaim this chunk
+        }
+
         String path = "claims." + uuid + ".claimed";
         List<String> claimed = dataConfig.getStringList(path);
         claimed.remove(chunkKey);
@@ -10557,12 +10234,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         List<String> lore = held.getItemMeta().getLore();
         for (String line : lore) {
             String stripped = ChatColor.stripColor(line).trim();
-            // Timber enchant - break logs in column
-            if (stripped.equalsIgnoreCase("Timber") && e.getBlock().getType().name().contains("LOG")) {
+            // Timber enchant - break logs/stems in column (including nether tree stems)
+            Material brokenType = e.getBlock().getType();
+            boolean isTimberTarget = brokenType.name().contains("LOG") || brokenType.name().contains("STEM");
+            if (stripped.equalsIgnoreCase("Timber") && isTimberTarget) {
                 Location loc = e.getBlock().getLocation();
                 for (int y = 1; y <= 20; y++) {
                     Location above = loc.clone().add(0, y, 0);
-                    if (above.getBlock().getType().name().contains("LOG")) {
+                    Material aboveType = above.getBlock().getType();
+                    if (aboveType.name().contains("LOG") || aboveType.name().contains("STEM")) {
                         above.getBlock().breakNaturally(held);
                     } else break;
                 }
