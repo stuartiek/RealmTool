@@ -839,10 +839,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         PermissionAttachment attachment = player.addAttachment(this);
         boolean addedAny = false;
 
+        FileConfiguration rankCfg = getRankConfig();
+
         // Apply group permissions (if used)
         String groupName = getPlayerGroup(uuid);
         if (groupName != null) {
-            List<String> perms = dataConfig.getStringList("groups." + groupName + ".permissions");
+            List<String> perms = rankCfg.getStringList("groups." + groupName + ".permissions");
             for (String perm : perms) {
                 if (perm == null) continue;
                 perm = perm.trim();
@@ -859,7 +861,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Apply rank permissions
         String rank = getPlayerRank(uuid);
         if (rank != null) {
-            List<String> perms = dataConfig.getStringList(RANKS_PATH + "." + rank + ".permissions");
+            List<String> perms = rankCfg.getStringList(RANKS_PATH + "." + rank + ".permissions");
             for (String perm : perms) {
                 if (perm == null) continue;
                 perm = perm.trim();
@@ -4166,7 +4168,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         String rank = getPlayerRank(p.getUniqueId());
         if (rank == null) return;
 
-        String prefix = dataConfig.getString(RANKS_PATH + "." + rank + ".prefix", "");
+        String prefix = getRankConfig().getString(RANKS_PATH + "." + rank + ".prefix", "");
         if (prefix == null || prefix.isEmpty()) return;
 
         prefix = ChatColor.translateAlternateColorCodes('&', prefix);
@@ -9299,8 +9301,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             team.setCanSeeFriendlyInvisibles(true);
             team.setAllowFriendlyFire(true);
         }
-        String prefix = dataConfig.getString(RANKS_PATH + "." + displayRank + ".prefix");
-        if (prefix == null) prefix = dataConfig.getString("groups." + displayRank + ".prefix", "");
+        FileConfiguration rankCfg = getRankConfig();
+        String prefix = rankCfg.getString(RANKS_PATH + "." + displayRank + ".prefix");
+        if (prefix == null) prefix = rankCfg.getString("groups." + displayRank + ".prefix", "");
         String formatted = ChatColor.translateAlternateColorCodes('&', prefix);
         if (!team.getPrefix().equals(formatted)) {
             team.setPrefix(formatted);
