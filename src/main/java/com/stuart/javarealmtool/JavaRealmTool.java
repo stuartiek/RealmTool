@@ -339,6 +339,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 saveDataFile();
             }
 
+            // Debug: verify migration data sources after startup
+            getLogger().info("players.yml contains: " + playersConfig.getKeys(false));
+            getLogger().info("data.yml contains: " + dataConfig.getKeys(false));
+            getLogger().info("economy.yml contains coins? " + economyConfig.contains("coins"));
+            getLogger().info("ranks.yml contains ranks? " + rankConfig.contains("ranks"));
+            getLogger().info("tickets.yml contains tickets? " + ticketConfig.contains("tickets"));
+
             if (getCommand("dmt") != null) {
                 getCommand("dmt").setExecutor(this);
                 getCommand("dmt").setTabCompleter(this);
@@ -611,13 +618,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         playersConfig = YamlConfiguration.loadConfiguration(playersFile);
 
-        // One-time migration
-        if (dataConfig.contains("punishments") && !playersConfig.contains("punishments")) {
-            playersConfig.set("punishments", dataConfig.getConfigurationSection("punishments").getValues(true));
-            dataConfig.set("punishments", null);
+        // One-time migration for player data
+        String[] playerMigrationKeys = {"punishments", "homes", "warps", "pwarps", "claims", "trust", "untrust", "notes"};
+        boolean playerDataMigrated = false;
+        for (String key : playerMigrationKeys) {
+            if (dataConfig.contains(key) && !playersConfig.contains(key)) {
+                playersConfig.set(key, dataConfig.getConfigurationSection(key).getValues(true));
+                dataConfig.set(key, null);
+                playerDataMigrated = true;
+                getLogger().info("Migrated player data key '" + key + "' to players.yml");
+            }
+        }
+        if (playerDataMigrated) {
             saveDataFile();
             savePlayersFile();
-            getLogger().info("Migrated punishments to players.yml");
         }
 
         economyFile = new File(getDataFolder(), "economy.yml");
@@ -654,6 +668,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // One-time migration for tickets and appeals
         if (dataConfig.contains("tickets") && !ticketConfig.contains("tickets")) {
+            // Keep a backup copy in case migration goes wrong or data is accidentally wiped
+            try {
+                File backup = new File(getDataFolder(), "tickets-backup-" + System.currentTimeMillis() + ".yml");
+                FileConfiguration backupCfg = new YamlConfiguration();
+                backupCfg.set("tickets", dataConfig.getConfigurationSection("tickets").getValues(true));
+                backupCfg.save(backup);
+                getLogger().info("Ticket migration backup saved as " + backup.getName());
+            } catch (IOException ex) {
+                getLogger().log(Level.WARNING, "Failed to create tickets migration backup", ex);
+            }
             ticketConfig.set("tickets", dataConfig.getConfigurationSection("tickets").getValues(true));
             dataConfig.set("tickets", null);
         }
@@ -2857,26 +2881,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }
                 p.setLevel(p.getLevel() - cost);
                 String id = warpName.toLowerCase().replace(" ", "_");
-                dataConfig.set("pwarps." + id + ".name", warpName);
-                dataConfig.set("pwarps." + id + ".owner", p.getUniqueId().toString());
-                dataConfig.set("pwarps." + id + ".ownerName", p.getName());
-                dataConfig.set("pwarps." + id + ".x", p.getLocation().getX());
-                dataConfig.set("pwarps." + id + ".y", p.getLocation().getY());
-                dataConfig.set("pwarps." + id + ".z", p.getLocation().getZ());
-                dataConfig.set("pwarps." + id + ".world", p.getWorld().getName());
-                saveDataFile();
+                FileConfiguration pwarpCfg = getPwarpConfig();
+                pwarpCfg.set("pwarps." + id + ".name", warpName);
+                pwarpCfg.set("pwarps." + id + ".owner", p.getUniqueId().toString());
+                pwarpCfg.set("pwarps." + id + ".ownerName", p.getName());
+                pwarpCfg.set("pwarps." + id + ".x", p.getLocation().getX());
+                pwarpCfg.set("pwarps." + id + ".y", p.getLocation().getY());
+                pwarpCfg.set("pwarps." + id + ".z", p.getLocation().getZ());
+                pwarpCfg.set("pwarps." + id + ".world", p.getWorld().getName());
+                pwarpCfg.set("pwarps." + id + ".visits", 0);
+                if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
                 p.sendMessage(ChatColor.GREEN + "Player warp '" + warpName + "' created!");
                 logAction(p.getName(), "pwarp_created", warpName);
                 return true;
             }
             if (args[0].equalsIgnoreCase("delete") && args.length >= 2) {
                 String id = args[1].toLowerCase().replace(" ", "_");
-                String owner = dataConfig.getString("pwarps." + id + ".owner", "");
+                FileConfiguration pwarpCfg = getPwarpConfig();
+                String owner = pwarpCfg.getString("pwarps." + id + ".owner", "");
                 if (!owner.equals(p.getUniqueId().toString()) && !p.hasPermission("dmt.admin")) {
                     p.sendMessage(ChatColor.RED + "That's not your warp."); return true;
                 }
-                dataConfig.set("pwarps." + id, null);
-                saveDataFile();
+                pwarpCfg.set("pwarps." + id, null);
+                if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
                 enforcePwarpLimit(p.getUniqueId());
                 p.sendMessage(ChatColor.GREEN + "Player warp deleted.");
                 return true;
@@ -2884,17 +2911,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             // Teleport to warp
             if (args.length >= 1) {
                 String id = args[0].toLowerCase().replace(" ", "_");
-                if (dataConfig.contains("pwarps." + id)) {
-                    World w = Bukkit.getWorld(dataConfig.getString("pwarps." + id + ".world", "world"));
+                FileConfiguration pwarpCfg = getPwarpConfig();
+                if (pwarpCfg.contains("pwarps." + id)) {
+                    World w = Bukkit.getWorld(pwarpCfg.getString("pwarps." + id + ".world", "world"));
                     if (w != null) {
                         Location loc = new Location(w,
-                            dataConfig.getDouble("pwarps." + id + ".x"),
-                            dataConfig.getDouble("pwarps." + id + ".y"),
-                            dataConfig.getDouble("pwarps." + id + ".z"));
+                            pwarpCfg.getDouble("pwarps." + id + ".x"),
+                            pwarpCfg.getDouble("pwarps." + id + ".y"),
+                            pwarpCfg.getDouble("pwarps." + id + ".z"));
                         p.teleport(loc);
-                        dataConfig.set("pwarps." + id + ".visits", dataConfig.getInt("pwarps." + id + ".visits", 0) + 1);
-                        saveDataFile();
-                        p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + id + ".name", id));
+                        pwarpCfg.set("pwarps." + id + ".visits", pwarpCfg.getInt("pwarps." + id + ".visits", 0) + 1);
+                        if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
+                        p.sendMessage(ChatColor.GREEN + "Warped to " + pwarpCfg.getString("pwarps." + id + ".name", id));
                     }
                 } else {
                     p.sendMessage(ChatColor.RED + "Warp not found. Use /pwarp to browse.");
@@ -3642,10 +3670,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 case ADD_NOTE:
                     if (ctx.targetName != null) {
                         UUID tid = Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId();
-                        List<String> notes = dataConfig.getStringList("notes." + tid);
+                        FileConfiguration notesCfg = getNotesConfig();
+                        List<String> notes = notesCfg.getStringList("notes." + tid);
                         notes.add("[" + new SimpleDateFormat("yyyy-MM-dd").format(new Date()) + " - " + p.getName() + "] " + reason);
-                        dataConfig.set("notes." + tid, notes);
-                        saveDataFile();
+                        notesCfg.set("notes." + tid, notes);
+                        if (notesCfg == dataConfig) saveDataFile(); else savePlayersFile();
                         p.sendMessage(ChatColor.GREEN + "Note added.");
                         openPlayerNotesMenu(p, ctx.targetName);
                     }
@@ -3697,8 +3726,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         break;
                     }
 
-                    if (dataConfig.contains("pwarps." + id)) {
-                        String ownerStr = dataConfig.getString("pwarps." + id + ".owner");
+                    FileConfiguration pwarpCfg = getPwarpConfig();
+                    if (pwarpCfg.contains("pwarps." + id)) {
+                        String ownerStr = pwarpCfg.getString("pwarps." + id + ".owner");
                         if (ownerStr != null && !ownerStr.equals(p.getUniqueId().toString())) {
                             p.sendMessage(ChatColor.RED + "A warp with that name already exists!");
                             break;
@@ -3707,16 +3737,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
                     p.setLevel(p.getLevel() - cost);
 
-                    dataConfig.set("pwarps." + id + ".name", rawName);
-                    dataConfig.set("pwarps." + id + ".owner", p.getUniqueId().toString());
-                    dataConfig.set("pwarps." + id + ".ownerName", p.getName());
-                    dataConfig.set("pwarps." + id + ".x", p.getLocation().getX());
-                    dataConfig.set("pwarps." + id + ".y", p.getLocation().getY());
-                    dataConfig.set("pwarps." + id + ".z", p.getLocation().getZ());
-                    dataConfig.set("pwarps." + id + ".world", p.getWorld().getName());
-                    dataConfig.set("pwarps." + id + ".visits", 0);
+                    pwarpCfg.set("pwarps." + id + ".name", rawName);
+                    pwarpCfg.set("pwarps." + id + ".owner", p.getUniqueId().toString());
+                    pwarpCfg.set("pwarps." + id + ".ownerName", p.getName());
+                    pwarpCfg.set("pwarps." + id + ".x", p.getLocation().getX());
+                    pwarpCfg.set("pwarps." + id + ".y", p.getLocation().getY());
+                    pwarpCfg.set("pwarps." + id + ".z", p.getLocation().getZ());
+                    pwarpCfg.set("pwarps." + id + ".world", p.getWorld().getName());
+                    pwarpCfg.set("pwarps." + id + ".visits", 0);
 
-                    saveDataFile();
+                    if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
                     p.sendMessage(ChatColor.GREEN + "Player warp '" + rawName + "' set! Use the Player Warps menu to teleport.");
                     logAction(p.getName(), "pwarp_created", rawName);
                     pendingActions.remove(p.getUniqueId());
@@ -4904,12 +4934,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openMyTicketsMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_PLAYER_TICKETS);
         resetGridSlots();
-        if (dataConfig.contains("tickets")) {
-            for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+        FileConfiguration ticketCfg = getTicketConfig();
+        if (ticketCfg.contains("tickets")) {
+            for (String key : ticketCfg.getConfigurationSection("tickets").getKeys(false)) {
                 if (key.equals("next_id")) continue;
-                String player = dataConfig.getString("tickets." + key + ".player", "");
+                String player = ticketCfg.getString("tickets." + key + ".player", "");
                 if (!player.equalsIgnoreCase(p.getName())) continue;
-                String priority = dataConfig.getString("tickets." + key + ".priority", "medium");
+                String priority = ticketCfg.getString("tickets." + key + ".priority", "medium");
                 Material mat;
                 switch (priority) {
                     case "critical": mat = Material.REDSTONE_BLOCK; break;
@@ -4918,8 +4949,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     default: mat = Material.YELLOW_WOOL; break;
                 }
                 List<String> lore = new ArrayList<>();
-                lore.add(ChatColor.YELLOW + "Status: " + dataConfig.getString("tickets." + key + ".status", "open"));
-                lore.add(ChatColor.GRAY + dataConfig.getString("tickets." + key + ".message", ""));
+                lore.add(ChatColor.YELLOW + "Status: " + ticketCfg.getString("tickets." + key + ".status", "open"));
+                lore.add(ChatColor.GRAY + ticketCfg.getString("tickets." + key + ".message", ""));
                 ItemStack item = createGuiItem(mat, ChatColor.GOLD + "Ticket #" + key, lore);
                 int slot = getNextGridSlot();
                 if (slot != -1) gui.setItem(slot, item);
@@ -4934,12 +4965,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openMyAppealsMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_PLAYER_APPEALS);
         resetGridSlots();
-        if (dataConfig.contains("appeals")) {
-            for (String key : dataConfig.getConfigurationSection("appeals").getKeys(false)) {
+        FileConfiguration ticketCfg = getTicketConfig();
+        if (ticketCfg.contains("appeals")) {
+            for (String key : ticketCfg.getConfigurationSection("appeals").getKeys(false)) {
                 if (key.equals("next_id")) continue;
-                String player = dataConfig.getString("appeals." + key + ".player", "");
+                String player = ticketCfg.getString("appeals." + key + ".player", "");
                 if (!player.equalsIgnoreCase(p.getName())) continue;
-                String priority = dataConfig.getString("appeals." + key + ".priority", "medium");
+                String priority = ticketCfg.getString("appeals." + key + ".priority", "medium");
                 Material mat;
                 switch (priority) {
                     case "critical": mat = Material.REDSTONE_BLOCK; break;
@@ -4948,8 +4980,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     default: mat = Material.YELLOW_WOOL; break;
                 }
                 List<String> lore = new ArrayList<>();
-                lore.add(ChatColor.YELLOW + "Status: " + dataConfig.getString("appeals." + key + ".status", "open"));
-                lore.add(ChatColor.GRAY + dataConfig.getString("appeals." + key + ".message", ""));
+                lore.add(ChatColor.YELLOW + "Status: " + ticketCfg.getString("appeals." + key + ".status", "open"));
+                lore.add(ChatColor.GRAY + ticketCfg.getString("appeals." + key + ".message", ""));
                 ItemStack item = createGuiItem(mat, ChatColor.GOLD + "Appeal #" + key, lore);
                 int slot = getNextGridSlot();
                 if (slot != -1) gui.setItem(slot, item);
@@ -5009,18 +5041,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openTicketListMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 54, GUI_TICKET_LIST);
         resetGridSlots();
-        if (dataConfig.contains("tickets")) {
-            for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+        FileConfiguration ticketCfg = getTicketConfig();
+        if (ticketCfg.contains("tickets")) {
+            for (String key : ticketCfg.getConfigurationSection("tickets").getKeys(false)) {
                 if (key.equals("next_id")) continue;
-                String status = dataConfig.getString("tickets." + key + ".status", "open");
+                String status = ticketCfg.getString("tickets." + key + ".status", "open");
                 if (!"open".equals(status) && !"in_progress".equals(status)) continue;
-                String priority = dataConfig.getString("tickets." + key + ".priority", "medium");
-                String category = dataConfig.getString("tickets." + key + ".category", "other");
-                String player = dataConfig.getString("tickets." + key + ".player", "???");
-                String message = dataConfig.getString("tickets." + key + ".message", "");
-                String assignee = dataConfig.getString("tickets." + key + ".assignee", "");
-                String time = dataConfig.getString("tickets." + key + ".timestamp", "");
-                int responseCount = dataConfig.getStringList("tickets." + key + ".responses").size();
+                String priority = ticketCfg.getString("tickets." + key + ".priority", "medium");
+                String category = ticketCfg.getString("tickets." + key + ".category", "other");
+                String player = ticketCfg.getString("tickets." + key + ".player", "???");
+                String message = ticketCfg.getString("tickets." + key + ".message", "");
+                String assignee = ticketCfg.getString("tickets." + key + ".assignee", "");
+                String time = ticketCfg.getString("tickets." + key + ".timestamp", "");
+                int responseCount = ticketCfg.getStringList("tickets." + key + ".responses").size();
 
                 // Color-coded material by priority
                 Material mat;
@@ -5056,19 +5089,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void openTicketDetailMenu(Player p, String ticketId) {
+        FileConfiguration ticketCfg = getTicketConfig();
         String base = "tickets." + ticketId;
-        if (!dataConfig.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return; }
+        if (!ticketCfg.contains(base)) { p.sendMessage(ChatColor.RED + "Ticket not found."); return; }
 
         Inventory gui = Bukkit.createInventory(null, 54, GUI_TICKET_DETAIL + ticketId);
-        String player = dataConfig.getString(base + ".player", "???");
-        String status = dataConfig.getString(base + ".status", "open");
-        String priority = dataConfig.getString(base + ".priority", "medium");
-        String category = dataConfig.getString(base + ".category", "other");
-        String message = dataConfig.getString(base + ".message", "");
-        String assignee = dataConfig.getString(base + ".assignee", "");
-        String time = dataConfig.getString(base + ".timestamp", "");
-        String resolution = dataConfig.getString(base + ".resolution", "");
-        List<String> responses = dataConfig.getStringList(base + ".responses");
+        String player = ticketCfg.getString(base + ".player", "???");
+        String status = ticketCfg.getString(base + ".status", "open");
+        String priority = ticketCfg.getString(base + ".priority", "medium");
+        String category = ticketCfg.getString(base + ".category", "other");
+        String message = ticketCfg.getString(base + ".message", "");
+        String assignee = ticketCfg.getString(base + ".assignee", "");
+        String time = ticketCfg.getString(base + ".timestamp", "");
+        String resolution = ticketCfg.getString(base + ".resolution", "");
+        List<String> responses = ticketCfg.getStringList(base + ".responses");
 
         // Ticket info item (slot 4)
         List<String> infoLore = new ArrayList<>();
@@ -5080,10 +5114,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         for (int i = 0; i < message.length(); i += 40) {
             infoLore.add(ChatColor.WHITE + message.substring(i, Math.min(i + 40, message.length())));
         }
-        if (dataConfig.contains(base + ".world")) {
+        if (ticketCfg.contains(base + ".world")) {
             infoLore.add("");
-            infoLore.add(ChatColor.AQUA + "Location: " + dataConfig.getString(base + ".world") + " " +
-                dataConfig.getInt(base + ".x") + ", " + dataConfig.getInt(base + ".y") + ", " + dataConfig.getInt(base + ".z"));
+            infoLore.add(ChatColor.AQUA + "Location: " + ticketCfg.getString(base + ".world") + " " +
+                ticketCfg.getInt(base + ".x") + ", " + ticketCfg.getInt(base + ".y") + ", " + ticketCfg.getInt(base + ".z"));
         }
         gui.setItem(4, createGuiItem(Material.BOOK, ChatColor.GOLD + "Ticket #" + ticketId + " Info", infoLore));
 
@@ -5283,8 +5317,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Inventory gui = Bukkit.createInventory(null, 54, GUI_NOTES_VIEW + targetName);
         resetGridSlots();
         UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
-        if (dataConfig.contains("notes." + uuid)) {
-            List<String> notesList = dataConfig.getStringList("notes." + uuid);
+        FileConfiguration notesCfg = getNotesConfig();
+        if (notesCfg.contains("notes." + uuid)) {
+            List<String> notesList = notesCfg.getStringList("notes." + uuid);
             for (int i = 0; i < notesList.size(); i++) {
                 String note = notesList.get(i);
                 List<String> lore = new ArrayList<>();
@@ -5303,7 +5338,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private void openNoteManagementMenu(Player p, String targetName, int noteIndex) {
         UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
-        List<String> notesList = dataConfig.getStringList("notes." + uuid);
+        FileConfiguration notesCfg = getNotesConfig();
+        List<String> notesList = notesCfg.getStringList("notes." + uuid);
         
         if (noteIndex >= notesList.size()) return;
         
@@ -5374,6 +5410,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.openInventory(gui);
     }
 
+    private FileConfiguration getWarpConfig() {
+        return playersConfig.contains("warps") ? playersConfig : dataConfig;
+    }
+
     private void openWarpListMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 27, ChatColor.BLUE + "Warps");
         
@@ -5383,9 +5423,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         
         int warpSlot = 1;
-        if (dataConfig.contains("warps")) {
-            for (String warpName : dataConfig.getConfigurationSection("warps").getKeys(false)) {
-                String ownerStr = dataConfig.getString("warps." + warpName + ".owner");
+        FileConfiguration warpCfg = getWarpConfig();
+        if (warpCfg.contains("warps")) {
+            for (String warpName : warpCfg.getConfigurationSection("warps").getKeys(false)) {
+                String ownerStr = warpCfg.getString("warps." + warpName + ".owner");
                 
                 if (ownerStr != null && !ownerStr.equals(p.getUniqueId().toString())) {
                     continue; // Skip warps owned by someone else
@@ -5398,10 +5439,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 ItemStack warp = new ItemStack(Material.FILLED_MAP);
                 ItemMeta wMeta = warp.getItemMeta();
                 wMeta.setDisplayName(ChatColor.BLUE + warpName);
-                double x = dataConfig.getDouble("warps." + warpName + ".x");
-                double y = dataConfig.getDouble("warps." + warpName + ".y");
-                double z = dataConfig.getDouble("warps." + warpName + ".z");
-                String worldName = dataConfig.getString("warps." + warpName + ".world");
+                double x = warpCfg.getDouble("warps." + warpName + ".x");
+                double y = warpCfg.getDouble("warps." + warpName + ".y");
+                double z = warpCfg.getDouble("warps." + warpName + ".z");
+                String worldName = warpCfg.getString("warps." + warpName + ".world");
                 wMeta.setLore(Arrays.asList(
                     ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName,
                     ChatColor.GRAY + "X: " + ChatColor.WHITE + String.format("%.1f", x),
@@ -5672,7 +5713,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Inventory gui = Bukkit.createInventory(null, 27, GUI_UNTRUST_PLAYER);
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
         
-        List<String> trusted = dataConfig.getStringList("claims." + p.getUniqueId() + ".trusted");
+        List<String> trusted = getTrustedList(p.getUniqueId());
         int playersPerPage = 7;
         int start = page * playersPerPage;
         int end = Math.min(start + playersPerPage, trusted.size());
@@ -5708,35 +5749,79 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private Location getHomeLocation(UUID uuid) {
-        if (!dataConfig.contains("homes." + uuid)) return null;
-        String worldName = dataConfig.getString("homes." + uuid + ".world");
+        String root = "homes." + uuid;
+        FileConfiguration cfg = playersConfig.contains(root) ? playersConfig : dataConfig;
+        if (!cfg.contains(root)) return null;
+        String worldName = cfg.getString(root + ".world");
         World world = Bukkit.getWorld(worldName);
         if (world == null) return null;
-        
-        double x = dataConfig.getDouble("homes." + uuid + ".x");
-        double y = dataConfig.getDouble("homes." + uuid + ".y");
-        double z = dataConfig.getDouble("homes." + uuid + ".z");
-        float yaw = (float) dataConfig.getDouble("homes." + uuid + ".yaw");
-        float pitch = (float) dataConfig.getDouble("homes." + uuid + ".pitch");
-        
+
+        double x = cfg.getDouble(root + ".x");
+        double y = cfg.getDouble(root + ".y");
+        double z = cfg.getDouble(root + ".z");
+        float yaw = (float) cfg.getDouble(root + ".yaw");
+        float pitch = (float) cfg.getDouble(root + ".pitch");
+
         Location loc = new Location(world, x, y, z, yaw, pitch);
         return loc;
     }
 
     private Location getWarpLocation(String warpName) {
-        if (!dataConfig.contains("warps." + warpName)) return null;
-        String worldName = dataConfig.getString("warps." + warpName + ".world");
+        String root = "warps." + warpName;
+        FileConfiguration cfg = playersConfig.contains(root) ? playersConfig : dataConfig;
+        if (!cfg.contains(root)) return null;
+        String worldName = cfg.getString(root + ".world");
         World world = Bukkit.getWorld(worldName);
         if (world == null) return null;
-        
-        double x = dataConfig.getDouble("warps." + warpName + ".x");
-        double y = dataConfig.getDouble("warps." + warpName + ".y");
-        double z = dataConfig.getDouble("warps." + warpName + ".z");
-        float yaw = (float) dataConfig.getDouble("warps." + warpName + ".yaw");
-        float pitch = (float) dataConfig.getDouble("warps." + warpName + ".pitch");
-        
+
+        double x = cfg.getDouble(root + ".x");
+        double y = cfg.getDouble(root + ".y");
+        double z = cfg.getDouble(root + ".z");
+        float yaw = (float) cfg.getDouble(root + ".yaw");
+        float pitch = (float) cfg.getDouble(root + ".pitch");
+
         Location loc = new Location(world, x, y, z, yaw, pitch);
         return loc;
+    }
+
+    private FileConfiguration getClaimsConfig() {
+        return playersConfig.contains("claims") ? playersConfig : dataConfig;
+    }
+
+    private FileConfiguration getPwarpConfig() {
+        return playersConfig.contains("pwarps") ? playersConfig : dataConfig;
+    }
+
+    private FileConfiguration getNotesConfig() {
+        return playersConfig.contains("notes") ? playersConfig : dataConfig;
+    }
+
+    private List<String> getClaimList(UUID uuid) {
+        String path = "claims." + uuid + ".claimed";
+        if (playersConfig.contains(path)) return playersConfig.getStringList(path);
+        return dataConfig.getStringList(path);
+    }
+
+    private List<String> getTrustedList(UUID uuid) {
+        String path = "claims." + uuid + ".trusted";
+        if (playersConfig.contains(path)) return playersConfig.getStringList(path);
+        return dataConfig.getStringList(path);
+    }
+
+    private void setClaimList(UUID uuid, List<String> chunks) {
+        String path = "claims." + uuid + ".claimed";
+        playersConfig.set(path, chunks);
+        dataConfig.set(path, null);
+        savePlayersFile();
+        saveDataFile();
+    }
+
+    private void setTrustedList(UUID uuid, List<String> trusted) {
+        String path = "claims." + uuid + ".trusted";
+        playersConfig.set(path, trusted);
+        dataConfig.set(path, null);
+        savePlayersFile();
+        saveDataFile();
     }
 
     @EventHandler
@@ -5811,7 +5896,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // wrap handler in try/catch to log unexpected errors
         try {
         // Menu Selector
-        if (title.equals(GUI_MENU_SELECTOR)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_MENU_SELECTOR))) {
             if (type == Material.EMERALD_BLOCK) {
                 openPlayerMenu(p);
             } else if (type == Material.BLUE_STAINED_GLASS) {
@@ -5827,7 +5912,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Helper Menu
-        if (title.equals(GUI_HELPER_MENU)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_HELPER_MENU))) {
             if (itemName.equals("Tickets")) {
                 p.closeInventory();
                 openPlayerTicketMenu(p);
@@ -5857,7 +5942,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Moderator Menu
-        if (title.equals(GUI_MODERATOR_MENU)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_MODERATOR_MENU))) {
             if (itemName.equals("Tickets")) {
                 p.closeInventory();
                 openPlayerTicketMenu(p);
@@ -5899,15 +5984,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Player Menu
-        if (title.equals(GUI_PLAYER_MENU)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_MENU))) {
             if (itemName.equals("Set Home")) {
                 p.closeInventory();
-                dataConfig.set("homes." + p.getUniqueId() + ".x", p.getLocation().getX());
-                dataConfig.set("homes." + p.getUniqueId() + ".y", p.getLocation().getY());
-                dataConfig.set("homes." + p.getUniqueId() + ".z", p.getLocation().getZ());
-                dataConfig.set("homes." + p.getUniqueId() + ".world", p.getWorld().getName());
-                dataConfig.set("homes." + p.getUniqueId() + ".yaw", p.getLocation().getYaw());
-                dataConfig.set("homes." + p.getUniqueId() + ".pitch", p.getLocation().getPitch());
+                String root = "homes." + p.getUniqueId();
+                playersConfig.set(root + ".x", p.getLocation().getX());
+                playersConfig.set(root + ".y", p.getLocation().getY());
+                playersConfig.set(root + ".z", p.getLocation().getZ());
+                playersConfig.set(root + ".world", p.getWorld().getName());
+                playersConfig.set(root + ".yaw", p.getLocation().getYaw());
+                playersConfig.set(root + ".pitch", p.getLocation().getPitch());
+                dataConfig.set(root, null);
+                savePlayersFile();
                 saveDataFile();
                 p.sendMessage(ChatColor.GREEN + "Home set!");
             } else if (itemName.equals("TP Home")) {
@@ -5955,7 +6043,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Player ticket menu
-        if (title.equals(GUI_PLAYER_TICKET_MENU)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_PLAYER_TICKET_MENU))) {
             if (itemName.equals("Create Ticket")) {
                 p.closeInventory();
                 openCategoryMenu(p);
@@ -5994,7 +6082,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Event list menu
-        if (title.equals(GUI_EVENT_LIST)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_EVENT_LIST))) {
             if (type == Material.BARRIER) {
                 openMainMenu(p);
             } else {
@@ -6012,7 +6100,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Custom enchant menu
-        if (title.equals(GUI_CUSTOM_ENCHANTS)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_CUSTOM_ENCHANTS))) {
             if (type == Material.BARRIER) {
                 openPlayerMenu(p);
             } else if (type == Material.ENCHANTED_BOOK && itemName != null && !itemName.trim().isEmpty()) {
@@ -6024,7 +6112,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         // Active event menu
-        if (title.equals(GUI_ACTIVE_EVENT)) {
+        if (strippedTitle.equals(ChatColor.stripColor(GUI_ACTIVE_EVENT))) {
             if (itemName.equals("Back to Menu")) {
                 openMainMenu(p);
             } else if (itemName.equals("End Event")) {
@@ -6056,13 +6144,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // My ticket options detail menu
         if (title.startsWith(GUI_MY_TICKET_OPTIONS)) {
             String ticketId = title.replace(GUI_MY_TICKET_OPTIONS, "").trim();
+            FileConfiguration ticketCfg = getTicketConfig();
             if (itemName.equals("View Ticket")) {
                 p.closeInventory();
                 openTicketDetailMenu(p, ticketId);
             } else if (itemName.equals("Delete Ticket")) {
                 p.closeInventory();
-                dataConfig.set("tickets." + ticketId, null);
-                saveDataFile();
+                ticketCfg.set("tickets." + ticketId, null);
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " deleted.");
                 openMyTicketsMenu(p);
             } else if (itemName.equals("View Ticket Outcome")) {
@@ -6089,13 +6178,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // My appeal options detail menu
         if (title.startsWith(GUI_MY_APPEAL_OPTIONS)) {
             String appealId = title.replace(GUI_MY_APPEAL_OPTIONS, "").trim();
+            FileConfiguration ticketCfg = getTicketConfig();
             if (itemName.equals("View Appeal")) {
-                String message = dataConfig.getString("appeals." + appealId + ".message", "");
+                String message = ticketCfg.getString("appeals." + appealId + ".message", "");
                 p.sendMessage(ChatColor.AQUA + "Appeal #" + appealId + ": " + ChatColor.WHITE + message);
             } else if (itemName.equals("Delete Appeal")) {
                 p.closeInventory();
-                dataConfig.set("appeals." + appealId, null);
-                saveDataFile();
+                ticketCfg.set("appeals." + appealId, null);
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Appeal #" + appealId + " deleted.");
                 openMyAppealsMenu(p);
             } else if (itemName.equals("View Appeal Outcome")) {
@@ -6259,7 +6349,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     String stripped = ChatColor.stripColor(line);
                     if (stripped.startsWith("ID:")) { warpId = stripped.substring(3); break; }
                 }
-                if (warpId != null && dataConfig.contains("pwarps." + warpId)) {
+                if (warpId != null && getPwarpConfig().contains("pwarps." + warpId)) {
                     p.closeInventory();
                     pendingPwarpAction.put(p.getUniqueId(), warpId);
                     openPwarpManageGUI(p, warpId);
@@ -6271,7 +6361,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Player Warp Manage GUI click
         if (title.startsWith(GUI_PWARP_MANAGE)) {
             String warpId = pendingPwarpAction.get(p.getUniqueId());
-            if (warpId == null || !dataConfig.contains("pwarps." + warpId)) {
+            FileConfiguration pwarpCfg = getPwarpConfig();
+            if (warpId == null || !pwarpCfg.contains("pwarps." + warpId)) {
                 p.sendMessage(ChatColor.RED + "Warp no longer exists.");
                 p.closeInventory();
                 return;
@@ -6284,25 +6375,25 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
             if (type == Material.ENDER_PEARL) {
                 p.closeInventory();
-                World w = Bukkit.getWorld(dataConfig.getString("pwarps." + warpId + ".world", "world"));
+                World w = Bukkit.getWorld(pwarpCfg.getString("pwarps." + warpId + ".world", "world"));
                 if (w != null) {
                     Location loc = new Location(w,
-                        dataConfig.getDouble("pwarps." + warpId + ".x"),
-                        dataConfig.getDouble("pwarps." + warpId + ".y"),
-                        dataConfig.getDouble("pwarps." + warpId + ".z"));
+                        pwarpCfg.getDouble("pwarps." + warpId + ".x"),
+                        pwarpCfg.getDouble("pwarps." + warpId + ".y"),
+                        pwarpCfg.getDouble("pwarps." + warpId + ".z"));
                     p.teleport(loc);
-                    dataConfig.set("pwarps." + warpId + ".visits", dataConfig.getInt("pwarps." + warpId + ".visits", 0) + 1);
-                    saveDataFile();
-                    p.sendMessage(ChatColor.GREEN + "Warped to " + dataConfig.getString("pwarps." + warpId + ".name", warpId));
+                    pwarpCfg.set("pwarps." + warpId + ".visits", pwarpCfg.getInt("pwarps." + warpId + ".visits", 0) + 1);
+                    if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
+                    p.sendMessage(ChatColor.GREEN + "Warped to " + pwarpCfg.getString("pwarps." + warpId + ".name", warpId));
                 }
                 return;
             }
 
             if (type == Material.REDSTONE) {
-                String owner = dataConfig.getString("pwarps." + warpId + ".owner", "");
+                String owner = pwarpCfg.getString("pwarps." + warpId + ".owner", "");
                 if (owner.equals(p.getUniqueId().toString()) || p.isOp() || p.hasPermission("dmt.admin")) {
-                    dataConfig.set("pwarps." + warpId, null);
-                    saveDataFile();
+                    pwarpCfg.set("pwarps." + warpId, null);
+                    if (pwarpCfg == dataConfig) saveDataFile(); else savePlayersFile();
                     p.sendMessage(ChatColor.GREEN + "Player warp deleted.");
                 } else {
                     p.sendMessage(ChatColor.RED + "You are not allowed to delete this warp.");
@@ -6426,8 +6517,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             } else if (type == Material.EMERALD_BLOCK) {
                 // Confirm delete
                 p.closeInventory();
-                dataConfig.set("warps." + warpName, null);
-                saveDataFile();
+                FileConfiguration warpCfg = getWarpConfig();
+                warpCfg.set("warps." + warpName, null);
+                if (warpCfg == dataConfig) saveDataFile(); else savePlayersFile();
                 p.sendMessage(ChatColor.GREEN + "Warp '" + warpName + "' deleted!");
                 pendingWarpDelete.remove(p.getUniqueId());
             } else if (type == Material.REDSTONE_BLOCK) {
@@ -6791,6 +6883,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         } else if (title.startsWith(GUI_TICKET_DETAIL)) {
             String ticketId = title.replace(GUI_TICKET_DETAIL, "").trim();
+            FileConfiguration ticketCfg = getTicketConfig();
             boolean isAdmin = p.hasPermission("dmt.admin") || p.hasPermission("realmtool.admin");
             if (type == Material.REDSTONE) { 
                 if (isAdmin) {
@@ -6808,14 +6901,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             } else if (type == Material.ARROW) {
                 if (!isAdmin) return;
                 // Set in progress
-                dataConfig.set("tickets." + ticketId + ".status", "in_progress");
-                saveDataFile();
+                ticketCfg.set("tickets." + ticketId + ".status", "in_progress");
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " set to in_progress.");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.GOLD_INGOT) {
                 if (!isAdmin) return;
                 // Cycle priority
-                String current = dataConfig.getString("tickets." + ticketId + ".priority", "medium");
+                String current = ticketCfg.getString("tickets." + ticketId + ".priority", "medium");
                 String next;
                 switch (current) {
                     case "low": next = "medium"; break;
@@ -6823,15 +6916,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     case "high": next = "critical"; break;
                     default: next = "low"; break;
                 }
-                dataConfig.set("tickets." + ticketId + ".priority", next);
-                saveDataFile();
+                ticketCfg.set("tickets." + ticketId + ".priority", next);
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " priority set to " + next + ".");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.ARMOR_STAND) {
                 if (!isAdmin) return;
                 // Assign to me
-                dataConfig.set("tickets." + ticketId + ".assignee", p.getName());
-                saveDataFile();
+                ticketCfg.set("tickets." + ticketId + ".assignee", p.getName());
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " assigned to you.");
                 openTicketDetailMenu(p, ticketId);
             } else if (type == Material.EMERALD_BLOCK) {
@@ -6842,11 +6935,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Type a resolution reason for ticket #" + ticketId + ":");
             } else if (type == Material.BARRIER) {
                 // Close ticket
-                dataConfig.set("tickets." + ticketId + ".status", "closed");
-                saveDataFile();
+                ticketCfg.set("tickets." + ticketId + ".status", "closed");
+                saveTicketFile();
                 p.sendMessage(ChatColor.GREEN + "Ticket #" + ticketId + " closed.");
                 // Notify player
-                String ticketPlayer = dataConfig.getString("tickets." + ticketId + ".player", "");
+                String ticketPlayer = ticketCfg.getString("tickets." + ticketId + ".player", "");
                 Player target = Bukkit.getPlayer(ticketPlayer);
                 if (target != null && target.isOnline()) {
                     target.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + "Your ticket #" + ticketId + " has been closed by " + p.getName() + ".");
@@ -6859,11 +6952,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             } else if (type == Material.ENDER_PEARL) {
                 if (!isAdmin) return;
                 // Teleport to ticket location
-                String world = dataConfig.getString("tickets." + ticketId + ".world");
+                String world = ticketCfg.getString("tickets." + ticketId + ".world");
                 if (world != null && Bukkit.getWorld(world) != null) {
-                    int x = dataConfig.getInt("tickets." + ticketId + ".x");
-                    int y = dataConfig.getInt("tickets." + ticketId + ".y");
-                    int z = dataConfig.getInt("tickets." + ticketId + ".z");
+                    int x = ticketCfg.getInt("tickets." + ticketId + ".x");
+                    int y = ticketCfg.getInt("tickets." + ticketId + ".y");
+                    int z = ticketCfg.getInt("tickets." + ticketId + ".z");
                     p.teleport(new Location(Bukkit.getWorld(world), x + 0.5, y, z + 0.5));
                     p.closeInventory();
                     p.sendMessage(ChatColor.GREEN + "Teleported to ticket #" + ticketId + " location.");
@@ -6893,7 +6986,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 // User clicked on a note - find it by display name
                 String clickedNoteName = itemName;
                 UUID uuid = Bukkit.getOfflinePlayer(target).getUniqueId();
-                List<String> notesList = dataConfig.getStringList("notes." + uuid);
+                FileConfiguration notesCfg = getNotesConfig();
+                List<String> notesList = notesCfg.getStringList("notes." + uuid);
                 
                 // Find which note index was clicked
                 for (int i = 0; i < notesList.size(); i++) {
@@ -6923,7 +7017,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 } else if (type == Material.BOOK) {
                     // View full note
                     UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
-                    List<String> notesList = dataConfig.getStringList("notes." + uuid);
+                    FileConfiguration notesCfg = getNotesConfig();
+                    List<String> notesList = notesCfg.getStringList("notes." + uuid);
                     if (noteIndex < notesList.size()) {
                         p.sendMessage(ChatColor.GOLD + "=== Full Note ===");
                         p.sendMessage(ChatColor.YELLOW + notesList.get(noteIndex));
@@ -6936,11 +7031,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 } else if (type == Material.REDSTONE_BLOCK) {
                     // Delete note
                     UUID uuid = Bukkit.getOfflinePlayer(targetName).getUniqueId();
-                    List<String> notesList = dataConfig.getStringList("notes." + uuid);
+                    FileConfiguration notesCfg = getNotesConfig();
+                    List<String> notesList = notesCfg.getStringList("notes." + uuid);
                     if (noteIndex < notesList.size()) {
                         notesList.remove(noteIndex);
-                        dataConfig.set("notes." + uuid, notesList);
-                        saveDataFile();
+                        notesCfg.set("notes." + uuid, notesList);
+                        if (notesCfg == dataConfig) saveDataFile(); else savePlayersFile();
                         p.sendMessage(ChatColor.RED + "Note deleted.");
                         openPlayerNotesMenu(p, targetName);
                     }
@@ -7922,18 +8018,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         saveDataFile();
 
         // --- TICKET NOTIFICATIONS ON JOIN ---
-        if (dataConfig.contains("tickets")) {
+        FileConfiguration ticketCfg = getTicketConfig();
+        if (ticketCfg.contains("tickets")) {
             int updatedCount = 0;
-            for (String key : dataConfig.getConfigurationSection("tickets").getKeys(false)) {
+            for (String key : ticketCfg.getConfigurationSection("tickets").getKeys(false)) {
                 if (key.equals("next_id")) continue;
-                String ticketPlayer = dataConfig.getString("tickets." + key + ".player", "");
-                if (ticketPlayer.equalsIgnoreCase(e.getPlayer().getName()) && dataConfig.getBoolean("tickets." + key + ".has_new_response", false)) {
+                String ticketPlayer = ticketCfg.getString("tickets." + key + ".player", "");
+                if (ticketPlayer.equalsIgnoreCase(e.getPlayer().getName()) && ticketCfg.getBoolean("tickets." + key + ".has_new_response", false)) {
                     updatedCount++;
-                    dataConfig.set("tickets." + key + ".has_new_response", false);
+                    ticketCfg.set("tickets." + key + ".has_new_response", false);
                 }
             }
             if (updatedCount > 0) {
-                saveDataFile();
+                saveTicketFile();
                 final int count = updatedCount;
                 Bukkit.getScheduler().runTaskLater(this, () -> {
                     if (e.getPlayer().isOnline()) {
@@ -8931,7 +9028,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private List<String> getClaimedChunks(UUID uuid) {
-        return dataConfig.getStringList("claims." + uuid + ".claimed");
+        return getClaimList(uuid);
     }
 
     private void claimChunk(UUID uuid, String chunkKey) {
@@ -8947,12 +9044,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return; // no claim within radius from another player's claim
         }
 
-        String path = "claims." + uuid + ".claimed";
-        List<String> claimed = dataConfig.getStringList(path);
+        List<String> claimed = getClaimList(uuid);
         if (!claimed.contains(chunkKey)) {
             claimed.add(chunkKey);
-            dataConfig.set(path, claimed);
-            saveDataFile();
+            setClaimList(uuid, claimed);
         }
     }
 
@@ -8963,11 +9058,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         String worldName = parts[0];
         int targetX = Integer.parseInt(parts[1]);
         int targetZ = Integer.parseInt(parts[2]);
+        FileConfiguration claimsCfg = getClaimsConfig();
 
-        for (String key : dataConfig.getKeys(true)) {
+        for (String key : claimsCfg.getKeys(true)) {
             if (key.contains("claims") && key.contains("claimed")) {
                 String ownerId = key.split("\\.")[1];
-                List<String> chunks = dataConfig.getStringList(key);
+                List<String> chunks = claimsCfg.getStringList(key);
                 for (String c : chunks) {
                     String[] cParts = c.split(":");
                     if (cParts.length != 3) continue;
@@ -8986,6 +9082,31 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }
             }
         }
+
+        if (claimsCfg != dataConfig) {
+            for (String key : dataConfig.getKeys(true)) {
+                if (key.contains("claims") && key.contains("claimed")) {
+                    String ownerId = key.split("\\.")[1];
+                    List<String> chunks = dataConfig.getStringList(key);
+                    for (String c : chunks) {
+                        String[] cParts = c.split(":");
+                        if (cParts.length != 3) continue;
+                        if (!worldName.equals(cParts[0])) continue;
+                        int chunkX = Integer.parseInt(cParts[1]);
+                        int chunkZ = Integer.parseInt(cParts[2]);
+                        int dx = Math.abs(chunkX - targetX);
+                        int dz = Math.abs(chunkZ - targetZ);
+                        if (dx <= radius && dz <= radius) {
+                            if (chunkX == targetX && chunkZ == targetZ) continue;
+                            try {
+                                return UUID.fromString(ownerId);
+                            } catch (IllegalArgumentException ignored) {
+                            }
+                        }
+                    }
+                }
+            }
+        }
         return null;
     }
 
@@ -8995,45 +9116,50 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return; // only owner can unclaim this chunk
         }
 
-        String path = "claims." + uuid + ".claimed";
-        List<String> claimed = dataConfig.getStringList(path);
+        List<String> claimed = getClaimList(uuid);
         claimed.remove(chunkKey);
-        dataConfig.set(path, claimed);
-        saveDataFile();
+        setClaimList(uuid, claimed);
     }
 
     private void trustPlayer(UUID owner, String trustedName) {
-        String path = "claims." + owner + ".trusted";
-        List<String> trusted = dataConfig.getStringList(path);
+        List<String> trusted = getTrustedList(owner);
         if (!trusted.contains(trustedName)) {
             trusted.add(trustedName);
-            dataConfig.set(path, trusted);
-            saveDataFile();
+            setTrustedList(owner, trusted);
         }
     }
 
     private void untrustPlayer(UUID owner, String trustedName) {
-        String path = "claims." + owner + ".trusted";
-        List<String> trusted = dataConfig.getStringList(path);
+        List<String> trusted = getTrustedList(owner);
         trusted.remove(trustedName);
-        dataConfig.set(path, trusted);
-        saveDataFile();
+        setTrustedList(owner, trusted);
     }
 
     private boolean isChunkClaimed(String chunkKey) {
-        for (String key : dataConfig.getKeys(true)) {
+        FileConfiguration config = getClaimsConfig();
+        for (String key : config.getKeys(true)) {
             if (key.contains("claims") && key.contains("claimed")) {
-                List<String> chunks = dataConfig.getStringList(key);
+                List<String> chunks = config.getStringList(key);
                 if (chunks.contains(chunkKey)) return true;
+            }
+        }
+        // fallback to old data where claims are still in dataConfig
+        if (config != dataConfig) {
+            for (String key : dataConfig.getKeys(true)) {
+                if (key.contains("claims") && key.contains("claimed")) {
+                    List<String> chunks = dataConfig.getStringList(key);
+                    if (chunks.contains(chunkKey)) return true;
+                }
             }
         }
         return false;
     }
 
     private UUID getChunkOwner(String chunkKey) {
-        for (String key : dataConfig.getKeys(true)) {
+        FileConfiguration config = getClaimsConfig();
+        for (String key : config.getKeys(true)) {
             if (key.contains("claims") && key.contains("claimed")) {
-                List<String> chunks = dataConfig.getStringList(key);
+                List<String> chunks = config.getStringList(key);
                 if (chunks.contains(chunkKey)) {
                     String[] parts = key.split("\\.");
                     if (parts.length > 1) {
@@ -9041,6 +9167,23 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             return UUID.fromString(parts[1]);
                         } catch (IllegalArgumentException e) {
                             return null;
+                        }
+                    }
+                }
+            }
+        }
+        if (config != dataConfig) {
+            for (String key : dataConfig.getKeys(true)) {
+                if (key.contains("claims") && key.contains("claimed")) {
+                    List<String> chunks = dataConfig.getStringList(key);
+                    if (chunks.contains(chunkKey)) {
+                        String[] parts = key.split("\\.");
+                        if (parts.length > 1) {
+                            try {
+                                return UUID.fromString(parts[1]);
+                            } catch (IllegalArgumentException e) {
+                                return null;
+                            }
                         }
                     }
                 }
@@ -9058,8 +9201,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         UUID owner = getChunkOwner(chunkKey);
         if (owner == null) return true;
         if (p.getUniqueId().equals(owner)) return true;
-        
-        List<String> trusted = dataConfig.getStringList("claims." + owner + ".trusted");
+
+        List<String> trusted = getTrustedList(owner);
         return trusted.contains(p.getName());
     }
 
@@ -10478,10 +10621,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         int limit = getPwarpLimit(p.getUniqueId());
         List<String> ownedWarps = new ArrayList<>();
-        if (dataConfig.contains("pwarps")) {
-            for (String wId : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+        FileConfiguration pwarpCfg = getPwarpConfig();
+        if (pwarpCfg.contains("pwarps")) {
+            for (String wId : pwarpCfg.getConfigurationSection("pwarps").getKeys(false)) {
                 String wPath = "pwarps." + wId;
-                if (p.getUniqueId().toString().equals(dataConfig.getString(wPath + ".owner", ""))) {
+                if (p.getUniqueId().toString().equals(pwarpCfg.getString(wPath + ".owner", ""))) {
                     ownedWarps.add(wId);
                 }
             }
@@ -10495,10 +10639,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             // refresh list after pruning
             ownedWarps.clear();
-            if (dataConfig.contains("pwarps")) {
-                for (String wId : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
+            pwarpCfg = getPwarpConfig();
+            if (pwarpCfg.contains("pwarps")) {
+                for (String wId : pwarpCfg.getConfigurationSection("pwarps").getKeys(false)) {
                     String wPath = "pwarps." + wId;
-                    if (p.getUniqueId().toString().equals(dataConfig.getString(wPath + ".owner", ""))) {
+                    if (p.getUniqueId().toString().equals(pwarpCfg.getString(wPath + ".owner", ""))) {
                         ownedWarps.add(wId);
                     }
                 }
@@ -10510,9 +10655,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         for (int i = 0; i < showCount; i++) {
             String wId = ownedWarps.get(i);
             String wPath = "pwarps." + wId;
-            String name = dataConfig.getString(wPath + ".name", wId);
-            String owner = dataConfig.getString(wPath + ".ownerName", "Unknown");
-            int visits = dataConfig.getInt(wPath + ".visits", 0);
+            String name = pwarpCfg.getString(wPath + ".name", wId);
+            String owner = pwarpCfg.getString(wPath + ".ownerName", "Unknown");
+            int visits = pwarpCfg.getInt(wPath + ".visits", 0);
             ItemStack display = new ItemStack(Material.ENDER_PEARL);
             ItemMeta meta = display.getItemMeta();
             meta.setDisplayName(ChatColor.GREEN + name);
@@ -10539,7 +10684,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
 
-        String warpName = dataConfig.getString("pwarps." + warpId + ".name", warpId);
+        FileConfiguration pwarpCfg = getPwarpConfig();
+        String warpName = pwarpCfg.getString("pwarps." + warpId + ".name", warpId);
         gui.setItem(10, createGuiItem(Material.ENDER_PEARL, ChatColor.GREEN + "Teleport to " + warpName));
         gui.setItem(13, createGuiItem(Material.REDSTONE, ChatColor.RED + "Delete Warp"));
         gui.setItem(16, createGuiItem(Material.BARRIER, ChatColor.YELLOW + "Back"));
@@ -10560,9 +10706,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private int getPwarpCount(UUID uuid) {
         int count = 0;
-        if (!dataConfig.contains("pwarps")) return 0;
-        for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
-            if (dataConfig.getString("pwarps." + id + ".owner", "").equals(uuid.toString())) count++;
+        FileConfiguration pwarpCfg = getPwarpConfig();
+        if (!pwarpCfg.contains("pwarps")) return 0;
+        for (String id : pwarpCfg.getConfigurationSection("pwarps").getKeys(false)) {
+            if (pwarpCfg.getString("pwarps." + id + ".owner", "").equals(uuid.toString())) count++;
         }
         return count;
     }
@@ -10580,10 +10727,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private int prunePwarpsToLimit(UUID uuid, int limit) {
         if (limit < 0) limit = 0;
+        FileConfiguration pwarpCfg = getPwarpConfig();
         List<String> owned = new ArrayList<>();
-        if (dataConfig.contains("pwarps")) {
-            for (String id : dataConfig.getConfigurationSection("pwarps").getKeys(false)) {
-                if (dataConfig.getString("pwarps." + id + ".owner", "").equals(uuid.toString())) {
+        if (pwarpCfg.contains("pwarps")) {
+            for (String id : pwarpCfg.getConfigurationSection("pwarps").getKeys(false)) {
+                if (pwarpCfg.getString("pwarps." + id + ".owner", "").equals(uuid.toString())) {
                     owned.add(id);
                 }
             }
@@ -10592,10 +10740,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         int removed = 0;
         Collections.sort(owned);
         for (int i = 0; i < owned.size() - limit; i++) {
-            dataConfig.set("pwarps." + owned.get(i), null);
+            pwarpCfg.set("pwarps." + owned.get(i), null);
+            if (pwarpCfg == dataConfig) {
+                saveDataFile();
+            } else {
+                savePlayersFile();
+            }
             removed++;
         }
-        if (removed > 0) saveDataFile();
         return removed;
     }
 
