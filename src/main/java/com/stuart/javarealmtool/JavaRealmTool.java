@@ -24,8 +24,10 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.*;
 import org.bukkit.event.block.*;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.*;
 import org.bukkit.event.player.*;
@@ -38,6 +40,7 @@ import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.*;
 import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.scoreboard.*;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
@@ -378,6 +381,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (getCommand("economy") != null) { getCommand("economy").setExecutor(this); getCommand("economy").setTabCompleter(this); }
             if (getCommand("discord") != null) { getCommand("discord").setExecutor(this); getCommand("discord").setTabCompleter(this); }
             if (getCommand("spawn") != null) { getCommand("spawn").setExecutor(this); getCommand("spawn").setTabCompleter(this); }
+            if (getCommand("factions") != null) { getCommand("factions").setExecutor(this); getCommand("factions").setTabCompleter(this); }
             if (getCommand("personal") != null) { getCommand("personal").setExecutor(this); getCommand("personal").setTabCompleter(this); }
 
             // Hide /personal commands from console logs
@@ -2160,6 +2164,18 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     saveLoc("server_spawn", p.getLocation());
                     p.sendMessage(ChatColor.GREEN + "Server spawn location set to your current position.");
                     break;
+                case "setfactionsspawn":
+                    if (!hasDmtCommandPermission(p, "setfactionsspawn")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (!isFactionsWorld(p.getWorld())) {
+                        p.sendMessage(ChatColor.RED + "You must stand in the configured factions world to set its spawn.");
+                        return true;
+                    }
+                    saveLoc("factions_world.spawn_location", p.getLocation());
+                    p.sendMessage(ChatColor.GREEN + "Factions spawn location set to your current position.");
+                    break;
                 case "clearserverspawn":
                     if (!hasDmtCommandPermission(p, "clearserverspawn")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
@@ -2488,6 +2504,37 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.teleport(Bukkit.getWorlds().get(0).getSpawnLocation());
                 p.sendMessage(ChatColor.AQUA + "Teleported to spawn.");
             }
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("factions")) {
+            String worldName = getFactionsWorldName();
+            if (worldName.isEmpty()) {
+                p.sendMessage(ChatColor.RED + "Factions world is not configured.");
+                return true;
+            }
+
+            World factionsWorld = Bukkit.getWorld(worldName);
+            if (factionsWorld == null) {
+                p.sendMessage(ChatColor.RED + "Factions world '" + worldName + "' not found.");
+                return true;
+            }
+
+            if (dataConfig.getBoolean("worldlocks." + worldName, false) && !p.hasPermission("dmt.admin")) {
+                p.sendMessage(ChatColor.RED + "The factions world is currently locked.");
+                return true;
+            }
+
+            Location current = p.getLocation();
+            if (current != null && current.getWorld() != null) {
+                saveLoc("last_location." + p.getUniqueId() + "." + current.getWorld().getName(), current);
+            }
+
+            Location factionsSpawn = getFactionsSpawnLocation();
+            if (factionsSpawn == null) factionsSpawn = factionsWorld.getSpawnLocation();
+
+            p.teleport(factionsSpawn);
+            p.sendMessage(ChatColor.AQUA + "Teleported to factions.");
             return true;
         }
 
@@ -3243,6 +3290,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/kit" + ChatColor.WHITE + " - Browse and claim kits");
         p.sendMessage(ChatColor.GREEN + "/crate" + ChatColor.WHITE + " - Open the crate menu");
         p.sendMessage(ChatColor.GREEN + "/spawn" + ChatColor.WHITE + " - Teleport to the server spawn");
+        p.sendMessage(ChatColor.GREEN + "/factions" + ChatColor.WHITE + " - Teleport to the factions world");
         p.sendMessage(ChatColor.GREEN + "/bounty" + ChatColor.WHITE + " - View the bounty board");
         p.sendMessage(ChatColor.GREEN + "/bounty set <player> <amount>" + ChatColor.WHITE + " - Place a bounty");
         p.sendMessage(ChatColor.GREEN + "/balance" + ChatColor.WHITE + " - Show XP level & coin balance");
@@ -3292,6 +3340,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/dmt hub forcespawn <true|false>" + ChatColor.WHITE + " - Use hub or last world for join spawn");
             p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
             p.sendMessage(ChatColor.AQUA + "/dmt setserverspawn" + ChatColor.WHITE + " - Set server spawn (joins will teleport here)");
+            p.sendMessage(ChatColor.AQUA + "/dmt setfactionsspawn" + ChatColor.WHITE + " - Set factions world spawn");
             p.sendMessage(ChatColor.AQUA + "/dmt clearserverspawn" + ChatColor.WHITE + " - Clear server spawn setting");
             p.sendMessage(ChatColor.AQUA + "/dmt spawnlast" + ChatColor.WHITE + " - List stored world locations");
             p.sendMessage(ChatColor.AQUA + "/dmt spawnlast tp <world>" + ChatColor.WHITE + " - Teleport to stored last location");
@@ -3379,6 +3428,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             case "spawnlast":
                 p.sendMessage(ChatColor.AQUA + "/dmt spawnlast" + ChatColor.WHITE + " - List your saved last locations");
                 p.sendMessage(ChatColor.AQUA + "/dmt spawnlast tp <world>" + ChatColor.WHITE + " - Teleport to a saved location in that world");
+                break;
+            case "setfactionsspawn":
+                p.sendMessage(ChatColor.AQUA + "/dmt setfactionsspawn" + ChatColor.WHITE + " - Set the factions world spawn while standing in it");
                 break;
             case "spawn":
                 p.sendMessage(ChatColor.AQUA + "/dmt spawn view" + ChatColor.WHITE + " - View disabled mob spawns");
@@ -4494,6 +4546,27 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         tsMeta.setLore(Arrays.asList(ChatColor.GRAY + "Teleport to server spawn"));
         tpSpawn.setItemMeta(tsMeta);
         gui.setItem(getNextGridSlot(), tpSpawn);
+
+        // TP Factions
+        ItemStack tpFactions = new ItemStack(Material.NETHER_STAR);
+        ItemMeta tfMeta = tpFactions.getItemMeta();
+        tfMeta.setDisplayName(ChatColor.RED + "TP Factions");
+        String factionsWorldName = getFactionsWorldName();
+        String displayWorldName = factionsWorldName.isEmpty() ? "Not configured" : factionsWorldName;
+        String safeZoneStatus = getConfig().getBoolean("factions_world.safe_zone_enabled", true)
+            ? "Safe Zone: " + (int) Math.round(getFactionsSafeZoneRadius()) + " blocks"
+            : "Safe Zone: Disabled";
+        String claimStatus = getConfig().getBoolean("factions_world.claims_enabled", true)
+            ? "Claims: Enabled"
+            : "Claims: Disabled";
+        tfMeta.setLore(Arrays.asList(
+            ChatColor.GRAY + "Teleport to the factions world",
+            ChatColor.DARK_GRAY + "World: " + ChatColor.GRAY + displayWorldName,
+            ChatColor.DARK_GRAY + safeZoneStatus,
+            ChatColor.DARK_GRAY + claimStatus
+        ));
+        tpFactions.setItemMeta(tfMeta);
+        gui.setItem(getNextGridSlot(), tpFactions);
         
         // Set Warp
         ItemStack setWarp = new ItemStack(Material.OAK_SIGN);
@@ -5668,20 +5741,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         boolean confirmAllowed = true;
 
         if (action.equals("claim")) {
-            UUID nearbyOwner = getNearbyClaimOwner(chunkKey, CLAIM_PROXIMITY_RADIUS);
-            boolean nearbyOther = nearbyOwner != null && !nearbyOwner.equals(p.getUniqueId());
-
-            if (chunkOwnedByOthers) {
-                message = "This chunk is already claimed by another player.";
+            if (!isClaimingAllowedInWorld(p.getWorld())) {
+                message = "Claims can only be created in the configured factions world.";
                 confirmAllowed = false;
-            } else if (chunkOwnedByPlayer) {
-                message = "You already own this chunk.";
-                confirmAllowed = false;
-            } else if (nearbyOther) {
-                message = "This chunk is too close to another claim (in a " + CLAIM_PROXIMITY_RADIUS + "-chunk buffer).";
+            } else if (isInsideFactionsSafeZone(p.getLocation())) {
+                message = "You cannot claim land inside the factions spawn safe zone.";
                 confirmAllowed = false;
             } else {
-                message = "Do you want to claim this chunk?";
+                UUID nearbyOwner = getNearbyClaimOwner(chunkKey, CLAIM_PROXIMITY_RADIUS);
+                boolean nearbyOther = nearbyOwner != null && !nearbyOwner.equals(p.getUniqueId());
+
+                if (chunkOwnedByOthers) {
+                    message = "This chunk is already claimed by another player.";
+                    confirmAllowed = false;
+                } else if (chunkOwnedByPlayer) {
+                    message = "You already own this chunk.";
+                    confirmAllowed = false;
+                } else if (nearbyOther) {
+                    message = "This chunk is too close to another claim (in a " + CLAIM_PROXIMITY_RADIUS + "-chunk buffer).";
+                    confirmAllowed = false;
+                } else {
+                    message = "Do you want to claim this chunk?";
+                }
             }
         } else {
             if (chunkOwnedByPlayer) {
@@ -6075,6 +6156,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     p.teleport(Bukkit.getWorlds().get(0).getSpawnLocation());
                     p.sendMessage(ChatColor.AQUA + "Teleported to spawn.");
                 }
+            } else if (itemName.equals("TP Factions")) {
+                p.closeInventory();
+                Bukkit.dispatchCommand(p, "factions");
             } else if (itemName.equals("Set Warp")) {
                 p.closeInventory();
                 pendingActions.put(p.getUniqueId(), new PunishmentContext(null, ActionType.SET_WARP));
@@ -6764,7 +6848,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.closeInventory();
                 if (actionType.equals("claim")) {
                     UUID owner = getChunkOwner(chunkKey);
-                    if (owner != null && !owner.equals(p.getUniqueId())) {
+                    if (!isClaimingAllowedInWorld(p.getWorld())) {
+                        p.sendMessage(ChatColor.RED + "Claims can only be created in the configured factions world.");
+                    } else if (isInsideFactionsSafeZone(p.getLocation())) {
+                        p.sendMessage(ChatColor.RED + "You cannot claim land inside the factions spawn safe zone.");
+                    } else if (owner != null && !owner.equals(p.getUniqueId())) {
                         p.sendMessage(ChatColor.RED + "This chunk is already claimed by someone else.");
                     } else {
                         int limit = getChunkLimit(p.getUniqueId());
@@ -7189,6 +7277,17 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Chunk Entry/Exit Logic
         Player p = e.getPlayer();
         if (e.getTo() == null) return;
+
+        boolean wasInFactionsSafeZone = isInsideFactionsSafeZone(e.getFrom());
+        boolean isInFactionsSafeZone = isInsideFactionsSafeZone(e.getTo());
+        if (wasInFactionsSafeZone != isInFactionsSafeZone) {
+            if (isInFactionsSafeZone) {
+                sendActionBar(p, ChatColor.AQUA + "Entered factions safe zone");
+            } else {
+                sendActionBar(p, ChatColor.YELLOW + "Left factions safe zone");
+            }
+        }
+        showFactionsSafeZoneBorderParticles(p, e.getTo());
         
         String newChunk = getChunkKey(e.getTo());
         String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
@@ -7353,6 +7452,45 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (isPunished(p.getUniqueId())) e.setCancelled(true);
         }
     }
+
+    @EventHandler
+    public void onFactionsSafeZoneDamage(EntityDamageEvent e) {
+        if (!(e.getEntity() instanceof Player)) return;
+        Player p = (Player) e.getEntity();
+        if (isInsideFactionsSafeZone(p.getLocation())) {
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onFactionsSafeZonePvp(EntityDamageByEntityEvent e) {
+        Player attacker = null;
+        if (e.getDamager() instanceof Player) {
+            attacker = (Player) e.getDamager();
+        } else if (e.getDamager() instanceof Projectile) {
+            ProjectileSource shooter = ((Projectile) e.getDamager()).getShooter();
+            if (shooter instanceof Player) {
+                attacker = (Player) shooter;
+            }
+        }
+
+        if (attacker != null && isInsideFactionsSafeZone(attacker.getLocation())) {
+            e.setCancelled(true);
+            attacker.sendMessage(ChatColor.RED + "PvP is disabled inside the factions spawn safe zone.");
+            return;
+        }
+
+        if (e.getEntity() instanceof Player) {
+            Player victim = (Player) e.getEntity();
+            if (isInsideFactionsSafeZone(victim.getLocation())) {
+                e.setCancelled(true);
+                if (attacker != null) {
+                    attacker.sendMessage(ChatColor.RED + "You cannot attack players inside the factions spawn safe zone.");
+                }
+            }
+        }
+    }
+
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent e) {
         if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
@@ -7365,6 +7503,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         lastActivity.put(e.getPlayer().getUniqueId(), System.currentTimeMillis());
         if (isPunished(e.getPlayer().getUniqueId())) e.setCancelled(true);
         else {
+            if (isProtectedFactionsSafeZone(e.getPlayer(), e.getBlock().getLocation())) {
+                e.setCancelled(true);
+                e.getPlayer().sendMessage(ChatColor.RED + "You cannot build inside the factions spawn safe zone!");
+                return;
+            }
             // Check chunk claims
             String chunkKey = getChunkKey(e.getBlock().getLocation());
             if (isChunkClaimed(chunkKey) && !isTrustedInChunk(e.getPlayer(), chunkKey)) {
@@ -7393,6 +7536,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         Location target = e.getBlockClicked().getRelative(e.getBlockFace()).getLocation();
+        if (isProtectedFactionsSafeZone(p, target)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "You cannot use buckets inside the factions spawn safe zone!");
+            return;
+        }
         String chunkKey = getChunkKey(target);
         if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
@@ -7410,7 +7558,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         String chunkKey = getChunkKey(e.getToBlock().getLocation());
-        if (isChunkClaimed(chunkKey)) {
+        if (isInsideFactionsSafeZone(e.getToBlock().getLocation()) || isChunkClaimed(chunkKey)) {
             // Prevent fluid flow into claimed chunks to avoid griefing via lava/water spread
             e.setCancelled(true);
         }
@@ -7427,6 +7575,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         Player p = e.getPlayer();
         lastActivity.put(p.getUniqueId(), System.currentTimeMillis());
+
+        if (isProtectedFactionsSafeZone(p, e.getBlock().getLocation())) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "You cannot break blocks inside the factions spawn safe zone!");
+            return;
+        }
 
         // Anti-xray: block excessive ore mining in a short time window
         if (checkXray(p, e.getBlock())) {
@@ -7469,11 +7623,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler
     public void onPistonExtend(BlockPistonExtendEvent e) {
         Location pistonLoc = e.getBlock().getLocation();
+        if (isInsideFactionsSafeZone(pistonLoc)) {
+            e.setCancelled(true);
+            return;
+        }
         String pistonChunk = getChunkKey(pistonLoc);
         UUID pistonOwner = getChunkOwner(pistonChunk);
 
         for (Block moved : e.getBlocks()) {
             Location dest = moved.getLocation().add(e.getDirection().getDirection());
+            if (isInsideFactionsSafeZone(moved.getLocation()) || isInsideFactionsSafeZone(dest)) {
+                e.setCancelled(true);
+                return;
+            }
             String destChunk = getChunkKey(dest);
             if (isChunkClaimed(destChunk)) {
                 UUID destOwner = getChunkOwner(destChunk);
@@ -7490,11 +7652,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (!e.isSticky()) return;
 
         Location pistonLoc = e.getBlock().getLocation();
+        if (isInsideFactionsSafeZone(pistonLoc)) {
+            e.setCancelled(true);
+            return;
+        }
         String pistonChunk = getChunkKey(pistonLoc);
         UUID pistonOwner = getChunkOwner(pistonChunk);
 
         for (Block moved : e.getBlocks()) {
             Location dest = moved.getLocation().add(e.getDirection().getDirection());
+            if (isInsideFactionsSafeZone(moved.getLocation()) || isInsideFactionsSafeZone(dest)) {
+                e.setCancelled(true);
+                return;
+            }
             String destChunk = getChunkKey(dest);
             if (isChunkClaimed(destChunk)) {
                 UUID destOwner = getChunkOwner(destChunk);
@@ -7516,6 +7686,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (invLocation != null) {
             String chunkKey = getChunkKey(invLocation);
             Player p = (Player) e.getPlayer();
+            if (isProtectedFactionsSafeZone(p, invLocation)) {
+                e.setCancelled(true);
+                p.sendMessage(ChatColor.RED + "You cannot access containers inside the factions spawn safe zone!");
+                return;
+            }
             if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
                 e.setCancelled(true);
                 p.sendMessage(ChatColor.RED + "You cannot access containers in this claimed chunk!");
@@ -7745,6 +7920,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Player p = e.getPlayer();
         String chunkKey = getChunkKey(block.getLocation());
 
+        if (isProtectedFactionsSafeZone(p, block.getLocation())) {
+            e.setCancelled(true);
+            e.setUseInteractedBlock(Event.Result.DENY);
+            e.setUseItemInHand(Event.Result.DENY);
+            p.sendMessage(ChatColor.RED + "You cannot interact with blocks inside the factions spawn safe zone!");
+            return;
+        }
+
         if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
             e.setUseInteractedBlock(Event.Result.DENY);
@@ -7757,6 +7940,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     public void onPlayerBedEnter(PlayerBedEnterEvent e) {
         Player p = e.getPlayer();
         Location bedLoc = e.getBed().getLocation();
+        if (isProtectedFactionsSafeZone(p, bedLoc)) {
+            e.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "You cannot sleep inside the factions spawn safe zone!");
+            return;
+        }
         String chunkKey = getChunkKey(bedLoc);
         if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
@@ -8324,6 +8512,96 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void saveLoc(String p, Location l) { dataConfig.set(p, l.getWorld().getName()+","+l.getX()+","+l.getY()+","+l.getZ()+","+l.getYaw()+","+l.getPitch()); saveDataFile(); }
+
+    private String getFactionsWorldName() {
+        return getConfig().getString("factions_world.name", "").trim();
+    }
+
+    private boolean isFactionsWorld(World world) {
+        return world != null && !getFactionsWorldName().isEmpty() && world.getName().equalsIgnoreCase(getFactionsWorldName());
+    }
+
+    private boolean isClaimingAllowedInWorld(World world) {
+        return world != null && isFactionsWorld(world) && getConfig().getBoolean("factions_world.claims_enabled", true);
+    }
+
+    private Location getFactionsSpawnLocation() {
+        Location saved = getLoc("factions_world.spawn_location");
+        if (saved != null) return saved;
+
+        String worldName = getFactionsWorldName();
+        if (worldName.isEmpty()) return null;
+
+        World world = Bukkit.getWorld(worldName);
+        return world != null ? world.getSpawnLocation() : null;
+    }
+
+    private double getFactionsSafeZoneRadius() {
+        return Math.max(0D, getConfig().getDouble("factions_world.safe_zone_radius", 96.0D));
+    }
+
+    private boolean canBypassFactionsSafeZone(Player p) {
+        return p != null && (p.isOp() || p.hasPermission("dmt.admin") || p.hasPermission("claims.override"));
+    }
+
+    private boolean isInsideFactionsSafeZone(Location location) {
+        if (location == null || location.getWorld() == null) return false;
+        if (!getConfig().getBoolean("factions_world.safe_zone_enabled", true)) return false;
+        if (!isFactionsWorld(location.getWorld())) return false;
+
+        Location spawn = getFactionsSpawnLocation();
+        if (spawn == null || spawn.getWorld() == null) return false;
+        if (!spawn.getWorld().getName().equalsIgnoreCase(location.getWorld().getName())) return false;
+
+        double dx = location.getX() - spawn.getX();
+        double dz = location.getZ() - spawn.getZ();
+        double radius = getFactionsSafeZoneRadius();
+        return (dx * dx) + (dz * dz) <= (radius * radius);
+    }
+
+    private boolean isProtectedFactionsSafeZone(Player p, Location location) {
+        return !canBypassFactionsSafeZone(p) && isInsideFactionsSafeZone(location);
+    }
+
+    private void sendActionBar(Player p, String message) {
+        if (p == null || message == null || message.isEmpty()) return;
+        try {
+            p.spigot().sendMessage(
+                net.md_5.bungee.api.ChatMessageType.ACTION_BAR,
+                net.md_5.bungee.api.chat.TextComponent.fromLegacyText(message)
+            );
+        } catch (Exception ignored) {
+            p.sendMessage(message);
+        }
+    }
+
+    private void showFactionsSafeZoneBorderParticles(Player p, Location location) {
+        if (p == null || location == null || location.getWorld() == null) return;
+        if (!isFactionsWorld(location.getWorld())) return;
+
+        Location spawn = getFactionsSpawnLocation();
+        if (spawn == null || spawn.getWorld() == null) return;
+        if (!spawn.getWorld().getName().equalsIgnoreCase(location.getWorld().getName())) return;
+
+        double dx = location.getX() - spawn.getX();
+        double dz = location.getZ() - spawn.getZ();
+        double distance = Math.sqrt((dx * dx) + (dz * dz));
+        double radius = getFactionsSafeZoneRadius();
+        if (radius <= 0D || distance <= 0.0001D) return;
+
+        double edgeDistance = Math.abs(distance - radius);
+        if (edgeDistance > 6.0D) return;
+
+        double normX = dx / distance;
+        double normZ = dz / distance;
+        double edgeX = spawn.getX() + (normX * radius);
+        double edgeZ = spawn.getZ() + (normZ * radius);
+
+        for (int i = 0; i < 6; i++) {
+            Location particleLoc = new Location(location.getWorld(), edgeX, location.getY() + 0.4D + (i * 0.35D), edgeZ);
+            p.spawnParticle(org.bukkit.Particle.END_ROD, particleLoc, 1, 0.08, 0.08, 0.08, 0.0);
+        }
+    }
 
     private boolean isWorldSeparated(String worldName) {
         return dataConfig.getBoolean("worlds." + worldName + ".separate", false);
@@ -9104,7 +9382,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private int getChunkLimit(UUID uuid) {
         int hours = (int) getPlaytimeHours(uuid);
-        return 16 + hours;
+        int baseLimit = getConfig().getInt("factions_world.claims.base_limit", 16);
+        int perHour = getConfig().getInt("factions_world.claims.per_playtime_hour", 1);
+        return Math.max(0, baseLimit + (hours * perHour));
     }
 
     private List<String> getClaimedChunks(UUID uuid) {

@@ -24,6 +24,9 @@ commands:
   spawn:
     description: Teleport to the server spawn location
     usage: /spawn
+  factions:
+    description: Teleport to the factions world spawn
+    usage: /factions
   shop:
     description: Player shop system
     usage: /shop [sell <item> <amount> <price>]
