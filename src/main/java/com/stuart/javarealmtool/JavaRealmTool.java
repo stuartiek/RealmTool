@@ -653,14 +653,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         rankConfig = YamlConfiguration.loadConfiguration(rankFile);
 
         // One-time migration for economy
+        boolean economyMigrated = false;
         if (dataConfig.contains("coins") && !economyConfig.contains("coins")) {
             economyConfig.set("coins", dataConfig.getConfigurationSection("coins").getValues(true));
             dataConfig.set("coins", null);
-            
-            if (dataConfig.contains("drowsy_coins")) {
-                economyConfig.set("drowsy_coins", dataConfig.getConfigurationSection("drowsy_coins").getValues(true));
-                dataConfig.set("drowsy_coins", null);
-            }
+            economyMigrated = true;
+        }
+        if (dataConfig.contains("drowsy_coins") && !economyConfig.contains("drowsy_coins")) {
+            economyConfig.set("drowsy_coins", dataConfig.getConfigurationSection("drowsy_coins").getValues(true));
+            dataConfig.set("drowsy_coins", null);
+            economyMigrated = true;
+        }
+        normalizeLegacyEconomySection("coins");
+        normalizeLegacyEconomySection("drowsy_coins");
+        if (economyMigrated) {
             saveDataFile();
             saveEconomyFile();
             getLogger().info("Migrated economy to economy.yml");
@@ -696,6 +702,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             ticketConfig.set("appeals.next_id", dataConfig.getInt("appeals.next_id", 1));
             dataConfig.set("appeals.next_id", null);
         }
+
+        normalizeLegacyTicketSection("tickets");
+        normalizeLegacyTicketSection("appeals");
 
         // One-time migration for ranks and groups
         if (dataConfig.contains("ranks") && !rankConfig.contains("ranks")) {
@@ -760,6 +769,75 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     public FileConfiguration getRankConfig() {
         return rankConfig;
+    }
+
+    private void normalizeLegacyEconomySection(String sectionPath) {
+        ConfigurationSection section = economyConfig.getConfigurationSection(sectionPath);
+        if (section == null) return;
+
+        Set<String> keys = section.getKeys(false);
+        boolean hasFlattenedKeys = keys.stream().anyMatch(key -> key.contains("."));
+        if (!hasFlattenedKeys) return;
+
+        Map<String, Object> flatValues = new LinkedHashMap<>();
+        for (String key : keys) {
+            flatValues.put(key, section.get(key));
+        }
+
+        economyConfig.set(sectionPath, null);
+        for (Map.Entry<String, Object> entry : flatValues.entrySet()) {
+            economyConfig.set(sectionPath + "." + entry.getKey(), entry.getValue());
+        }
+
+        getLogger().info("Normalized legacy " + sectionPath + " storage for " + flatValues.size() + " balances.");
+    }
+
+    private void normalizeLegacyTicketSection(String sectionPath) {
+        ConfigurationSection section = ticketConfig.getConfigurationSection(sectionPath);
+        if (section == null) return;
+
+        Set<String> keys = section.getKeys(false);
+        boolean hasFlattenedKeys = keys.stream().anyMatch(key -> key.contains("."));
+        if (!hasFlattenedKeys) return;
+
+        Map<String, Object> flatValues = new LinkedHashMap<>();
+        for (String key : keys) {
+            flatValues.put(key, section.get(key));
+        }
+
+        Object nextId = flatValues.remove("next_id");
+        ticketConfig.set(sectionPath, null);
+        if (nextId != null) {
+            ticketConfig.set(sectionPath + ".next_id", nextId);
+        }
+
+        Set<String> recordIds = new TreeSet<>((left, right) -> {
+            try {
+                return Integer.compare(Integer.parseInt(left), Integer.parseInt(right));
+            } catch (NumberFormatException ignored) {
+                return left.compareTo(right);
+            }
+        });
+
+        for (Map.Entry<String, Object> entry : flatValues.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            int separator = key.indexOf('.');
+            if (separator <= 0 || separator == key.length() - 1) {
+                ticketConfig.set(sectionPath + "." + key, value);
+                continue;
+            }
+
+            String recordId = key.substring(0, separator);
+            String fieldPath = key.substring(separator + 1);
+            recordIds.add(recordId);
+            ticketConfig.set(sectionPath + "." + recordId + "." + fieldPath, value);
+        }
+
+        if (!recordIds.isEmpty()) {
+            getLogger().info("Normalized legacy " + sectionPath + " storage for " + recordIds.size() + " records.");
+        }
     }
 
     private void performDataSave() {
@@ -4709,43 +4787,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openMainMenu(Player p) {
 
         Inventory gui = Bukkit.createInventory(null, 54, GUI_MAIN);
-        
-        // Calculate stats
-        int total = Bukkit.getOnlinePlayers().size();
-        int punished = 0;
-        if (playersConfig.contains("punishments")) {
-            for (String key : playersConfig.getConfigurationSection("punishments").getKeys(false)) {
-                if (isPunished(UUID.fromString(key))) punished++;
-            }
-        }
-        int nonPunished = total - punished;
-        
-        // Row 1 (10-16): Stats (weather controls moved to World Settings)
-        gui.setItem(10, createGuiItem(Material.EMERALD_BLOCK, ChatColor.AQUA + "Players: " + ChatColor.WHITE + nonPunished));
-        gui.setItem(11, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.GRAY + "Weather controls in World Settings"));
-        gui.setItem(12, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.GRAY + "Weather controls in World Settings"));
-        gui.setItem(13, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.GRAY + "Weather controls in World Settings"));
-        // Nether lock item (use an item type that supports metadata reliably)
-        boolean netherLocked = dataConfig.getBoolean("locks.nether", false);
-        ItemStack netherItem = new ItemStack(Material.CRYING_OBSIDIAN);
-        ItemMeta nm = netherItem.getItemMeta();
-        if (nm != null) {
-            nm.setDisplayName(ChatColor.DARK_PURPLE + "Nether Access");
-            nm.setLore(Arrays.asList(ChatColor.GRAY + (netherLocked ? "Locked" : "Unlocked")));
-            netherItem.setItemMeta(nm);
-        }
-        gui.setItem(14, netherItem);
-        // End lock item
-        boolean endLocked = dataConfig.getBoolean("locks.end", false);
-        ItemStack endItem = new ItemStack(Material.END_STONE);
-        ItemMeta em = endItem.getItemMeta();
-        if (em != null) {
-            em.setDisplayName(ChatColor.DARK_PURPLE + "The End Access");
-            em.setLore(Arrays.asList(ChatColor.GRAY + (endLocked ? "Locked" : "Unlocked")));
-            endItem.setItemMeta(em);
-        }
-        gui.setItem(15, endItem);
-        gui.setItem(16, createAdminMenuItem(p, 16, Material.REDSTONE_BLOCK, ChatColor.RED + "Punished: " + ChatColor.WHITE + punished));
 
         // Category header: Player Tools
         gui.setItem(18, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + "Player Tools"));
@@ -4765,7 +4806,6 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         gui.setItem(30, createAdminMenuItem(p, 30, Material.PAPER, ChatColor.GOLD + "View Tickets"));
         gui.setItem(31, createAdminMenuItem(p, 31, Material.COMPASS, ChatColor.BLUE + "World Utilities"));
         gui.setItem(32, createAdminMenuItem(p, 32, Material.ENCHANTED_BOOK, ChatColor.LIGHT_PURPLE + "Events"));
-        gui.setItem(33, createAdminMenuItem(p, 33, Material.PAPER, ChatColor.LIGHT_PURPLE + "Hologram Wand"));
 
         // Category header: Admin Tools
         gui.setItem(27, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, ChatColor.DARK_GRAY + "Admin Tools"));
@@ -5209,6 +5249,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         slot = getNextGridSlot();
         if (slot >= 0 && slot < gui.getSize()) {
             item = createGuiItem(Material.NETHER_STAR, ChatColor.AQUA + "Create World");
+            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
+        }
+        // Nether lock toggle
+        slot = getNextGridSlot();
+        if (slot >= 0 && slot < gui.getSize()) {
+            boolean netherLocked = dataConfig.getBoolean("locks.nether", false);
+            item = createGuiItem(Material.CRYING_OBSIDIAN, ChatColor.DARK_PURPLE + "Nether Access",
+                Collections.singletonList(ChatColor.GRAY + (netherLocked ? "Locked" : "Unlocked")));
+            if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
+        }
+        // End lock toggle
+        slot = getNextGridSlot();
+        if (slot >= 0 && slot < gui.getSize()) {
+            boolean endLocked = dataConfig.getBoolean("locks.end", false);
+            item = createGuiItem(Material.END_STONE, ChatColor.DARK_PURPLE + "The End Access",
+                Collections.singletonList(ChatColor.GRAY + (endLocked ? "Locked" : "Unlocked")));
             if (item != null && item.getItemMeta() != null) gui.setItem(slot, item);
         }
         // (no top‑level delete button – deletion happens per‑world in options menu)
@@ -6553,6 +6609,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         getLogger().log(java.util.logging.Level.SEVERE, "Error opening world type chooser", ex);
                     }
                 }
+            } else if (type == Material.CRYING_OBSIDIAN) {
+                if (!p.hasPermission("adminpanel.netherlock")) {
+                    p.sendMessage(ChatColor.RED + "You do not have permission to use this option.");
+                    return;
+                }
+                boolean currentNether = dataConfig.getBoolean("locks.nether", false);
+                dataConfig.set("locks.nether", !currentNether);
+                saveDataFile();
+                saveDataFileSync();
+                p.sendMessage(ChatColor.AQUA + "Nether access " + (currentNether ? "unlocked" : "locked") + "!");
+                openWorldUtilitiesMenu(p);
+            } else if (type == Material.END_STONE) {
+                if (!p.hasPermission("adminpanel.endlock")) {
+                    p.sendMessage(ChatColor.RED + "You do not have permission to use this option.");
+                    return;
+                }
+                boolean currentEnd = dataConfig.getBoolean("locks.end", false);
+                dataConfig.set("locks.end", !currentEnd);
+                saveDataFile();
+                saveDataFileSync();
+                p.sendMessage(ChatColor.AQUA + "The End access " + (currentEnd ? "unlocked" : "locked") + "!");
+                openWorldUtilitiesMenu(p);
             } else if (type == Material.BARRIER) {
                 openMainMenu(p);
             }

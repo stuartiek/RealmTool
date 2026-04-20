@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RealmTool Factions World Guide</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #0f1116;
+      color: #e5e5e5;
+      line-height: 1.55;
+      padding: 24px;
+      max-width: 980px;
+      margin: auto;
+    }
+
+    header {
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(167, 139, 250, 0.08));
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 10px;
+      line-height: 1.15;
+      page-break-after: avoid;
+      color: #d1d5db;
+    }
+
+    h1 {
+      font-size: 2rem;
+    }
+
+    h2 {
+      margin-top: 28px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #333;
+      font-size: 1.5rem;
+    }
+
+    h3 {
+      margin-top: 20px;
+      font-size: 1.1rem;
+      color: #a78bfa;
+    }
+
+    p {
+      margin: 0 0 10px;
+    }
+
+    ul, ol {
+      margin: 8px 0 12px 22px;
+      padding: 0;
+    }
+
+    li {
+      margin: 0 0 6px;
+    }
+
+    section {
+      margin-top: 32px;
+      page-break-inside: avoid;
+    }
+
+    .deck {
+      color: #cbd5e1;
+      font-size: 16px;
+      max-width: 720px;
+    }
+
+    .badge-row {
+      margin-top: 14px;
+    }
+
+    .badge {
+      display: inline-block;
+      margin: 0 8px 8px 0;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #374151;
+      color: #fff;
+      font-size: 12px;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .callout {
+      border-left: 4px solid #f59e0b;
+      background: rgba(245, 158, 11, 0.12);
+      padding: 12px 14px;
+      margin: 12px 0;
+      border-radius: 6px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      border-radius: 8px;
+      padding: 14px;
+      page-break-inside: avoid;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(255,255,255,0.08);
+    }
+
+    code {
+      background: rgba(255,255,255,0.08);
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+
+    footer {
+      color: #9ca3af;
+      font-size: 12px;
+      margin-top: 32px;
+      text-align: center;
+    }
+
+    @media print {
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .badge,
+      .callout,
+      .card,
+      header,
+      th,
+      code {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Factions World Guide</h1>
+      <p class="deck">A practical rollout plan for running a factions-style world on your RealmTool server using the systems already present in the plugin, with a clean path to upgrade into true factions later.</p>
+      <div class="badge-row">
+        <span class="badge">RealmTool Based</span>
+        <span class="badge">Claims Ready</span>
+        <span class="badge">Economy Integrated</span>
+        <span class="badge">World Rollout Plan</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>1. Executive Summary</h2>
+      <p>Your plugin is already capable of supporting a factions-themed world, but it is not yet a full factions system.</p>
+      <div class="callout">
+        <strong>Best immediate approach:</strong> launch a factions world using the existing chunk-claim, trust, economy, rank, quest, and PvP systems first. Do not build diplomacy, faction power, or faction-owned land until you confirm that the player base actually wants deeper territorial warfare.
+      </div>
+      <p>The current codebase already supports:</p>
+      <ul>
+        <li>Chunk claims with hard build protection.</li>
+        <li>Trusted-player access inside claims.</li>
+        <li>A claim proximity buffer to prevent adjacent hostile claims.</li>
+        <li>Playtime-based claim expansion.</li>
+        <li>Economy, bounties, kits, quests, duels, achievements, reports, and ranks.</li>
+        <li>World creation and world utility menus for admin control.</li>
+      </ul>
+      <p>The missing parts for a true factions system are faction identity, membership, leadership, diplomacy, shared ownership, faction balance, faction power, and raid-state logic.</p>
+    </section>
+
+    <section>
+      <h2>2. What RealmTool Already Gives You</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Claims and Protection</h3>
+          <ul>
+            <li>Players can claim and unclaim chunks from the claims GUI.</li>
+            <li>Players can trust and untrust others for access.</li>
+            <li>Claimed areas block placing, breaking, containers, door use, beds, fluid grief, and most interaction grief.</li>
+            <li>Admins can bypass claims using admin permissions or <code>claims.override</code>.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Progression and Economy</h3>
+          <ul>
+            <li>Coins and XP systems already exist.</li>
+            <li>Mining, monster kills, login rewards, shops, bounties, kits, and quests can all support world progression.</li>
+            <li>The economy can be used to gate expansion, travel, gear, and events.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Ranks and Identity</h3>
+          <ul>
+            <li>Ranks already support prefixes and permissions.</li>
+            <li>You can use ranks as temporary faction tags while the world is in phase 1.</li>
+            <li>Staff and faction-lead style permissions can be modeled with ranks before building real factions.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>World Management</h3>
+          <ul>
+            <li>The plugin can create worlds and expose world utilities through admin menus.</li>
+            <li>You can isolate the factions world from hub, staff, event, or survival worlds.</li>
+            <li>This allows separate rules without rewriting the whole server.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Recommended Rollout Strategy</h2>
+      <h3>Phase 1: Factions-Themed World Using Existing Systems</h3>
+      <p>This phase is the fastest, lowest-risk path. It delivers the gameplay loop most players actually notice: group identity, land ownership, base defense, economy pressure, and PvP rivalry.</p>
+      <ol>
+        <li>Create a dedicated world for factions gameplay.</li>
+        <li>Keep hub, admin, and utility worlds separate from the factions world.</li>
+        <li>Require each group to appoint one leader who owns the claims.</li>
+        <li>Use trust lists to grant access to that group.</li>
+        <li>Use ranks or nickname formatting for faction tags.</li>
+        <li>Use quests, bounties, shops, and kits to shape progression.</li>
+        <li>Do not allow true raiding until your rules are stable and tested.</li>
+      </ol>
+
+      <h3>Phase 2: Build True Factions Only If Needed</h3>
+      <p>After the world proves fun and active, add actual faction entities and faction-owned claims. This is where the larger code changes become worth the effort.</p>
+    </section>
+
+    <section>
+      <h2>4. World Setup Plan</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Recommendation</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Main Hub</td>
+            <td>Keep separate from the factions world.</td>
+            <td>Prevents grief, reduces confusion, and gives you a controlled onboarding point.</td>
+          </tr>
+          <tr>
+            <td>Factions World</td>
+            <td>Use as the primary group-survival and PvP territory world.</td>
+            <td>All claims, rivalries, resource competition, and group identity live here.</td>
+          </tr>
+          <tr>
+            <td>Spawn Zone</td>
+            <td>Make it safe, non-buildable, and clearly marked.</td>
+            <td>Reduces spawn camping and creates a stable launch area.</td>
+          </tr>
+          <tr>
+            <td>War Zone</td>
+            <td>Optionally set an unclaimed region near center map.</td>
+            <td>Encourages PvP without forcing raids on claimed bases.</td>
+          </tr>
+          <tr>
+            <td>Resource Flow</td>
+            <td>Let ores, mob grinding, and shops feed the economy.</td>
+            <td>Maintains reasons to travel, trade, and contest territory.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>5. Recommended Rules for Phase 1</h2>
+      <h3>Core Rules</h3>
+      <ul>
+        <li>One leader owns group claims. Members are added through the trust system.</li>
+        <li>No base griefing inside claimed chunks by outsiders.</li>
+        <li>PvP is allowed in the factions world except safe zones you define.</li>
+        <li>Spawn area, admin areas, and event zones remain protected and non-raideable.</li>
+        <li>Map out exactly where players may and may not build before launch.</li>
+      </ul>
+
+      <h3>Claim Rules</h3>
+      <ul>
+        <li>Claims scale with playtime automatically. The current formula is generous enough to support growth.</li>
+        <li>The current 2-chunk buffer between hostile claims should stay enabled at launch.</li>
+        <li>Do not remove the buffer until you are certain you want dense border conflict.</li>
+      </ul>
+
+      <h3>Raid Rules</h3>
+      <p>For launch, the safest rule is simple:</p>
+      <div class="callout">
+        <strong>Recommended launch rule:</strong> PvP is active, but claimed bases are not raidable by outsiders. Conflict happens through open-world fights, bounty pressure, supply disruption, and control of unclaimed land.
+      </div>
+      <p>This gives you a factions atmosphere without the operational pain of raid disputes and rollback requests.</p>
+    </section>
+
+    <section>
+      <h2>6. Progression Design</h2>
+      <h3>Early Game</h3>
+      <ul>
+        <li>Players establish a base and claim starter land.</li>
+        <li>Basic kits, mining, and mob combat build initial resources.</li>
+        <li>Small bounty conflicts and border skirmishes create momentum.</li>
+      </ul>
+
+      <h3>Mid Game</h3>
+      <ul>
+        <li>Groups expand claims as playtime increases.</li>
+        <li>Quests and shops become more important for gearing and income.</li>
+        <li>Faction identity grows around tags, alliances made socially, and recurring rivals.</li>
+      </ul>
+
+      <h3>Late Game</h3>
+      <ul>
+        <li>High-end kits, custom enchantments, bounties, and economy pressure drive competition.</li>
+        <li>Admin events or war-zone drops can create scheduled conflict without base grief.</li>
+        <li>If demand is strong, this is the point to consider true factions development.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>7. How to Use Existing RealmTool Features in the World</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>How It Fits a Factions World</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Chunk Claims</td>
+            <td>Acts as land control and base security.</td>
+          </tr>
+          <tr>
+            <td>Trust System</td>
+            <td>Acts as temporary faction membership access.</td>
+          </tr>
+          <tr>
+            <td>Ranks</td>
+            <td>Acts as faction tag, internal roles, or prestige identity.</td>
+          </tr>
+          <tr>
+            <td>Bounties</td>
+            <td>Encourages inter-group hostility and revenge loops.</td>
+          </tr>
+          <tr>
+            <td>Quests</td>
+            <td>Provides structured progression and goals.</td>
+          </tr>
+          <tr>
+            <td>Kits and Crates</td>
+            <td>Supports gearing and milestone rewards.</td>
+          </tr>
+          <tr>
+            <td>Player Shops</td>
+            <td>Creates supply lines and group economies.</td>
+          </tr>
+          <tr>
+            <td>Duels and PvP Stats</td>
+            <td>Supports rivalry, skill expression, and bragging rights.</td>
+          </tr>
+          <tr>
+            <td>World Utilities</td>
+            <td>Lets staff manage and moderate the world more cleanly.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>8. What True Factions Would Require Later</h2>
+      <p>If you decide to evolve beyond the current owner-plus-trust model, these are the actual systems to build.</p>
+      <h3>New Data Model</h3>
+      <ul>
+        <li>Faction id and faction name.</li>
+        <li>Leader, officers, members, invites, banned members.</li>
+        <li>Faction home and faction metadata.</li>
+        <li>Faction bank or balance.</li>
+        <li>Allies, enemies, truces, or neutral standings.</li>
+      </ul>
+
+      <h3>Claim Ownership Changes</h3>
+      <ul>
+        <li>Claims must be owned by factions rather than player UUIDs.</li>
+        <li>Protection checks must grant access based on faction membership or role.</li>
+        <li>Claim UIs must show faction ownership rather than player ownership.</li>
+      </ul>
+
+      <h3>Optional Advanced Systems</h3>
+      <ul>
+        <li>Faction power or upkeep costs.</li>
+        <li>Scheduled raid windows.</li>
+        <li>Faction homes and faction chat.</li>
+        <li>Faction logs and territory history.</li>
+        <li>Web panel support for factions if you want admin visibility outside the game.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>9. Launch Checklist</h2>
+      <ol>
+        <li>Create the factions world.</li>
+        <li>Set the hub and spawn routing so players enter cleanly.</li>
+        <li>Define safe zones, event zones, and any war zone before launch.</li>
+        <li>Publish claim rules, PvP rules, and staff enforcement rules.</li>
+        <li>Decide whether bounties, kits, and custom enchants are enabled from day one.</li>
+        <li>Test claims, trust, fluid grief prevention, containers, doors, beds, and piston behavior.</li>
+        <li>Confirm staff have claim bypass and moderation access.</li>
+        <li>Run a short test season or beta before calling it permanent.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>10. Final Recommendation</h2>
+      <p>Launch a factions world now using the current RealmTool systems. That gives you group territory, progression, economy tension, and PvP immediately with very little engineering risk.</p>
+      <div class="callout">
+        <strong>Recommended decision:</strong> phase 1 first, true factions second. Build the larger faction ownership model only after the world proves active enough to justify it.
+      </div>
+      <p>This approach is cleaner, faster, easier to moderate, and much less likely to create months of avoidable code complexity before you know what your players actually want.</p>
+    </section>
+
+    <footer>
+      &copy; 2026 Drowsy Vocals | ABZ Digital Group <br> Generated April 20, 2026
+    </footer>
+  </main>
+</body>
+</html>
