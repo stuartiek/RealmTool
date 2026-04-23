@@ -588,8 +588,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private void setupConfig() {
         FileConfiguration config = getConfig();
+        boolean changed = false;
         if (!config.contains("api-key")) {
             config.set("api-key", UUID.randomUUID().toString());
+            changed = true;
+        }
+        if (!config.contains("factions_world.visible")) {
+            config.set("factions_world.visible", true);
+            changed = true;
+        }
+        if (changed) {
             saveConfig();
         }
         this.apiKey = config.getString("api-key");
@@ -2176,6 +2184,36 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     saveLoc("factions_world.spawn_location", p.getLocation());
                     p.sendMessage(ChatColor.GREEN + "Factions spawn location set to your current position.");
                     break;
+                case "factions":
+                    if (!hasDmtCommandPermission(p, "factions")) {
+                        p.sendMessage(ChatColor.RED + "No permission.");
+                        return true;
+                    }
+                    if (args.length < 2) {
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt factions <show|display|hide|status>");
+                        return true;
+                    }
+
+                    String factionsAction = args[1].toLowerCase(Locale.ROOT);
+                    if (factionsAction.equals("status")) {
+                        p.sendMessage(ChatColor.AQUA + "Factions features are currently "
+                            + (areFactionsFeaturesVisible() ? ChatColor.GREEN + "visible" : ChatColor.RED + "hidden")
+                            + ChatColor.AQUA + ".");
+                        return true;
+                    }
+                    if (factionsAction.equals("show") || factionsAction.equals("display")) {
+                        setFactionsFeaturesVisible(true);
+                        p.sendMessage(ChatColor.GREEN + "Factions features are now visible.");
+                        return true;
+                    }
+                    if (factionsAction.equals("hide")) {
+                        setFactionsFeaturesVisible(false);
+                        p.sendMessage(ChatColor.YELLOW + "Factions features are now hidden.");
+                        return true;
+                    }
+
+                    p.sendMessage(ChatColor.RED + "Usage: /dmt factions <show|display|hide|status>");
+                    return true;
                 case "clearserverspawn":
                     if (!hasDmtCommandPermission(p, "clearserverspawn")) {
                         p.sendMessage(ChatColor.RED + "No permission.");
@@ -2508,6 +2546,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         if (cmd.getName().equalsIgnoreCase("factions")) {
+            if (!areFactionsFeaturesVisible()) {
+                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                return true;
+            }
             String worldName = getFactionsWorldName();
             if (worldName.isEmpty()) {
                 p.sendMessage(ChatColor.RED + "Factions world is not configured.");
@@ -3290,7 +3332,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.sendMessage(ChatColor.GREEN + "/kit" + ChatColor.WHITE + " - Browse and claim kits");
         p.sendMessage(ChatColor.GREEN + "/crate" + ChatColor.WHITE + " - Open the crate menu");
         p.sendMessage(ChatColor.GREEN + "/spawn" + ChatColor.WHITE + " - Teleport to the server spawn");
-        p.sendMessage(ChatColor.GREEN + "/factions" + ChatColor.WHITE + " - Teleport to the factions world");
+        if (areFactionsFeaturesVisible()) {
+            p.sendMessage(ChatColor.GREEN + "/factions" + ChatColor.WHITE + " - Teleport to the factions world");
+        }
         p.sendMessage(ChatColor.GREEN + "/bounty" + ChatColor.WHITE + " - View the bounty board");
         p.sendMessage(ChatColor.GREEN + "/bounty set <player> <amount>" + ChatColor.WHITE + " - Place a bounty");
         p.sendMessage(ChatColor.GREEN + "/balance" + ChatColor.WHITE + " - Show XP level & coin balance");
@@ -3341,6 +3385,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             p.sendMessage(ChatColor.AQUA + "/hub" + ChatColor.WHITE + " - Teleport to hub world");
             p.sendMessage(ChatColor.AQUA + "/dmt setserverspawn" + ChatColor.WHITE + " - Set server spawn (joins will teleport here)");
             p.sendMessage(ChatColor.AQUA + "/dmt setfactionsspawn" + ChatColor.WHITE + " - Set factions world spawn");
+            p.sendMessage(ChatColor.AQUA + "/dmt factions <show|hide|status>" + ChatColor.WHITE + " - Control factions feature visibility");
             p.sendMessage(ChatColor.AQUA + "/dmt clearserverspawn" + ChatColor.WHITE + " - Clear server spawn setting");
             p.sendMessage(ChatColor.AQUA + "/dmt spawnlast" + ChatColor.WHITE + " - List stored world locations");
             p.sendMessage(ChatColor.AQUA + "/dmt spawnlast tp <world>" + ChatColor.WHITE + " - Teleport to stored last location");
@@ -3431,6 +3476,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 break;
             case "setfactionsspawn":
                 p.sendMessage(ChatColor.AQUA + "/dmt setfactionsspawn" + ChatColor.WHITE + " - Set the factions world spawn while standing in it");
+                break;
+            case "factions":
+                p.sendMessage(ChatColor.AQUA + "/dmt factions show" + ChatColor.WHITE + " - Make factions features visible again");
+                p.sendMessage(ChatColor.AQUA + "/dmt factions hide" + ChatColor.WHITE + " - Hide factions features from players");
+                p.sendMessage(ChatColor.AQUA + "/dmt factions status" + ChatColor.WHITE + " - Show whether factions features are visible");
                 break;
             case "spawn":
                 p.sendMessage(ChatColor.AQUA + "/dmt spawn view" + ChatColor.WHITE + " - View disabled mob spawns");
@@ -3554,7 +3604,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             if (args.length == 1) {
                 List<String> subs = Arrays.asList(
                     "help","discord","setpunishloc","setjailloc","tpjail","punish","menu","tp","world","selection","summon","list","npc","hub","sethub","unsethub",
-                    "setserverspawn","clearserverspawn","spawnlast","spawn","killall","gencloud","rank","antlag","documentation","docs", "leaderboard"
+                    "setserverspawn","clearserverspawn","spawnlast","spawn","killall","gencloud","rank","antlag","documentation","docs", "leaderboard", "factions"
                 );
                 String start = args[0].toLowerCase();
                 List<String> out = new ArrayList<>();
@@ -3660,6 +3710,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 }
                 if (sub.equals("leaderboard")) {
                     List<String> subs2 = Arrays.asList("create", "delete");
+                    String start = args[1].toLowerCase();
+                    List<String> out = new ArrayList<>();
+                    for (String s : subs2) {
+                        if (s.startsWith(start)) out.add(s);
+                    }
+                    return out;
+                }
+                if (sub.equals("factions")) {
+                    List<String> subs2 = Arrays.asList("show", "display", "hide", "status");
                     String start = args[1].toLowerCase();
                     List<String> out = new ArrayList<>();
                     for (String s : subs2) {
@@ -4547,26 +4606,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         tpSpawn.setItemMeta(tsMeta);
         gui.setItem(getNextGridSlot(), tpSpawn);
 
-        // TP Factions
-        ItemStack tpFactions = new ItemStack(Material.NETHER_STAR);
-        ItemMeta tfMeta = tpFactions.getItemMeta();
-        tfMeta.setDisplayName(ChatColor.RED + "TP Factions");
-        String factionsWorldName = getFactionsWorldName();
-        String displayWorldName = factionsWorldName.isEmpty() ? "Not configured" : factionsWorldName;
-        String safeZoneStatus = getConfig().getBoolean("factions_world.safe_zone_enabled", true)
-            ? "Safe Zone: " + (int) Math.round(getFactionsSafeZoneRadius()) + " blocks"
-            : "Safe Zone: Disabled";
-        String claimStatus = getConfig().getBoolean("factions_world.claims_enabled", true)
-            ? "Claims: Enabled"
-            : "Claims: Disabled";
-        tfMeta.setLore(Arrays.asList(
-            ChatColor.GRAY + "Teleport to the factions world",
-            ChatColor.DARK_GRAY + "World: " + ChatColor.GRAY + displayWorldName,
-            ChatColor.DARK_GRAY + safeZoneStatus,
-            ChatColor.DARK_GRAY + claimStatus
-        ));
-        tpFactions.setItemMeta(tfMeta);
-        gui.setItem(getNextGridSlot(), tpFactions);
+        if (areFactionsFeaturesVisible()) {
+            // TP Factions
+            ItemStack tpFactions = new ItemStack(Material.NETHER_STAR);
+            ItemMeta tfMeta = tpFactions.getItemMeta();
+            tfMeta.setDisplayName(ChatColor.RED + "TP Factions");
+            String factionsWorldName = getFactionsWorldName();
+            String displayWorldName = factionsWorldName.isEmpty() ? "Not configured" : factionsWorldName;
+            String safeZoneStatus = getConfig().getBoolean("factions_world.safe_zone_enabled", true)
+                ? "Safe Zone: " + (int) Math.round(getFactionsSafeZoneRadius()) + " blocks"
+                : "Safe Zone: Disabled";
+            String claimStatus = getConfig().getBoolean("factions_world.claims_enabled", true)
+                ? "Claims: Enabled"
+                : "Claims: Disabled";
+            tfMeta.setLore(Arrays.asList(
+                ChatColor.GRAY + "Teleport to the factions world",
+                ChatColor.DARK_GRAY + "World: " + ChatColor.GRAY + displayWorldName,
+                ChatColor.DARK_GRAY + safeZoneStatus,
+                ChatColor.DARK_GRAY + claimStatus
+            ));
+            tpFactions.setItemMeta(tfMeta);
+            gui.setItem(getNextGridSlot(), tpFactions);
+        }
         
         // Set Warp
         ItemStack setWarp = new ItemStack(Material.OAK_SIGN);
@@ -4590,13 +4651,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         tickets.setItemMeta(tiMeta);
         gui.setItem(getNextGridSlot(), tickets);
         
-        // Chunk Claims
-        ItemStack claims = new ItemStack(Material.CRYING_OBSIDIAN);
-        ItemMeta cMeta = claims.getItemMeta();
-        cMeta.setDisplayName(ChatColor.BLUE + "Chunk Claims");
-        cMeta.setLore(Arrays.asList(ChatColor.GRAY + "Manage your claims"));
-        claims.setItemMeta(cMeta);
-        gui.setItem(getNextGridSlot(), claims);
+        if (areFactionsFeaturesVisible()) {
+            // Chunk Claims
+            ItemStack claims = new ItemStack(Material.CRYING_OBSIDIAN);
+            ItemMeta cMeta = claims.getItemMeta();
+            cMeta.setDisplayName(ChatColor.BLUE + "Chunk Claims");
+            cMeta.setLore(Arrays.asList(ChatColor.GRAY + "Manage your claims"));
+            claims.setItemMeta(cMeta);
+            gui.setItem(getNextGridSlot(), claims);
+        }
         
         // Player List (TPA)
         ItemStack playerList = new ItemStack(Material.PLAYER_HEAD);
@@ -5669,6 +5732,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void openClaimsMenu(Player p) {
+        if (!areFactionsFeaturesVisible()) {
+            p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+            return;
+        }
         Inventory gui = Bukkit.createInventory(null, 27, GUI_CLAIMS);
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
         
@@ -6801,6 +6868,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         // Claims Menu
         if (title.equals(GUI_CLAIMS)) {
+            if (!areFactionsFeaturesVisible()) {
+                p.closeInventory();
+                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                return;
+            }
             if (type == Material.GRASS_BLOCK) {
                 openClaimConfirmMenu(p, "claim");
             } else if (type == Material.DIRT) {
@@ -6833,6 +6905,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Claim Confirmation Menu
         if (title.equals(GUI_CLAIM_CONFIRM) || title.equals(GUI_UNCLAIM_CONFIRM)) {
+            if (!areFactionsFeaturesVisible()) {
+                pendingClaimAction.remove(p.getUniqueId());
+                p.closeInventory();
+                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                return;
+            }
             String action = pendingClaimAction.get(p.getUniqueId());
             if (action == null) {
                 p.closeInventory();
@@ -6885,6 +6963,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Trust Player Menu
         if (title.equals(GUI_TRUST_PLAYER)) {
+            if (!areFactionsFeaturesVisible()) {
+                p.closeInventory();
+                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                return;
+            }
             if (type == Material.PLAYER_HEAD) {
                 String playerName = itemName;
                 trustPlayer(p.getUniqueId(), playerName);
@@ -6902,6 +6985,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Untrust Player Menu
         if (title.equals(GUI_UNTRUST_PLAYER)) {
+            if (!areFactionsFeaturesVisible()) {
+                p.closeInventory();
+                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                return;
+            }
             if (type == Material.NAME_TAG) {
                 String playerName = itemName;
                 untrustPlayer(p.getUniqueId(), playerName);
@@ -7292,9 +7380,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         String newChunk = getChunkKey(e.getTo());
         String oldChunk = currentChunk.getOrDefault(p.getUniqueId(), newChunk);
         
-        if (!newChunk.equals(oldChunk)) {
+        if (areFactionsFeaturesVisible() && !newChunk.equals(oldChunk)) {
             // Leaving a claimed chunk
-            if (isChunkClaimed(oldChunk)) {
+            if (shouldProtectClaim(oldChunk)) {
                 UUID owner = getChunkOwner(oldChunk);
                 if (owner != null && !p.getUniqueId().equals(owner)) {
                     Player ownerPlayer = Bukkit.getPlayer(owner);
@@ -7304,7 +7392,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             
             // Entering a claimed chunk
-            if (isChunkClaimed(newChunk)) {
+            if (shouldProtectClaim(newChunk)) {
                 UUID owner = getChunkOwner(newChunk);
                 if (owner != null && !p.getUniqueId().equals(owner) && !isTrustedInChunk(p, newChunk)) {
                     Player ownerPlayer = Bukkit.getPlayer(owner);
@@ -7312,6 +7400,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     p.sendMessage(ChatColor.YELLOW + "You have entered " + ownerName + "'s claim!");
                 }
             }
+            currentChunk.put(p.getUniqueId(), newChunk);
+        } else if (!newChunk.equals(oldChunk)) {
             currentChunk.put(p.getUniqueId(), newChunk);
         }
     }
@@ -7510,7 +7600,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
             // Check chunk claims
             String chunkKey = getChunkKey(e.getBlock().getLocation());
-            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(e.getPlayer(), chunkKey)) {
+            if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(e.getPlayer(), chunkKey)) {
                 e.setCancelled(true);
                 e.getPlayer().sendMessage(ChatColor.RED + "You cannot build in this claimed chunk!");
                 return;
@@ -7542,7 +7632,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return;
         }
         String chunkKey = getChunkKey(target);
-        if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+        if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
             p.sendMessage(ChatColor.RED + "You cannot place lava/water in this claimed chunk!");
             return;
@@ -7558,7 +7648,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         String chunkKey = getChunkKey(e.getToBlock().getLocation());
-        if (isInsideFactionsSafeZone(e.getToBlock().getLocation()) || isChunkClaimed(chunkKey)) {
+        if (isInsideFactionsSafeZone(e.getToBlock().getLocation()) || shouldProtectClaim(chunkKey)) {
             // Prevent fluid flow into claimed chunks to avoid griefing via lava/water spread
             e.setCancelled(true);
         }
@@ -7593,7 +7683,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         } else {
             // Check chunk claims
             String chunkKey = getChunkKey(e.getBlock().getLocation());
-            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+            if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
                 e.setCancelled(true);
                 p.sendMessage(ChatColor.RED + "You cannot break blocks in this claimed chunk!");
                 return;
@@ -7637,7 +7727,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 return;
             }
             String destChunk = getChunkKey(dest);
-            if (isChunkClaimed(destChunk)) {
+            if (shouldProtectClaim(destChunk)) {
                 UUID destOwner = getChunkOwner(destChunk);
                 if (pistonOwner == null || !pistonOwner.equals(destOwner)) {
                     e.setCancelled(true);
@@ -7666,7 +7756,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 return;
             }
             String destChunk = getChunkKey(dest);
-            if (isChunkClaimed(destChunk)) {
+            if (shouldProtectClaim(destChunk)) {
                 UUID destOwner = getChunkOwner(destChunk);
                 if (pistonOwner == null || !pistonOwner.equals(destOwner)) {
                     e.setCancelled(true);
@@ -7691,7 +7781,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 p.sendMessage(ChatColor.RED + "You cannot access containers inside the factions spawn safe zone!");
                 return;
             }
-            if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+            if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
                 e.setCancelled(true);
                 p.sendMessage(ChatColor.RED + "You cannot access containers in this claimed chunk!");
                 return;
@@ -7738,6 +7828,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if (e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
                 e.setCancelled(true);
                 Player p = e.getPlayer();
+                if (!areFactionsFeaturesVisible()) {
+                    p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                    return;
+                }
                 String chunkKey = getChunkKey(e.getClickedBlock().getLocation());
                 
                 if (p.isSneaking()) {
@@ -7755,7 +7849,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 } else {
                     // Check current chunk and highlight corners
                     highlightChunkCorners(e.getClickedBlock().getLocation());
-                    if (isChunkClaimed(chunkKey)) {
+                    if (shouldProtectClaim(chunkKey)) {
                         UUID owner = getChunkOwner(chunkKey);
                         Player ownerPlayer = Bukkit.getPlayer(owner);
                         String ownerName = ownerPlayer != null ? ownerPlayer.getName() : "Unknown";
@@ -7928,7 +8022,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return;
         }
 
-        if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+        if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
             e.setUseInteractedBlock(Event.Result.DENY);
             e.setUseItemInHand(Event.Result.DENY);
@@ -7946,7 +8040,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return;
         }
         String chunkKey = getChunkKey(bedLoc);
-        if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+        if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             e.setCancelled(true);
             p.sendMessage(ChatColor.RED + "You cannot sleep in this claimed chunk!");
         }
@@ -8063,22 +8157,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 return;
             }
         }
-
-        // Discord link check
-        if (getConfig().getBoolean("discord.link_required", false)) {
-            Player p = e.getPlayer();
-            if (!p.isOp()) { // OPs can bypass, permission check is risky here
-                String discordLink = getDiscordLink(p.getUniqueId());
-                if (discordLink == null || discordLink.isEmpty()) {
-                    String kickMessage = getConfig().getString("discord.link_message", "Please link your Discord account to play!\nUse the command: /discord link <YourDiscordUsername>");
-                    e.disallow(PlayerLoginEvent.Result.KICK_OTHER, ChatColor.translateAlternateColorCodes('&', kickMessage));
-                }
-            }
-        }
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
+        if (isDiscordLinkRequiredAndNotLinked(e.getPlayer())) {
+            String message = getConfig().getString("discord.link_message", "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>");
+            e.getPlayer().sendMessage(ChatColor.translateAlternateColorCodes('&', message));
+        }
+
         UUID uuid = e.getPlayer().getUniqueId();
         lastActivity.put(uuid, System.currentTimeMillis());
 
@@ -8513,6 +8600,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private void saveLoc(String p, Location l) { dataConfig.set(p, l.getWorld().getName()+","+l.getX()+","+l.getY()+","+l.getZ()+","+l.getYaw()+","+l.getPitch()); saveDataFile(); }
 
+    public boolean areFactionsFeaturesVisible() {
+        return getConfig().getBoolean("factions_world.visible", true);
+    }
+
+    private void setFactionsFeaturesVisible(boolean visible) {
+        getConfig().set("factions_world.visible", visible);
+        saveConfig();
+    }
+
     private String getFactionsWorldName() {
         return getConfig().getString("factions_world.name", "").trim();
     }
@@ -8522,7 +8618,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private boolean isClaimingAllowedInWorld(World world) {
-        return world != null && isFactionsWorld(world) && getConfig().getBoolean("factions_world.claims_enabled", true);
+        return areFactionsFeaturesVisible()
+            && world != null
+            && isFactionsWorld(world)
+            && getConfig().getBoolean("factions_world.claims_enabled", true);
     }
 
     private Location getFactionsSpawnLocation() {
@@ -8546,6 +8645,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private boolean isInsideFactionsSafeZone(Location location) {
         if (location == null || location.getWorld() == null) return false;
+        if (!areFactionsFeaturesVisible()) return false;
         if (!getConfig().getBoolean("factions_world.safe_zone_enabled", true)) return false;
         if (!isFactionsWorld(location.getWorld())) return false;
 
@@ -8561,6 +8661,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private boolean isProtectedFactionsSafeZone(Player p, Location location) {
         return !canBypassFactionsSafeZone(p) && isInsideFactionsSafeZone(location);
+    }
+
+    private boolean shouldProtectClaim(String chunkKey) {
+        return areFactionsFeaturesVisible() && isChunkClaimed(chunkKey);
     }
 
     private void sendActionBar(Player p, String message) {
@@ -10726,7 +10830,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         Player p = e.getPlayer();
 
         String chunkKey = getChunkKey(e.getBlock().getLocation());
-        if (isChunkClaimed(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
+        if (shouldProtectClaim(chunkKey) && !isTrustedInChunk(p, chunkKey)) {
             return;
         }
 
@@ -10800,7 +10904,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         Block b = center.clone().add(xOffset, yOffset, zOffset).getBlock();
                         if (b.getType() != Material.BEDROCK && b.getType() != Material.BARRIER && b.getType() != Material.END_PORTAL_FRAME && b.getType() != Material.END_PORTAL && b.getType() != Material.COMMAND_BLOCK && b.getType() != Material.AIR) {
                             String bChunk = getChunkKey(b.getLocation());
-                            if (!isChunkClaimed(bChunk) || isTrustedInChunk(p, bChunk)) {
+                            if (!shouldProtectClaim(bChunk) || isTrustedInChunk(p, bChunk)) {
                                 b.breakNaturally(held);
                             }
                         }
