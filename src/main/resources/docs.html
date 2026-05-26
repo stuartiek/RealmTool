@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RealmTool Plugin Documentation</title>
+  <title>DrowsyCraft Network Documentation</title>
   <style>
     body { font-family: system-ui, sans-serif; line-height: 1.5; padding: 24px; max-width: 980px; margin: auto; background: #0f1116; color: #e5e5e5; }
     h1, h2, h3 { color: #d1d5db; }
@@ -16,11 +16,51 @@
   </style>
 </head>
 <body>
-  <h1>RealmTool Plugin Documentation</h1>
-  <p>This document describes all features, commands, and user interfaces exposed by the <strong>RealmTool</strong> Minecraft plugin.</p>
+  <h1>DrowsyCraft Network Documentation</h1>
+  <p>This document describes the DrowsyCraft network structure, rollout plan, and the features exposed by the <strong>RealmTool</strong> Minecraft plugin.</p>
 
   <section>
-    <h2>1. Getting Started</h2>
+    <h2>1. DrowsyCraft Network Blueprint</h2>
+    <p>DrowsyCraft is now modeled as a multi-mode network instead of a single survival server with extras. The recommended launch order keeps the network active while still leaving room to grow.</p>
+
+    <h3>1.1 Anchor Modes</h3>
+    <ul>
+      <li><strong>Drowsy SMP</strong> - long-term survival and community retention.</li>
+      <li><strong>Drowsy Factions</strong> - competitive progression, claims, and raids.</li>
+      <li><strong>Drowsy Arcade</strong> - fast queue-based play using Duels, Parkour, TNT Run, and Mob Arena.</li>
+    </ul>
+
+    <h3>1.2 Shared Progression</h3>
+    <p>The bundled <code>config.yml</code> now includes a <code>network</code> section for shared branding, tokens, cosmetics, seasonal progression, and arcade queue rotation. This keeps modes connected instead of competing for the same players.</p>
+
+    <h3>1.3 Recommended Rollout</h3>
+    <ol>
+      <li><strong>Phase 1:</strong> Hub polish, Drowsy SMP, Drowsy Factions, Drowsy Arcade.</li>
+      <li><strong>Phase 2:</strong> Skyblock, Prison, Lifesteal, and Events.</li>
+      <li><strong>Phase 3:</strong> BedWars, SkyWars, KitPvP, and seasonal limited-time modes.</li>
+    </ol>
+
+    <h3>1.4 Network Layout</h3>
+    <pre>
+DrowsyCraft Network
+|
++-- Lobby / Hub
+|
++-- Drowsy SMP
++-- Drowsy Factions
++-- Drowsy Arcade
+|   +-- Duels
+|   +-- Parkour
+|   +-- TNT Run
+|   +-- Mob Arena
+|
++-- Drowsy Events
++-- Future Modes
+    </pre>
+  </section>
+
+  <section>
+    <h2>2. Getting Started</h2>
     <p><strong>Installation:</strong></p>
     <ol>
       <li>Drop the compiled JAR into your server's <code>plugins/</code> folder.</li>
@@ -31,7 +71,7 @@
   </section>
 
   <section>
-    <h2>2. Command Overview</h2>
+    <h2>3. Command Overview</h2>
     <p>The primary command is <code>/dmt</code>. Many other commands are provided by the plugin as well.</p>
 
     <h3>2.1 Core Commands</h3>
@@ -114,7 +154,7 @@
   </section>
 
   <section>
-    <h2>3. User Interfaces</h2>
+    <h2>4. User Interfaces</h2>
 
     <h3>3.1 Main Menu</h3>
     <p>Use <code>/dmt menu</code> to open the main menu. From here you can open either the <strong>Player Menu</strong> or the <strong>Admin Menu</strong>.</p>
@@ -168,7 +208,7 @@
   </section>
 
   <section>
-    <h2>4. Rank System</h2>
+    <h2>5. Rank System</h2>
     <p>The plugin supports a flexible rank system with prefixes and permission sets. Ranks are stored in <code>data.yml</code> under <code>ranks</code>.</p>
 
     <h3>Commands</h3>
@@ -197,7 +237,7 @@
   </section>
 
   <section>
-    <h2>5. NPC / Hologram Utilities</h2>
+    <h2>6. NPC / Hologram Utilities</h2>
     <p>The plugin includes NPC summoning and hologram tools.</p>
     <ul>
       <li><strong>NPC Library</strong> – Use <code>/dmt npc add &lt;username&gt;</code> to store a player skin, then spawn it via <code>/dmt npc summon &lt;username&gt;</code>.</li>
@@ -206,7 +246,7 @@
   </section>
 
   <section>
-    <h2>6. Anti-Xray &amp; Anti-Lag</h2>
+    <h2>7. Anti-Xray &amp; Anti-Lag</h2>
     <p>The plugin includes anti-Xray analysis and item cleanup features to help stabilize servers:</p>
     <ul>
       <li>Anti-Xray runs in the background and warns players breaking ores too fast.</li>
@@ -215,9 +255,10 @@
   </section>
 
   <section>
-    <h2>7. Configuration / Data File</h2>
-    <p>All plugin state is stored in <code>data.yml</code>. Key sections include:</p>
+    <h2>8. Configuration / Data File</h2>
+    <p>The plugin stores network planning in <code>config.yml</code> and runtime/plugin state in <code>data.yml</code>. Key sections include:</p>
     <ul>
+      <li><code>network</code> - mode branding, rollout phases, shared progression, and arcade queue rotation</li>
       <li><code>ranks</code> – rank definitions (prefix, permissions, members)</li>
       <li><code>npcLibrary</code> – stored NPC skins</li>
       <li><code>homes</code>, <code>warps</code>, <code>hub_location</code> – teleport locations</li>
@@ -225,11 +266,11 @@
       <li><code>anti_lag</code> – anti-lag enabled flag and timers</li>
     </ul>
 
-    <p><strong>Tip:</strong> When editing <code>data.yml</code> manually, keep YAML structure intact and restart the server after changes.</p>
+    <p><strong>Tip:</strong> When editing <code>config.yml</code> or <code>data.yml</code> manually, keep YAML structure intact and restart the server after changes.</p>
   </section>
 
   <footer>
-    <p>Generated documentation for the RealmTool plugin. Keep this file alongside the plugin JAR for reference.</p>
+    <p>Generated documentation for the DrowsyCraft network and RealmTool plugin. Keep this file alongside the plugin JAR for reference.</p>
   </footer>
 </body>
 </html>

@@ -247,7 +247,10 @@ public class RankService {
 
     public String getPlayerRank(UUID uuid) {
         if (plugin.getRankConfig().contains(PLAYER_RANK_PATH + "." + uuid)) {
-            return plugin.getRankConfig().getString(PLAYER_RANK_PATH + "." + uuid);
+            return resolveRankKey(plugin.getRankConfig().getString(PLAYER_RANK_PATH + "." + uuid));
+        }
+        if (plugin.getDataConfig().contains(PLAYER_RANK_PATH + "." + uuid)) {
+            return resolveRankKey(plugin.getDataConfig().getString(PLAYER_RANK_PATH + "." + uuid));
         }
         if (plugin.getRankConfig().contains(RANKS_PATH)) {
             for (String rank : plugin.getRankConfig().getConfigurationSection(RANKS_PATH).getKeys(false)) {
@@ -259,6 +262,7 @@ public class RankService {
     }
 
     public void setPlayerRank(UUID uuid, String rank) {
+        String resolvedRank = resolveRankKey(rank);
         if (plugin.getRankConfig().contains(RANKS_PATH)) {
             for (String existing : plugin.getRankConfig().getConfigurationSection(RANKS_PATH).getKeys(false)) {
                 List<String> members = new ArrayList<>(plugin.getRankConfig().getStringList(RANKS_PATH + "." + existing + ".members"));
@@ -267,16 +271,34 @@ public class RankService {
                 }
             }
         }
-        if (rank != null && !rank.isEmpty()) {
-            List<String> members = new ArrayList<>(plugin.getRankConfig().getStringList(RANKS_PATH + "." + rank + ".members"));
+        if (resolvedRank != null && !resolvedRank.isEmpty()) {
+            List<String> members = new ArrayList<>(plugin.getRankConfig().getStringList(RANKS_PATH + "." + resolvedRank + ".members"));
             if (!members.contains(uuid.toString())) {
                 members.add(uuid.toString());
-                plugin.getRankConfig().set(RANKS_PATH + "." + rank + ".members", members);
+                plugin.getRankConfig().set(RANKS_PATH + "." + resolvedRank + ".members", members);
             }
-            plugin.getRankConfig().set(PLAYER_RANK_PATH + "." + uuid, rank);
+            plugin.getRankConfig().set(PLAYER_RANK_PATH + "." + uuid, resolvedRank);
         } else {
             plugin.getRankConfig().set(PLAYER_RANK_PATH + "." + uuid, null);
         }
         plugin.saveRankFile();
+    }
+
+    private String resolveRankKey(String rank) {
+        if (rank == null || rank.isEmpty()) {
+            return rank;
+        }
+        if (!plugin.getRankConfig().contains(RANKS_PATH)) {
+            return rank;
+        }
+        if (plugin.getRankConfig().contains(RANKS_PATH + "." + rank)) {
+            return rank;
+        }
+        for (String existing : plugin.getRankConfig().getConfigurationSection(RANKS_PATH).getKeys(false)) {
+            if (existing.equalsIgnoreCase(rank)) {
+                return existing;
+            }
+        }
+        return rank;
     }
 }

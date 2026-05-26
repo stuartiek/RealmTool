@@ -6,7 +6,7 @@
 
     <groupId>com.stuart</groupId>
     <artifactId>DrowsyManagementTool</artifactId>
-    <version>1.2.3</version>
+    <version>1.2.5</version>
     <packaging>jar</packaging>
 
     <name>Drowsy Management Tool</name>
@@ -18,13 +18,13 @@
     </properties>
 
     <build>
-        <finalName>DrowsyManagementTool-1.2.3</finalName>
+        <finalName>DrowsyManagementTool(26.1.2.build.60-stable)-1.2.5</finalName>
         <defaultGoal>clean package</defaultGoal>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
+                <version>3.14.0</version>
                 <configuration>
                     <source>21</source>
                     <target>21</target>
@@ -35,7 +35,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -105,7 +105,7 @@
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
-            <version>1.21.1-R0.1-SNAPSHOT</version>
+            <version>26.1.2.build.60-stable</version>
             <scope>provided</scope>
         </dependency>
 

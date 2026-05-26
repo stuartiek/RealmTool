@@ -1,8 +1,147 @@
 # Drowsy Management Tool Configuration
 
-# The API Key for the Web Interface.
+# The API Key for the Web Interface and Google Sheets export endpoint.
 # If you leave this blank or delete it, a new one will be generated automatically.
+# Example Sheets URL: http://YOUR_HOST:8091/api/export/sheets?dataset=players&format=json&key=YOUR_API_KEY
 api-key: "qs1a_k7OacJtpUAN-9WIJuYVl0DNgght"
+
+web:
+  host: "0.0.0.0"
+  port: 8091
+  public_url: "https://manage.drowsycraft.com"
+
+# Multi-mode network layout for DrowsyCraft.
+# Keep Phase 1 full before enabling more modes so the network never feels empty.
+network:
+  brand:
+    display_name: "DrowsyCraft Network"
+    primary_hub_name: "Drowsy Hub"
+    mode_labels:
+      survival: "Drowsy SMP"
+      factions: "Drowsy Factions"
+      arcade: "Drowsy Arcade"
+      events: "Drowsy Events"
+  progression:
+    shared_currency_name: "Drowsy Tokens"
+    shared_profile_enabled: true
+    shared_cosmetics_enabled: true
+    seasonal_pass_enabled: false
+  matchmaking:
+    arcade_queue_enabled: true
+    arcade_queue_display_name: "Arcade Queue"
+    rotate_modes:
+      - "Duels"
+      - "Parkour"
+      - "TNT Run"
+      - "Mob Arena"
+  modes:
+    - key: "survival"
+      name: "Drowsy SMP"
+      category: "core"
+      phase: 1
+      enabled: true
+      highlights:
+        - "Long-term progression"
+        - "Builder-friendly"
+        - "Economy-ready"
+    - key: "factions"
+      name: "Drowsy Factions"
+      category: "core"
+      phase: 1
+      enabled: true
+      highlights:
+        - "Competitive claims"
+        - "Raids"
+        - "Power progression"
+    - key: "arcade"
+      name: "Drowsy Arcade"
+      category: "core"
+      phase: 1
+      enabled: true
+      highlights:
+        - "Duels"
+        - "Parkour"
+        - "TNT Run"
+        - "Mob Arena"
+    - key: "skyblock"
+      name: "Drowsy Skyblock"
+      category: "growth"
+      phase: 2
+      enabled: false
+      highlights:
+        - "Island progression"
+        - "Shared tokens"
+    - key: "prison"
+      name: "Drowsy Prison"
+      category: "growth"
+      phase: 2
+      enabled: false
+      highlights:
+        - "Economy grind"
+        - "Prestige loops"
+    - key: "lifesteal"
+      name: "Drowsy Lifesteal"
+      category: "growth"
+      phase: 2
+      enabled: false
+      highlights:
+        - "High-risk PvP"
+        - "Season resets"
+    - key: "events"
+      name: "Drowsy Events"
+      category: "growth"
+      phase: 2
+      enabled: false
+      highlights:
+        - "Live events"
+        - "Community nights"
+    - key: "bedwars"
+      name: "BedWars"
+      category: "network"
+      phase: 3
+      enabled: false
+      highlights:
+        - "Team PvP"
+        - "Queue-based"
+    - key: "skywars"
+      name: "SkyWars"
+      category: "network"
+      phase: 3
+      enabled: false
+      highlights:
+        - "Fast PvP"
+        - "Solo or teams"
+    - key: "kitpvp"
+      name: "KitPvP"
+      category: "network"
+      phase: 3
+      enabled: false
+      highlights:
+        - "Drop-in combat"
+        - "Loadout mastery"
+    - key: "seasonal"
+      name: "Seasonal Modes"
+      category: "network"
+      phase: 3
+      enabled: false
+      highlights:
+        - "Limited-time rulesets"
+        - "Fresh progression"
+  rollout_phases:
+    phase_1:
+      - "Drowsy SMP"
+      - "Drowsy Factions"
+      - "Drowsy Arcade"
+    phase_2:
+      - "Drowsy Skyblock"
+      - "Drowsy Prison"
+      - "Drowsy Lifesteal"
+      - "Drowsy Events"
+    phase_3:
+      - "BedWars"
+      - "SkyWars"
+      - "KitPvP"
+      - "Seasonal Modes"
 
 # Discord Integration
 discord:
@@ -15,11 +154,34 @@ factions_world:
   visible: true
   name: "world"
   claims_enabled: true
+  claims_allowed_worlds: []
   safe_zone_enabled: true
   safe_zone_radius: 96.0
   claims:
     base_limit: 16
     per_playtime_hour: 1
+
+factions_core:
+  enabled: true
+  min_name_length: 3
+  max_name_length: 12
+  power:
+    max_per_player: 10.0
+    death_penalty: 2.0
+    regen_per_hour: 1.0
+    min_power: 0.0
+  raid:
+    require_overclaim_for_explosions: true
+    alert_cooldown_seconds: 300
+    web_push: true
+  logs:
+    max_entries: 30
+  homes:
+    allow_teleport: true
+    require_safe_claim: true
+  discord:
+    enabled: false
+    webhook_override: ""
 
 # Settings for the Jail feature
 settings:

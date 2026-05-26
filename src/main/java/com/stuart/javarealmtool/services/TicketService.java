@@ -58,7 +58,7 @@ public class TicketService {
         ticketCooldowns.put(p.getUniqueId(), now);
         p.sendMessage(ChatColor.GREEN + "Ticket #" + id + " created (" + category + "). Staff will review it soon.");
         for (Player staff : Bukkit.getOnlinePlayers()) {
-            if (staff.hasPermission("realmtool.admin")) {
+            if (plugin.isStaffMember(staff)) {
                 staff.sendMessage(ChatColor.GOLD + "[Tickets] " + ChatColor.YELLOW + p.getName() + " created ticket #" + id + ": " + ChatColor.GRAY + message);
             }
         }
@@ -100,7 +100,7 @@ public class TicketService {
         ticketCooldowns.put(p.getUniqueId(), now);
         p.sendMessage(ChatColor.GREEN + "Appeal #" + id + " created (" + category + "). Staff will review it soon.");
         for (Player staff : Bukkit.getOnlinePlayers()) {
-            if (staff.hasPermission("realmtool.admin")) {
+            if (plugin.isStaffMember(staff)) {
                 staff.sendMessage(ChatColor.GOLD + "[Appeals] " + ChatColor.YELLOW + p.getName() + " created appeal #" + id + ": " + ChatColor.GRAY + message);
             }
         }

@@ -1,7 +1,7 @@
 name: DrowsyManagementTool
 version: ${project.version}
 main: com.stuart.javarealmtool.JavaRealmTool
-api-version: 1.21
+api-version: 26.1.2
 commands:
   dmt:
     description: Main management command
@@ -42,6 +42,9 @@ commands:
   crate:
     description: Open crate menu
     usage: /crate
+  f:
+    description: Faction management command
+    usage: /f <create|invite|join|claim|sethome|home|chat|info>
   nick:
     description: Set or reset your nickname
     usage: /nick [name]
@@ -80,7 +83,7 @@ commands:
     usage: /drowsytool
   staff:
     description: View online staff tags
-    usage: /staff
+    usage: /staff [hours]
   invisible:
     description: Toggle staff invisible spectator mode
     usage: /invisible on|off
@@ -94,6 +97,9 @@ permissions:
   dmt.afk.exempt:
     description: Prevents player from being AFK kicked
     default: false
+  factions.use:
+    description: Allows use of faction commands
+    default: true
   webapp.access:
     description: Allows login to the web interface
     default: op
@@ -122,6 +128,7 @@ permissions:
       webapp.view.discord: true
       webapp.view.reports: true
       webapp.view.claims: true
+      webapp.view.factions: true
       webapp.view.kits: true
       webapp.view.maintenance: true
       webapp.view.crates: true
@@ -153,13 +160,16 @@ permissions:
       webapp.view.events: true
       webapp.view.audit: true
       webapp.view.groups: true
+      webapp.view.network: true
       webapp.manage.groups: true
+      webapp.manage.network: true
       webapp.manage.tickets: true
       webapp.manage.templates: true
       webapp.manage.whitelist: true
       webapp.manage.gamerules: true
       webapp.manage.discord: true
       webapp.manage.claims: true
+      webapp.manage.factions: true
       # permission to bypass trust lists on land claims (admin override)
       claims.override: true
       webapp.manage.kits: true

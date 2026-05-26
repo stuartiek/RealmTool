@@ -24,10 +24,13 @@ import java.text.SimpleDateFormat;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class WebServer {
+    private static final Pattern MINECRAFT_USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{1,16}$");
+
     private final JavaRealmTool plugin;
     private Javalin app;
     private final WebTicketController ticketController;
@@ -72,7 +75,14 @@ public class WebServer {
 
                 setupRoutes();
                 Bukkit.getLogger().addHandler(new WebLogHandler(sessions));
-                app.start(8091);
+                String bindHost = plugin.getWebBindHost();
+                int bindPort = plugin.getWebPort();
+                app.start(bindHost, bindPort);
+                plugin.getLogger().info("Embedded web server listening on " + bindHost + ":" + bindPort
+                    + " (public base URL: " + plugin.getWebPublicBaseUrl() + ")");
+            } catch (Exception e) {
+                plugin.getLogger().log(java.util.logging.Level.SEVERE, "Failed to start embedded web server", e);
+                app = null;
             } finally {
                 // Restore the original console output streams immediately after startup
                 System.setOut(originalOut);
@@ -91,6 +101,272 @@ public class WebServer {
         return true;
     }
 
+    private boolean authSheetsExport(io.javalin.http.Context ctx) {
+        String providedKey = Optional.ofNullable(ctx.queryParam("key"))
+            .filter(value -> !value.isBlank())
+            .orElseGet(() -> Optional.ofNullable(ctx.header("X-API-Key"))
+                .filter(value -> !value.isBlank())
+                .orElseGet(() -> {
+                    String authHeader = ctx.header("Authorization");
+                    if (authHeader != null && authHeader.startsWith("Bearer ")) {
+                        return authHeader.substring("Bearer ".length()).trim();
+                    }
+                    return authHeader;
+                }));
+
+        if (providedKey == null || providedKey.isBlank() || !Objects.equals(providedKey, plugin.getApiKey())) {
+            ctx.status(401).json(Map.of(
+                "error", "Unauthorized",
+                "message", "Provide the plugin api-key as ?key=... or X-API-Key."
+            ));
+            return false;
+        }
+        return true;
+    }
+
+    private List<LinkedHashMap<String, Object>> buildSheetsExportRows(String dataset) {
+        return switch (dataset) {
+            case "players" -> buildPlayerExportRows();
+            case "economy" -> buildEconomyExportRows();
+            case "tickets" -> buildTicketExportRows("tickets", false);
+            case "appeals" -> buildTicketExportRows("appeals", true);
+            case "staff-hours" -> buildStaffHourExportRows();
+            default -> throw new IllegalArgumentException("Unsupported dataset: " + dataset);
+        };
+    }
+
+    private List<LinkedHashMap<String, Object>> buildPlayerExportRows() {
+        List<LinkedHashMap<String, Object>> rows = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
+        Set<String> candidateUuids = new HashSet<>();
+        var data = plugin.getDataConfig();
+        var economy = plugin.getEconomyConfig();
+
+        var lastSeen = data.getConfigurationSection("last_seen_name");
+        if (lastSeen != null) candidateUuids.addAll(lastSeen.getKeys(false));
+        var playtime = data.getConfigurationSection("playtime");
+        if (playtime != null) candidateUuids.addAll(playtime.getKeys(false));
+        var warnings = data.getConfigurationSection("warnings");
+        if (warnings != null) candidateUuids.addAll(warnings.getKeys(false));
+        var coins = economy.getConfigurationSection("coins");
+        if (coins != null) candidateUuids.addAll(coins.getKeys(false));
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            candidateUuids.add(player.getUniqueId().toString());
+        }
+
+        for (String uuidStr : candidateUuids) {
+            try {
+                UUID uuid = UUID.fromString(uuidStr);
+                if (!seen.add(uuid)) continue;
+
+                org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
+                Player onlinePlayer = Bukkit.getPlayer(uuid);
+                String name = data.getString("last_seen_name." + uuidStr, offlinePlayer.getName());
+                if (name == null || name.isBlank()) name = uuidStr;
+                String rank = plugin.getPlayerRank(uuid);
+                if (rank == null || rank.isBlank()) rank = plugin.getPlayerGroup(uuid);
+
+                LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+                row.put("uuid", uuidStr);
+                row.put("name", name);
+                row.put("online", onlinePlayer != null && onlinePlayer.isOnline());
+                row.put("world", onlinePlayer != null ? onlinePlayer.getWorld().getName() : "");
+                row.put("x", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getX() * 10.0) / 10.0 : "");
+                row.put("y", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getY() * 10.0) / 10.0 : "");
+                row.put("z", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getZ() * 10.0) / 10.0 : "");
+                row.put("playtimeHours", plugin.getPlaytimeHours(uuid));
+                row.put("warnings", data.getStringList("warnings." + uuidStr).size());
+                row.put("punished", plugin.isPunished(uuid));
+                row.put("banned", Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name));
+                row.put("coins", plugin.getCoins(uuid));
+                row.put("rank", rank != null ? rank : "");
+                rows.add(row);
+            } catch (Exception ignored) {
+            }
+        }
+
+        rows.sort(Comparator.comparing(row -> String.valueOf(row.get("name")), String.CASE_INSENSITIVE_ORDER));
+        return rows;
+    }
+
+    private List<LinkedHashMap<String, Object>> buildEconomyExportRows() {
+        List<LinkedHashMap<String, Object>> rows = new ArrayList<>();
+        var data = plugin.getDataConfig();
+        var economyData = plugin.getEconomyConfig();
+        var coins = economyData.getConfigurationSection("coins");
+        if (coins == null) {
+            return rows;
+        }
+
+        for (String uuidStr : coins.getKeys(false)) {
+            LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+            row.put("uuid", uuidStr);
+            row.put("balance", economyData.getLong("coins." + uuidStr, 0));
+            row.put("earned", 0);
+            row.put("spent", 0);
+            try {
+                UUID uuid = UUID.fromString(uuidStr);
+                String name = data.getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                row.put("name", name != null ? name : uuidStr);
+            } catch (Exception e) {
+                row.put("name", uuidStr);
+            }
+            rows.add(row);
+        }
+
+        rows.sort((left, right) -> Long.compare(
+            ((Number) right.get("balance")).longValue(),
+            ((Number) left.get("balance")).longValue()
+        ));
+        return rows;
+    }
+
+    private List<LinkedHashMap<String, Object>> buildTicketExportRows(String rootPath, boolean appealDataset) {
+        List<LinkedHashMap<String, Object>> rows = new ArrayList<>();
+        var ticketConfig = plugin.getTicketConfig();
+        var section = ticketConfig.getConfigurationSection(rootPath);
+        if (section == null) {
+            return rows;
+        }
+
+        for (String key : section.getKeys(false)) {
+            if ("next_id".equals(key)) continue;
+
+            String basePath = rootPath + "." + key;
+            LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+            row.put("id", appealDataset ? -Integer.parseInt(key) : Integer.parseInt(key));
+            row.put("player", ticketConfig.getString(basePath + ".player", ""));
+            row.put("message", ticketConfig.getString(basePath + ".message", ""));
+            row.put("status", ticketConfig.getString(basePath + ".status", "open"));
+            row.put("priority", ticketConfig.getString(basePath + ".priority", "medium"));
+            row.put("category", ticketConfig.getString(basePath + ".category", "other"));
+            row.put("assignee", ticketConfig.getString(basePath + ".assignee", ""));
+            row.put("timestamp", ticketConfig.getString(basePath + ".timestamp", ""));
+            row.put("type", appealDataset ? "appeal" : "ticket");
+            rows.add(row);
+        }
+
+        rows.sort(Comparator.comparing(row -> String.valueOf(row.get("timestamp")), Comparator.reverseOrder()));
+        return rows;
+    }
+
+    private List<LinkedHashMap<String, Object>> buildStaffHourExportRows() {
+        List<LinkedHashMap<String, Object>> rows = new ArrayList<>();
+        for (Map<String, Object> staffSummary : plugin.getStaffHourSummaryData()) {
+            LinkedHashMap<String, Object> row = new LinkedHashMap<>();
+            row.put("uuid", staffSummary.getOrDefault("uuid", ""));
+            row.put("name", staffSummary.getOrDefault("name", ""));
+            row.put("minutes24h", staffSummary.getOrDefault("minutes24h", 0));
+            row.put("minutes7d", staffSummary.getOrDefault("minutes7d", 0));
+            row.put("minutes14d", staffSummary.getOrDefault("minutes14d", 0));
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private String toCsv(List<LinkedHashMap<String, Object>> rows) {
+        if (rows.isEmpty()) {
+            return "";
+        }
+
+        List<String> headers = new ArrayList<>(rows.get(0).keySet());
+        StringBuilder csv = new StringBuilder();
+        csv.append(headers.stream().map(this::escapeCsv).collect(Collectors.joining(","))).append('\n');
+        for (LinkedHashMap<String, Object> row : rows) {
+            List<String> values = new ArrayList<>();
+            for (String header : headers) {
+                values.add(escapeCsv(String.valueOf(row.getOrDefault(header, ""))));
+            }
+            csv.append(String.join(",", values)).append('\n');
+        }
+        return csv.toString();
+    }
+
+    private String escapeCsv(String value) {
+        String safeValue = value == null ? "" : value;
+        boolean needsQuotes = safeValue.contains(",") || safeValue.contains("\n") || safeValue.contains("\r") || safeValue.contains("\"");
+        if (!needsQuotes) {
+            return safeValue;
+        }
+        return "\"" + safeValue.replace("\"", "\"\"") + "\"";
+    }
+
+    private ResolvedPlayer resolveKnownPlayer(String username) {
+        if (username == null) {
+            return null;
+        }
+
+        String trimmedUsername = username.trim();
+        if (trimmedUsername.isEmpty()) {
+            return null;
+        }
+
+        Player onlinePlayer = Bukkit.getPlayerExact(trimmedUsername);
+        if (onlinePlayer != null && onlinePlayer.isOnline()) {
+            return new ResolvedPlayer(onlinePlayer.getUniqueId(), onlinePlayer.getName(), onlinePlayer.isOp());
+        }
+
+        UUID storedUuid = findStoredUuidByName(trimmedUsername);
+        if (storedUuid != null) {
+            String storedName = plugin.getDataConfig().getString("last_seen_name." + storedUuid, trimmedUsername);
+            return new ResolvedPlayer(storedUuid, storedName, isOperator(storedUuid, storedName));
+        }
+
+        if (!MINECRAFT_USERNAME_PATTERN.matcher(trimmedUsername).matches()) {
+            return null;
+        }
+
+        for (org.bukkit.OfflinePlayer operator : Bukkit.getOperators()) {
+            if (operator.getName() != null && operator.getName().equalsIgnoreCase(trimmedUsername)) {
+                return new ResolvedPlayer(operator.getUniqueId(), operator.getName(), true);
+            }
+        }
+
+        for (org.bukkit.OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers()) {
+            if (offlinePlayer.getName() != null && offlinePlayer.getName().equalsIgnoreCase(trimmedUsername)) {
+                return new ResolvedPlayer(offlinePlayer.getUniqueId(), offlinePlayer.getName(), offlinePlayer.isOp());
+            }
+        }
+
+        return null;
+    }
+
+    private UUID findStoredUuidByName(String username) {
+        var lastSeenSection = plugin.getDataConfig().getConfigurationSection("last_seen_name");
+        if (lastSeenSection == null) {
+            return null;
+        }
+
+        for (String uuidKey : lastSeenSection.getKeys(false)) {
+            String storedName = lastSeenSection.getString(uuidKey);
+            if (storedName == null || !storedName.equalsIgnoreCase(username)) {
+                continue;
+            }
+
+            try {
+                return UUID.fromString(uuidKey);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private boolean isOperator(UUID uuid, String playerName) {
+        for (org.bukkit.OfflinePlayer operator : Bukkit.getOperators()) {
+            if (operator.getUniqueId().equals(uuid)) {
+                return true;
+            }
+            if (playerName != null && operator.getName() != null && operator.getName().equalsIgnoreCase(playerName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private record ResolvedPlayer(UUID uuid, String name, boolean op) {}
+
     public boolean hasPermission(String token, String permission) {
         String username = userSessions.get(token);
         if (username == null) return false;
@@ -100,12 +376,12 @@ public class WebServer {
             if (player != null && player.isOnline()) {
                 return player.hasPermission(permission);
             }
-            // FIX: Allow offline OPs to access the web panel
-            // This fixes the "empty player list" issue when you are not in-game
-            org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-            if (offlinePlayer.isOp()) return true;
-            
-            UUID uuid = offlinePlayer.getUniqueId();
+
+            ResolvedPlayer resolvedPlayer = resolveKnownPlayer(username);
+            if (resolvedPlayer == null) return false;
+            if (resolvedPlayer.op()) return true;
+
+            UUID uuid = resolvedPlayer.uuid();
             String group = plugin.getPlayerGroup(uuid);
             if (group != null) {
                 List<String> perms = plugin.getRankConfig().getStringList("groups." + group + ".permissions");
@@ -142,11 +418,16 @@ public class WebServer {
             }
             
             List<String> permissions = new ArrayList<>();
-            org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-            if (offlinePlayer.isOp()) {
+            ResolvedPlayer resolvedPlayer = resolveKnownPlayer(username);
+            if (resolvedPlayer == null) {
+                return permissions;
+            }
+
+            if (resolvedPlayer.op()) {
                 permissions.add("webapp.*");
             }
-            UUID uuid = offlinePlayer.getUniqueId();
+
+            UUID uuid = resolvedPlayer.uuid();
             String group = plugin.getPlayerGroup(uuid);
             if (group != null) {
                 permissions.addAll(plugin.getRankConfig().getStringList("groups." + group + ".permissions"));
@@ -178,8 +459,171 @@ public class WebServer {
         return plugin.inferHexColorFromPrefix(pref);
     }
 
+    private Map<String, Object> buildNetworkSettingsSnapshot() {
+        FileConfiguration config = plugin.getConfig();
+
+        Map<String, Object> brand = new LinkedHashMap<>();
+        brand.put("displayName", config.getString("network.brand.display_name", "DrowsyCraft Network"));
+        brand.put("primaryHubName", config.getString("network.brand.primary_hub_name", "Drowsy Hub"));
+        brand.put("survivalLabel", config.getString("network.brand.mode_labels.survival", "Drowsy SMP"));
+        brand.put("factionsLabel", config.getString("network.brand.mode_labels.factions", "Drowsy Factions"));
+        brand.put("arcadeLabel", config.getString("network.brand.mode_labels.arcade", "Drowsy Arcade"));
+        brand.put("eventsLabel", config.getString("network.brand.mode_labels.events", "Drowsy Events"));
+
+        Map<String, Object> progression = new LinkedHashMap<>();
+        progression.put("sharedCurrencyName", config.getString("network.progression.shared_currency_name", "Drowsy Tokens"));
+        progression.put("sharedProfileEnabled", config.getBoolean("network.progression.shared_profile_enabled", true));
+        progression.put("sharedCosmeticsEnabled", config.getBoolean("network.progression.shared_cosmetics_enabled", true));
+        progression.put("seasonalPassEnabled", config.getBoolean("network.progression.seasonal_pass_enabled", false));
+
+        Map<String, Object> matchmaking = new LinkedHashMap<>();
+        matchmaking.put("arcadeQueueEnabled", config.getBoolean("network.matchmaking.arcade_queue_enabled", true));
+        matchmaking.put("arcadeQueueDisplayName", config.getString("network.matchmaking.arcade_queue_display_name", "Arcade Queue"));
+        matchmaking.put("rotateModes", new ArrayList<>(config.getStringList("network.matchmaking.rotate_modes")));
+
+        List<Map<String, Object>> modes = normalizeNetworkModes(config.getMapList("network.modes"));
+
+        Map<String, Object> rolloutPhases = new LinkedHashMap<>();
+        rolloutPhases.put("phase1", new ArrayList<>(config.getStringList("network.rollout_phases.phase_1")));
+        rolloutPhases.put("phase2", new ArrayList<>(config.getStringList("network.rollout_phases.phase_2")));
+        rolloutPhases.put("phase3", new ArrayList<>(config.getStringList("network.rollout_phases.phase_3")));
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("brand", brand);
+        response.put("progression", progression);
+        response.put("matchmaking", matchmaking);
+        response.put("modes", modes);
+        response.put("rolloutPhases", rolloutPhases);
+        return response;
+    }
+
+    private int parseInt(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private boolean parseBoolean(Object value, boolean fallback) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value == null) {
+            return fallback;
+        }
+        return "true".equalsIgnoreCase(String.valueOf(value).trim());
+    }
+
+    private String parseString(Object value, String fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? fallback : text;
+    }
+
+    private List<String> normalizeStringList(Object rawValue) {
+        List<String> values = new ArrayList<>();
+        if (rawValue instanceof List<?> rawList) {
+            for (Object item : rawList) {
+                if (item == null) {
+                    continue;
+                }
+                String value = String.valueOf(item).trim();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+            }
+        }
+        return values;
+    }
+
+    private List<Map<String, Object>> normalizeNetworkModes(Object rawValue) {
+        List<Map<String, Object>> modes = new ArrayList<>();
+        if (!(rawValue instanceof List<?> rawList)) {
+            return modes;
+        }
+
+        for (Object item : rawList) {
+            if (!(item instanceof Map<?, ?> rawMode)) {
+                continue;
+            }
+
+            String key = parseString(rawMode.get("key"), "");
+            if (key.isEmpty()) {
+                continue;
+            }
+
+            Map<String, Object> mode = new LinkedHashMap<>();
+            mode.put("key", key);
+            mode.put("name", parseString(rawMode.get("name"), key));
+            mode.put("category", parseString(rawMode.get("category"), "network"));
+            mode.put("phase", Math.max(1, parseInt(rawMode.get("phase"), 1)));
+            mode.put("enabled", parseBoolean(rawMode.get("enabled"), false));
+            mode.put("highlights", normalizeStringList(rawMode.get("highlights")));
+            modes.add(mode);
+        }
+
+        return modes;
+    }
+
 
     private void setupRoutes() {
+        app.get("/api/export/sheets", ctx -> {
+            if (!authSheetsExport(ctx)) return;
+
+            String dataset = Optional.ofNullable(ctx.queryParam("dataset")).orElse("players").trim().toLowerCase(Locale.ROOT);
+            String format = Optional.ofNullable(ctx.queryParam("format")).orElse("json").trim().toLowerCase(Locale.ROOT);
+            if (!Set.of("json", "csv").contains(format)) {
+                ctx.status(400).json(Map.of("error", "Unsupported format", "supportedFormats", List.of("json", "csv")));
+                return;
+            }
+
+            Future<List<LinkedHashMap<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> buildSheetsExportRows(dataset));
+
+            try {
+                List<LinkedHashMap<String, Object>> rows = future.get();
+                if ("csv".equals(format)) {
+                    ctx.contentType("text/csv; charset=utf-8");
+                    ctx.header("Content-Disposition", "inline; filename=\"realmtool-" + dataset + ".csv\"");
+                    ctx.result(toCsv(rows));
+                    return;
+                }
+
+                ctx.json(Map.of(
+                    "dataset", dataset,
+                    "format", format,
+                    "generatedAt", java.time.Instant.now().toString(),
+                    "rowCount", rows.size(),
+                    "rows", rows
+                ));
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof IllegalArgumentException) {
+                    ctx.status(400).json(Map.of(
+                        "error", cause.getMessage(),
+                        "supportedDatasets", List.of("players", "economy", "tickets", "appeals", "staff-hours")
+                    ));
+                    return;
+                }
+                ctx.status(500).json(Map.of("error", "Failed to build export", "message", cause != null ? cause.getMessage() : "Unknown error"));
+            } catch (IllegalArgumentException e) {
+                ctx.status(400).json(Map.of(
+                    "error", e.getMessage(),
+                    "supportedDatasets", List.of("players", "economy", "tickets", "appeals", "staff-hours")
+                ));
+            } catch (Exception e) {
+                ctx.status(500).json(Map.of("error", "Failed to build export", "message", e.getMessage()));
+            }
+        });
+
         app.post("/api/login", ctx -> {
             var body = ctx.bodyAsClass(Map.class);
             String username = (String) body.get("username");
@@ -197,33 +641,35 @@ public class WebServer {
                     }
                     return Map.of("name", player.getName());
                 }
-                
-                org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(username);
-                if (offlinePlayer.hasPlayedBefore() || offlinePlayer.isOp()) {
-                    boolean hasAccess = offlinePlayer.isOp();
-                    UUID uuid = offlinePlayer.getUniqueId();
-                    if (!hasAccess) {
-                        String group = plugin.getPlayerGroup(uuid);
-                        if (group != null) {
-                            List<String> perms = plugin.getRankConfig().getStringList("groups." + group + ".permissions");
-                            if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
-                        }
-                    }
-                    if (!hasAccess) {
-                        String rank = plugin.getPlayerRank(uuid);
-                        if (rank != null) {
-                            List<String> perms = plugin.getRankConfig().getStringList("ranks." + rank + ".permissions");
-                            if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
-                        }
-                    }
-                    
-                    if (hasAccess) {
-                        return Map.of("name", offlinePlayer.getName() != null ? offlinePlayer.getName() : username);
-                    } else {
-                        return Map.of("error", "You do not have permission (webapp.access) to log in.");
+
+                ResolvedPlayer resolvedPlayer = resolveKnownPlayer(username);
+                if (resolvedPlayer == null) {
+                    return Map.of("error", "Player not found. You must have played on the server before.");
+                }
+
+                boolean hasAccess = resolvedPlayer.op();
+                UUID uuid = resolvedPlayer.uuid();
+                if (!hasAccess) {
+                    String group = plugin.getPlayerGroup(uuid);
+                    if (group != null) {
+                        List<String> perms = plugin.getRankConfig().getStringList("groups." + group + ".permissions");
+                        if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
                     }
                 }
-                return Map.of("error", "Player not found. You must have played on the server before.");
+                if (!hasAccess) {
+                    String rank = plugin.getPlayerRank(uuid);
+                    if (rank != null) {
+                        List<String> perms = plugin.getRankConfig().getStringList("ranks." + rank + ".permissions");
+                        if (perms.contains("webapp.access") || perms.contains("webapp.*")) hasAccess = true;
+                    }
+                }
+
+                if (hasAccess) {
+                    String resolvedName = resolvedPlayer.name() != null ? resolvedPlayer.name() : username;
+                    return Map.of("name", resolvedName);
+                }
+
+                return Map.of("error", "You do not have permission (webapp.access) to log in.");
             });
 
             try {
@@ -306,43 +752,23 @@ public class WebServer {
             ctx.json(future.get());
         });
 
-        // Ticket endpoints moved to WebTicketController
-        ticketController.registerRoutes(app);
+        app.get("/api/staff-hours", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) {
+                ctx.status(403).result("Forbidden");
+                return;
+            }
 
-        app.get("/api/appeals", ctx -> {
-            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
-
-            String status = ctx.queryParam("status");
-            String priority = ctx.queryParam("priority");
-            
-            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<Map<String, Object>> appeals = new ArrayList<>();
-                if (plugin.getTicketConfig().contains("appeals")) {
-                    for (String key : plugin.getTicketConfig().getConfigurationSection("appeals").getKeys(false)) {
-                        if (key.equals("next_id")) continue;
-                        String appealStatus = plugin.getTicketConfig().getString("appeals." + key + ".status", "open");
-                        String appealPriority = plugin.getTicketConfig().getString("appeals." + key + ".priority", "medium");
-
-                        if ((status == null || status.isEmpty() || status.equals(appealStatus)) &&
-                            (priority == null || priority.isEmpty() || priority.equals(appealPriority))) {
-                            Map<String, Object> t = new HashMap<>();
-                            t.put("id", "-" + key);
-                            t.put("player", plugin.getTicketConfig().getString("appeals." + key + ".player"));
-                            t.put("message", plugin.getTicketConfig().getString("appeals." + key + ".message"));
-                            t.put("status", appealStatus);
-                            t.put("priority", appealPriority);
-                            t.put("category", plugin.getTicketConfig().getString("appeals." + key + ".category", "other"));
-                            t.put("assignee", plugin.getTicketConfig().getString("appeals." + key + ".assignee", ""));
-                            t.put("time", plugin.getTicketConfig().getString("appeals." + key + ".timestamp"));
-                            t.put("type", "appeal");
-                            appeals.add(t);
-                        }
-                    }
-                }
-                return appeals;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> response = new HashMap<>();
+                response.put("staff", plugin.getStaffHourSummaryData());
+                response.put("trackedWindows", List.of("24h", "7d", "14d"));
+                return response;
             });
             ctx.json(future.get());
         });
+
+        // Ticket endpoints moved to WebTicketController
+        ticketController.registerRoutes(app);
 
         app.get("/api/notes", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.notes")) return;
@@ -1281,9 +1707,11 @@ public class WebServer {
                 res.put("webhook_ban", plugin.getDataConfig().getString("discord.webhook_ban", ""));
                 res.put("webhook_warn", plugin.getDataConfig().getString("discord.webhook_warn", ""));
                 res.put("webhook_report", plugin.getDataConfig().getString("discord.webhook_report", ""));
+                res.put("webhook_faction", plugin.getDataConfig().getString("discord.webhook_faction", ""));
                 res.put("bans", plugin.getDataConfig().getBoolean("discord.bans", true));
                 res.put("warns", plugin.getDataConfig().getBoolean("discord.warns", true));
                 res.put("reports", plugin.getDataConfig().getBoolean("discord.reports", true));
+                res.put("factions", plugin.getDataConfig().getBoolean("discord.factions", false));
                 res.put("joins", plugin.getDataConfig().getBoolean("discord.joins", true));
                 res.put("leaves", plugin.getDataConfig().getBoolean("discord.leaves", true));
                 res.put("deaths", plugin.getDataConfig().getBoolean("discord.deaths", false));
@@ -1326,10 +1754,10 @@ public class WebServer {
                 if (fWebhook != null) plugin.getDataConfig().set("discord.webhook", fWebhook);
 
                 // Helper to get boolean from body map or query param
-                String[] boolKeys = {"bans", "warns", "reports", "joins", "leaves", "deaths",
+                String[] boolKeys = {"bans", "warns", "reports", "factions", "joins", "leaves", "deaths",
                     "block_logging", "container_logging", "command_logging",
                     "milestone_alerts", "performance_alerts", "health_check", "daily_summary"};
-                String[] webhookKeys = {"webhook_ban", "webhook_warn", "webhook_report"};
+                String[] webhookKeys = {"webhook_ban", "webhook_warn", "webhook_report", "webhook_faction"};
 
                 for (String key : webhookKeys) {
                     String val = null;
@@ -1375,6 +1803,57 @@ public class WebServer {
             ctx.json(Map.of("success", success, "error", success ? "" : "Failed to connect to webhook"));
         });
 
+        // --- DROWSYCRAFT NETWORK ---
+        app.get("/api/network", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.network")) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildNetworkSettingsSnapshot);
+            ctx.json(future.get());
+        });
+
+        app.post("/api/network", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.manage.network")) return;
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
+
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<?, ?> brand = body.get("brand") instanceof Map<?, ?> value ? value : Map.of();
+                Map<?, ?> progression = body.get("progression") instanceof Map<?, ?> value ? value : Map.of();
+                Map<?, ?> matchmaking = body.get("matchmaking") instanceof Map<?, ?> value ? value : Map.of();
+                Map<?, ?> rolloutPhases = body.get("rolloutPhases") instanceof Map<?, ?> value ? value : Map.of();
+
+                FileConfiguration config = plugin.getConfig();
+                config.set("network.brand.display_name", parseString(brand.get("displayName"), "DrowsyCraft Network"));
+                config.set("network.brand.primary_hub_name", parseString(brand.get("primaryHubName"), "Drowsy Hub"));
+                config.set("network.brand.mode_labels.survival", parseString(brand.get("survivalLabel"), "Drowsy SMP"));
+                config.set("network.brand.mode_labels.factions", parseString(brand.get("factionsLabel"), "Drowsy Factions"));
+                config.set("network.brand.mode_labels.arcade", parseString(brand.get("arcadeLabel"), "Drowsy Arcade"));
+                config.set("network.brand.mode_labels.events", parseString(brand.get("eventsLabel"), "Drowsy Events"));
+
+                config.set("network.progression.shared_currency_name", parseString(progression.get("sharedCurrencyName"), "Drowsy Tokens"));
+                config.set("network.progression.shared_profile_enabled", parseBoolean(progression.get("sharedProfileEnabled"), true));
+                config.set("network.progression.shared_cosmetics_enabled", parseBoolean(progression.get("sharedCosmeticsEnabled"), true));
+                config.set("network.progression.seasonal_pass_enabled", parseBoolean(progression.get("seasonalPassEnabled"), false));
+
+                config.set("network.matchmaking.arcade_queue_enabled", parseBoolean(matchmaking.get("arcadeQueueEnabled"), true));
+                config.set("network.matchmaking.arcade_queue_display_name", parseString(matchmaking.get("arcadeQueueDisplayName"), "Arcade Queue"));
+                config.set("network.matchmaking.rotate_modes", normalizeStringList(matchmaking.get("rotateModes")));
+
+                List<Map<String, Object>> modes = normalizeNetworkModes(body.get("modes"));
+                if (!modes.isEmpty()) {
+                    config.set("network.modes", modes);
+                }
+                config.set("network.rollout_phases.phase_1", normalizeStringList(rolloutPhases.get("phase1")));
+                config.set("network.rollout_phases.phase_2", normalizeStringList(rolloutPhases.get("phase2")));
+                config.set("network.rollout_phases.phase_3", normalizeStringList(rolloutPhases.get("phase3")));
+                plugin.saveConfig();
+                plugin.logAction("WebAdmin", "updated", "network settings");
+                return Map.of("success", true, "network", buildNetworkSettingsSnapshot());
+            });
+
+            ctx.json(future.get());
+        });
+
         // --- REPORTS ---
         app.post("/api/report", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.report")) return;
@@ -1402,6 +1881,38 @@ public class WebServer {
                 List<String> recent = new ArrayList<>(reports);
                 Collections.reverse(recent);
                 return recent.stream().limit(50).collect(Collectors.toList());
+            });
+            ctx.json(future.get());
+        });
+
+        // --- FACTIONS ---
+        app.get("/api/factions", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.factions")) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<String, Object> result = new LinkedHashMap<>();
+                var factionService = plugin.getFactionService();
+                if (factionService == null) {
+                    result.put("factions", List.of());
+                    result.put("raidAlerts", List.of());
+                    return result;
+                }
+                result.put("factions", factionService.getFactionSummaries());
+                result.put("raidAlerts", factionService.getRecentRaidAlerts(25));
+                return result;
+            });
+            ctx.json(future.get());
+        });
+
+        app.get("/api/factions/{name}/logs", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.factions")) return;
+            String factionName = ctx.pathParam("name");
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                var factionService = plugin.getFactionService();
+                List<String> logs = factionService == null ? List.of() : factionService.getFactionLogsByName(factionName, 50);
+                return Map.of(
+                    "name", factionName,
+                    "logs", logs
+                );
             });
             ctx.json(future.get());
         });
@@ -3267,16 +3778,35 @@ public class WebServer {
             String name = (String) body.get("name");
             String color = (String) body.get("color");
             String prefix = (String) body.get("prefix");
+            Object permissions = body.get("permissions");
             if (name == null || name.isBlank()) { ctx.status(400).json(Map.of("error", "Name required")); return; }
             String finalName = name;
             String finalColor = color;
             String finalPrefix = prefix;
+            Object finalPermissions = permissions;
             Future<Map<String, Object>> future7 = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 if (!plugin.getRankConfig().contains("groups." + finalName)) {
                     return Map.of("error", (Object) "Group not found");
                 }
                 if (finalColor != null) plugin.getRankConfig().set("groups." + finalName + ".color", finalColor);
                 if (finalPrefix != null) plugin.getRankConfig().set("groups." + finalName + ".prefix", finalPrefix);
+                if (finalPermissions != null) {
+                    List<String> permissionList = new ArrayList<>();
+                    if (finalPermissions instanceof String) {
+                        for (String permission : ((String) finalPermissions).split(",")) {
+                            String trimmed = permission.trim();
+                            if (!trimmed.isEmpty()) permissionList.add(trimmed);
+                        }
+                    } else if (finalPermissions instanceof List<?>) {
+                        for (Object permission : (List<?>) finalPermissions) {
+                            if (permission != null) {
+                                String trimmed = String.valueOf(permission).trim();
+                                if (!trimmed.isEmpty()) permissionList.add(trimmed);
+                            }
+                        }
+                    }
+                    plugin.getRankConfig().set("groups." + finalName + ".permissions", permissionList);
+                }
                 plugin.saveRankFile();
                 plugin.logAction("WebPanel", "group_update", finalName);
                 return Map.of("success", (Object) true);
@@ -3302,8 +3832,8 @@ public class WebServer {
                 List<String> perms = new ArrayList<>(plugin.getRankConfig().getStringList("groups." + finalName + ".permissions"));
                 if (perms.contains(finalPerm)) return Map.of("error", (Object) "Permission already exists");
                 perms.add(finalPerm);
-                plugin.getDataConfig().set("groups." + finalName + ".permissions", perms);
-                plugin.saveDataFile();
+                plugin.getRankConfig().set("groups." + finalName + ".permissions", perms);
+                plugin.saveRankFile();
                 plugin.refreshAllPermissions();
                 plugin.logAction("WebPanel", "group_perm_add", finalName + " " + finalPerm);
                 return Map.of("success", (Object) true);
@@ -3367,6 +3897,7 @@ public class WebServer {
                 plugin.getRankConfig().set("groups." + finalName + ".members", members);
                 // Update last_seen_name for this uuid
                 plugin.getDataConfig().set("last_seen_name." + uuidStr, finalPlayer);
+                plugin.saveDataFile();
                 plugin.saveRankFile();
                 // Apply permissions if online
                 if (online != null) plugin.applyPermissionGroup(online);
@@ -3431,14 +3962,14 @@ public class WebServer {
                 }
                 
                 // Offline (from player_rank assignment)
-                var playerRankSection = plugin.getDataConfig().getConfigurationSection("player_rank");
+                var playerRankSection = plugin.getRankConfig().getConfigurationSection("player_rank");
                 if (playerRankSection != null) {
                     for (String uuidStr : playerRankSection.getKeys(false)) {
                         try {
                             UUID uuid = UUID.fromString(uuidStr);
                             if (seen.contains(uuid)) continue;
                             seen.add(uuid);
-                            String rank = plugin.getDataConfig().getString("player_rank." + uuidStr);
+                            String rank = plugin.getRankConfig().getString("player_rank." + uuidStr);
                             String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
                             Map<String, Object> m = new HashMap<>();
                             m.put("name", name != null ? name : uuidStr);
@@ -3508,7 +4039,111 @@ public class WebServer {
             });
             ctx.json(future.get());
         });
+
+        app.get("/api/punishments", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> punishments = new ArrayList<>();
+                var playersConfig = plugin.getPlayersConfig();
+                var section = playersConfig.getConfigurationSection("punishments");
+                if (section == null) return punishments;
+
+                long now = System.currentTimeMillis();
+                for (String uuidStr : section.getKeys(false)) {
+                    try {
+                        UUID uuid = UUID.fromString(uuidStr);
+                        long expiry = playersConfig.getLong("punishments." + uuidStr, 0L);
+                        if (expiry <= now || !plugin.isPunished(uuid)) {
+                            continue;
+                        }
+
+                        long minutesLeft = Math.max(1L, (expiry - now + 59999L) / 60000L);
+                        String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+
+                        Map<String, Object> punishment = new HashMap<>();
+                        punishment.put("player", name != null ? name : uuidStr);
+                        punishment.put("duration", minutesLeft);
+                        punishment.put("reason", "Punished in-game");
+                        punishment.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(expiry)));
+                        punishments.add(punishment);
+                    } catch (Exception ignored) {}
+                }
+
+                punishments.sort(Comparator.comparing(map -> String.valueOf(map.get("player"))));
+                return punishments;
+            });
+            ctx.json(future.get());
+        });
+
+        app.get("/api/search", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
+            String nameFilter = Optional.ofNullable(ctx.queryParam("name")).orElse("").trim().toLowerCase();
+            double playtimeMin = ctx.queryParamAsClass("playtimeMin", Double.class).getOrDefault(0.0);
+            double playtimeMax = ctx.queryParamAsClass("playtimeMax", Double.class).getOrDefault(Double.MAX_VALUE);
+            int warningsMin = ctx.queryParamAsClass("warnings", Integer.class).getOrDefault(0);
+            String bannedFilter = Optional.ofNullable(ctx.queryParam("banned")).orElse("").trim().toLowerCase();
+
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Set<UUID> seen = new HashSet<>();
+                List<Map<String, Object>> results = new ArrayList<>();
+                var data = plugin.getDataConfig();
+
+                Set<String> candidateUuids = new HashSet<>();
+                var lastSeen = data.getConfigurationSection("last_seen_name");
+                if (lastSeen != null) candidateUuids.addAll(lastSeen.getKeys(false));
+                var playtime = data.getConfigurationSection("playtime");
+                if (playtime != null) candidateUuids.addAll(playtime.getKeys(false));
+                var warnings = data.getConfigurationSection("warnings");
+                if (warnings != null) candidateUuids.addAll(warnings.getKeys(false));
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    candidateUuids.add(player.getUniqueId().toString());
+                }
+
+                for (String uuidStr : candidateUuids) {
+                    try {
+                        UUID uuid = UUID.fromString(uuidStr);
+                        if (!seen.add(uuid)) continue;
+
+                        String playerName = data.getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                        if (playerName == null || playerName.isBlank()) playerName = uuidStr;
+                        double playtimeHours = plugin.getPlaytimeHours(uuid);
+                        int warningCount = data.getStringList("warnings." + uuidStr).size();
+                        boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(playerName);
+                        boolean punished = plugin.isPunished(uuid);
+                        int reputation = Math.max(-100, 100 - (warningCount * 10) - (banned ? 40 : 0) - (punished ? 20 : 0));
+
+                        if (!nameFilter.isEmpty() && !playerName.toLowerCase().contains(nameFilter)) continue;
+                        if (playtimeHours < playtimeMin || playtimeHours > playtimeMax) continue;
+                        if (warningCount < warningsMin) continue;
+                        if (!bannedFilter.isEmpty()) {
+                            boolean mustBeBanned = bannedFilter.equals("true") || bannedFilter.equals("yes");
+                            boolean mustBeClear = bannedFilter.equals("false") || bannedFilter.equals("no");
+                            if (mustBeBanned && !banned) continue;
+                            if (mustBeClear && banned) continue;
+                        }
+
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("name", playerName);
+                        row.put("playtime", playtimeHours);
+                        row.put("warnings", warningCount);
+                        row.put("reputation", reputation);
+                        row.put("banned", banned);
+                        results.add(row);
+                    } catch (Exception ignored) {}
+                }
+
+                results.sort((left, right) -> Double.compare(
+                    ((Number) right.get("playtime")).doubleValue(),
+                    ((Number) left.get("playtime")).doubleValue()
+                ));
+                return results;
+            });
+
+            ctx.json(future.get());
+        });
     }
+
+    public boolean isRunning() { return app != null; }
 
     public void stop() { if (app != null) app.stop(); }
 

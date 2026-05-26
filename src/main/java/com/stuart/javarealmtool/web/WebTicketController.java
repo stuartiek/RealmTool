@@ -75,7 +75,7 @@ public class WebTicketController {
                         if ((status == null || status.isEmpty() || status.equals(ticketStatus)) &&
                             (priority == null || priority.isEmpty() || priority.equals(ticketPriority))) {
                             Map<String, Object> t = new HashMap<>();
-                            t.put("id", key);
+                            t.put("id", -Integer.parseInt(key));
                             t.put("player", plugin.getTicketConfig().getString("appeals." + key + ".player"));
                             t.put("message", plugin.getTicketConfig().getString("appeals." + key + ".message"));
                             t.put("status", ticketStatus);
@@ -83,6 +83,7 @@ public class WebTicketController {
                             t.put("category", plugin.getTicketConfig().getString("appeals." + key + ".category", "other"));
                             t.put("assignee", plugin.getTicketConfig().getString("appeals." + key + ".assignee", ""));
                             t.put("time", plugin.getTicketConfig().getString("appeals." + key + ".timestamp"));
+                            t.put("type", "appeal");
                             appeals.add(t);
                         }
                     }
@@ -105,6 +106,21 @@ public class WebTicketController {
             if (!webServer.auth(ctx) || !webServer.hasPermission(ctx.header("Authorization"), "webapp.view.tickets")) return;
             int id = Integer.parseInt(ctx.pathParam("id"));
             ctx.json(plugin.getTicketData(id));
+        });
+
+        app.patch("/api/ticket/{id}", ctx -> {
+            if (!webServer.auth(ctx) || !webServer.hasPermission(ctx.header("Authorization"), "webapp.manage.tickets")) return;
+            int id = Integer.parseInt(ctx.pathParam("id"));
+            var body = ctx.bodyAsClass(Map.class);
+
+            for (String field : List.of("status", "priority", "category", "assignee")) {
+                Object value = body.get(field);
+                if (value != null) {
+                    plugin.updateTicketField(id, field, String.valueOf(value));
+                }
+            }
+
+            ctx.json(Map.of("status", true, "ticket", plugin.getTicketData(id)));
         });
 
         app.post("/api/ticket/{id}/response", ctx -> {
