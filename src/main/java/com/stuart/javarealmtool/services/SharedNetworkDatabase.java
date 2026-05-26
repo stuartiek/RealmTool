@@ -62,7 +62,7 @@ public final class SharedNetworkDatabase implements AutoCloseable {
                 return existingBalance;
             }
 
-            long seededBalance = plugin.getCoins(uuid);
+            long seededBalance = plugin.getLocalCoins(uuid);
             upsertTokenBalance(connection, uuid, seededBalance);
             return seededBalance;
         }

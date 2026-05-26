@@ -3257,8 +3257,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     p.sendMessage(ChatColor.RED + "Invalid Discord username: can only contain letters, numbers, underscores, and periods.");
                     return true;
                 }
-                getDataConfig().set("discord_links." + p.getUniqueId().toString(), cleanUsername);
-                saveDataFile();
+                if (networkProfileService != null) {
+                    networkProfileService.updateDiscordLink(p.getUniqueId(), cleanUsername);
+                } else {
+                    getDataConfig().set("discord_links." + p.getUniqueId().toString(), cleanUsername);
+                    saveDataFile();
+                }
                 p.sendMessage(ChatColor.GREEN + "Your Discord account (" + cleanUsername + ") has been linked!");
             } else {
                 p.sendMessage(ChatColor.RED + "Usage: /discord link <YourDiscordUsername>");
@@ -5390,14 +5394,34 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     // --- coin economy helpers (delegated through EconomyService) ---
     public long getCoins(UUID uuid) {
-        return economyService != null ? economyService.getCoins(uuid) : 0;
+        return networkTokenService != null ? networkTokenService.getTokens(uuid) : getLocalCoins(uuid);
     }
 
     public void setCoins(UUID uuid, long amount) {
-        if (economyService != null) economyService.setCoins(uuid, amount);
+        if (networkTokenService != null) {
+            networkTokenService.setTokens(uuid, amount);
+            return;
+        }
+        setLocalCoins(uuid, amount);
     }
 
     public void addCoins(UUID uuid, long delta) {
+        if (networkTokenService != null) {
+            networkTokenService.addTokens(uuid, delta);
+            return;
+        }
+        addLocalCoins(uuid, delta);
+    }
+
+    public long getLocalCoins(UUID uuid) {
+        return economyService != null ? economyService.getCoins(uuid) : 0;
+    }
+
+    public void setLocalCoins(UUID uuid, long amount) {
+        if (economyService != null) economyService.setCoins(uuid, amount);
+    }
+
+    public void addLocalCoins(UUID uuid, long delta) {
         if (economyService != null) economyService.addCoins(uuid, delta);
     }
 
@@ -9400,7 +9424,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // --- INACTIVE ALERT TRACKING ---
         dataConfig.set("last_seen." + uuid, System.currentTimeMillis());
-        dataConfig.set("last_seen_name." + uuid, e.getPlayer().getName());
+        if (networkProfileService != null) {
+            networkProfileService.updateLastSeenName(uuid, e.getPlayer().getName());
+        } else {
+            dataConfig.set("last_seen_name." + uuid, e.getPlayer().getName());
+        }
         saveDataFile();
 
         // --- TICKET NOTIFICATIONS ON JOIN ---

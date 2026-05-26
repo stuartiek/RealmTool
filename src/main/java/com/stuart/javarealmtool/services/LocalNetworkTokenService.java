@@ -13,17 +13,17 @@ public class LocalNetworkTokenService implements NetworkTokenService {
 
     @Override
     public long getTokens(UUID uuid) {
-        return plugin.getCoins(uuid);
+        return plugin.getLocalCoins(uuid);
     }
 
     @Override
     public void setTokens(UUID uuid, long amount) {
-        plugin.setCoins(uuid, amount);
+        plugin.setLocalCoins(uuid, amount);
     }
 
     @Override
     public void addTokens(UUID uuid, long delta) {
-        plugin.addCoins(uuid, delta);
+        plugin.addLocalCoins(uuid, delta);
     }
 
     @Override

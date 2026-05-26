@@ -807,6 +807,29 @@
             </div>
 
             <div class="card" style="margin-top: 20px;">
+                <h3>Runtime Backend Status</h3>
+                <p style="margin-top: 0; color: #969696;">This reports the live backend currently selected by the running plugin, not just the saved config.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+                    <div>
+                        <label>Profile Backend</label>
+                        <div id="network-runtime-profile-backend" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                    <div>
+                        <label>Token Backend</label>
+                        <div id="network-runtime-token-backend" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                    <div>
+                        <label>Profile Storage Mode</label>
+                        <div id="network-runtime-profile-mode" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                    <div>
+                        <label>Token Storage Mode</label>
+                        <div id="network-runtime-token-mode" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
                 <h3>Proxy Scaffolding</h3>
                 <p style="margin-top: 0; color: #969696;">These values prepare server routing without transferring live players until the runtime flags are enabled.</p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
@@ -3659,6 +3682,7 @@
         document.getElementById('network-proxy-enabled').checked = runtime.proxyEnabled === true;
         document.getElementById('network-shared-database-enabled').checked = runtime.sharedDatabaseEnabled === true;
         document.getElementById('network-live-player-transfers-enabled').checked = runtime.livePlayerTransfersEnabled === true;
+        renderNetworkRuntimeStatus(runtime);
 
         document.getElementById('network-proxy-type').value = proxy.type || '';
         document.getElementById('network-proxy-server-name').value = proxy.serverName || '';
@@ -3697,6 +3721,20 @@
 
         renderNetworkModes(settings.modes || []);
         document.getElementById('network-status').innerHTML = '<span style="color: #4ec9b0;">Live network plan loaded.</span>';
+    }
+
+    function renderNetworkRuntimeStatus(runtime) {
+        const profileShared = runtime.profileSharedBackendActive === true;
+        const tokenShared = runtime.tokenSharedBackendActive === true;
+
+        document.getElementById('network-runtime-profile-backend').textContent = runtime.profileBackend || 'unavailable';
+        document.getElementById('network-runtime-token-backend').textContent = runtime.tokenBackend || 'unavailable';
+        document.getElementById('network-runtime-profile-mode').innerHTML = profileShared
+            ? '<span style="color: #4ec9b0;">Shared backend active</span>'
+            : '<span style="color: #d7ba7d;">Local fallback active</span>';
+        document.getElementById('network-runtime-token-mode').innerHTML = tokenShared
+            ? '<span style="color: #4ec9b0;">Shared backend active</span>'
+            : '<span style="color: #d7ba7d;">Local fallback active</span>';
     }
 
     async function saveNetworkSettings() {
@@ -3766,6 +3804,9 @@
             document.getElementById('network-status').innerHTML = '<span style="color: #4ec9b0;">Network settings saved successfully.</span>';
             if (result.network && Array.isArray(result.network.modes)) {
                 renderNetworkModes(result.network.modes);
+            }
+            if (result.network && result.network.runtime) {
+                renderNetworkRuntimeStatus(result.network.runtime);
             }
             return;
         }

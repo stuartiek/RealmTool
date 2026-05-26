@@ -469,6 +469,10 @@ public class WebServer {
         runtime.put("proxyEnabled", config.getBoolean("network.proxy.enabled", false));
         runtime.put("sharedDatabaseEnabled", config.getBoolean("network.shared_database.enabled", false));
         runtime.put("livePlayerTransfersEnabled", config.getBoolean("network.routing.live_player_transfers", false));
+        runtime.put("profileBackend", plugin.getNetworkProfileService() != null ? plugin.getNetworkProfileService().getBackendName() : "unavailable");
+        runtime.put("tokenBackend", plugin.getNetworkTokenService() != null ? plugin.getNetworkTokenService().getBackendName() : "unavailable");
+        runtime.put("profileSharedBackendActive", plugin.getNetworkProfileService() != null && plugin.getNetworkProfileService().isSharedBackendEnabled());
+        runtime.put("tokenSharedBackendActive", plugin.getNetworkTokenService() != null && plugin.getNetworkTokenService().isSharedBackendEnabled());
 
         Map<String, Object> proxy = new LinkedHashMap<>();
         proxy.put("type", config.getString("network.proxy.type", "velocity"));
