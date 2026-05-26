@@ -134,5 +134,11 @@
             <artifactId>openhtmltopdf-pdfbox</artifactId>
             <version>1.0.10</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.7</version>
+        </dependency>
     </dependencies>
 </project>

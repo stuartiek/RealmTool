@@ -463,6 +463,30 @@ public class WebServer {
     private Map<String, Object> buildNetworkSettingsSnapshot() {
         FileConfiguration config = plugin.getConfig();
 
+        Map<String, Object> runtime = new LinkedHashMap<>();
+        runtime.put("enabled", config.getBoolean("network.enabled", false));
+        runtime.put("stagingOnly", config.getBoolean("network.staging_only", true));
+        runtime.put("proxyEnabled", config.getBoolean("network.proxy.enabled", false));
+        runtime.put("sharedDatabaseEnabled", config.getBoolean("network.shared_database.enabled", false));
+        runtime.put("livePlayerTransfersEnabled", config.getBoolean("network.routing.live_player_transfers", false));
+
+        Map<String, Object> proxy = new LinkedHashMap<>();
+        proxy.put("type", config.getString("network.proxy.type", "velocity"));
+        proxy.put("serverName", config.getString("network.proxy.server_name", "survival"));
+        proxy.put("hubServer", config.getString("network.proxy.hub_server", "hub"));
+        proxy.put("fallbackServer", config.getString("network.proxy.fallback_server", "survival"));
+        proxy.put("pluginChannel", config.getString("network.proxy.plugin_channel", "drowsycraft:network"));
+
+        Map<String, Object> sharedDatabase = new LinkedHashMap<>();
+        sharedDatabase.put("provider", config.getString("network.shared_database.provider", "postgresql"));
+        sharedDatabase.put("host", config.getString("network.shared_database.host", "127.0.0.1"));
+        sharedDatabase.put("port", config.getInt("network.shared_database.port", 5432));
+        sharedDatabase.put("database", config.getString("network.shared_database.database", "drowsycraft_staging"));
+        sharedDatabase.put("username", config.getString("network.shared_database.username", ""));
+        sharedDatabase.put("ssl", config.getBoolean("network.shared_database.ssl", false));
+        sharedDatabase.put("tablePrefix", config.getString("network.shared_database.table_prefix", "drowsy_"));
+        sharedDatabase.put("poolMaxSize", config.getInt("network.shared_database.pool_max_size", 10));
+
         Map<String, Object> brand = new LinkedHashMap<>();
         brand.put("displayName", config.getString("network.brand.display_name", "DrowsyCraft Network"));
         brand.put("primaryHubName", config.getString("network.brand.primary_hub_name", "Drowsy Hub"));
@@ -490,6 +514,9 @@ public class WebServer {
         rolloutPhases.put("phase3", new ArrayList<>(config.getStringList("network.rollout_phases.phase_3")));
 
         Map<String, Object> response = new LinkedHashMap<>();
+        response.put("runtime", runtime);
+        response.put("proxy", proxy);
+        response.put("sharedDatabase", sharedDatabase);
         response.put("brand", brand);
         response.put("progression", progression);
         response.put("matchmaking", matchmaking);
@@ -1818,12 +1845,33 @@ public class WebServer {
             Map<String, Object> body = mapper.readValue(ctx.body(), Map.class);
 
             Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                Map<?, ?> runtime = body.get("runtime") instanceof Map<?, ?> value ? value : Map.of();
+                Map<?, ?> proxy = body.get("proxy") instanceof Map<?, ?> value ? value : Map.of();
+                Map<?, ?> sharedDatabase = body.get("sharedDatabase") instanceof Map<?, ?> value ? value : Map.of();
                 Map<?, ?> brand = body.get("brand") instanceof Map<?, ?> value ? value : Map.of();
                 Map<?, ?> progression = body.get("progression") instanceof Map<?, ?> value ? value : Map.of();
                 Map<?, ?> matchmaking = body.get("matchmaking") instanceof Map<?, ?> value ? value : Map.of();
                 Map<?, ?> rolloutPhases = body.get("rolloutPhases") instanceof Map<?, ?> value ? value : Map.of();
 
                 FileConfiguration config = plugin.getConfig();
+                config.set("network.enabled", parseBoolean(runtime.get("enabled"), false));
+                config.set("network.staging_only", parseBoolean(runtime.get("stagingOnly"), true));
+                config.set("network.proxy.enabled", parseBoolean(runtime.get("proxyEnabled"), false));
+                config.set("network.shared_database.enabled", parseBoolean(runtime.get("sharedDatabaseEnabled"), false));
+                config.set("network.routing.live_player_transfers", parseBoolean(runtime.get("livePlayerTransfersEnabled"), false));
+                config.set("network.proxy.type", parseString(proxy.get("type"), "velocity"));
+                config.set("network.proxy.server_name", parseString(proxy.get("serverName"), "survival"));
+                config.set("network.proxy.hub_server", parseString(proxy.get("hubServer"), "hub"));
+                config.set("network.proxy.fallback_server", parseString(proxy.get("fallbackServer"), "survival"));
+                config.set("network.proxy.plugin_channel", parseString(proxy.get("pluginChannel"), "drowsycraft:network"));
+                config.set("network.shared_database.provider", parseString(sharedDatabase.get("provider"), "postgresql"));
+                config.set("network.shared_database.host", parseString(sharedDatabase.get("host"), "127.0.0.1"));
+                config.set("network.shared_database.port", parseInt(sharedDatabase.get("port"), 5432));
+                config.set("network.shared_database.database", parseString(sharedDatabase.get("database"), "drowsycraft_staging"));
+                config.set("network.shared_database.username", parseString(sharedDatabase.get("username"), ""));
+                config.set("network.shared_database.ssl", parseBoolean(sharedDatabase.get("ssl"), false));
+                config.set("network.shared_database.table_prefix", parseString(sharedDatabase.get("tablePrefix"), "drowsy_"));
+                config.set("network.shared_database.pool_max_size", parseInt(sharedDatabase.get("poolMaxSize"), 10));
                 config.set("network.brand.display_name", parseString(brand.get("displayName"), "DrowsyCraft Network"));
                 config.set("network.brand.primary_hub_name", parseString(brand.get("primaryHubName"), "Drowsy Hub"));
                 config.set("network.brand.mode_labels.survival", parseString(brand.get("survivalLabel"), "Drowsy SMP"));

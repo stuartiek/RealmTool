@@ -5,7 +5,14 @@ import com.stuart.javarealmtool.commands.FactionCommand;
 import com.stuart.javarealmtool.commands.TicketCommand;
 import com.stuart.javarealmtool.services.EconomyService;
 import com.stuart.javarealmtool.services.FactionService;
+import com.stuart.javarealmtool.services.LocalNetworkProfileService;
+import com.stuart.javarealmtool.services.LocalNetworkTokenService;
+import com.stuart.javarealmtool.services.NetworkProfileService;
 import com.stuart.javarealmtool.services.RankService;
+import com.stuart.javarealmtool.services.NetworkTokenService;
+import com.stuart.javarealmtool.services.SharedNetworkDatabase;
+import com.stuart.javarealmtool.services.SharedNetworkProfileService;
+import com.stuart.javarealmtool.services.SharedNetworkTokenService;
 import com.stuart.javarealmtool.services.TicketService;
 import org.bukkit.*;
 import org.bukkit.GameRule;
@@ -20,7 +27,9 @@ import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
@@ -81,6 +90,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private WebServer webServer;
     private EconomyService economyService;
     private FactionService factionService;
+    private SharedNetworkDatabase sharedNetworkDatabase;
+    private NetworkProfileService networkProfileService;
+    private NetworkTokenService networkTokenService;
     private String apiKey;
     private final Map<UUID, PunishmentContext> pendingActions = new HashMap<>();
     private final Map<String, Integer> pendingNoteEdit = new HashMap<>();
@@ -325,6 +337,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             ticketService = new TicketService(this);
             rankService = new RankService(this);
             factionService = new FactionService(this);
+            initializeNetworkServices();
             factionService.ensureConfigDefaults();
 
             Bukkit.getPluginManager().registerEvents(this, this);
@@ -551,6 +564,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             webServer.stop();
         }
 
+        closeSharedNetworkDatabase();
+
         if (autoSaveTaskId != -1) {
             Bukkit.getScheduler().cancelTask(autoSaveTaskId);
         }
@@ -594,6 +609,49 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         }
         getLogger().info("DrowsyManagementTool has been disabled.");
+    }
+
+    private void initializeNetworkServices() {
+        NetworkProfileService localProfileService = new LocalNetworkProfileService(this);
+        NetworkTokenService localTokenService = new LocalNetworkTokenService(this);
+        networkProfileService = localProfileService;
+        networkTokenService = localTokenService;
+
+        if (!isNetworkEnabled()) {
+            return;
+        }
+
+        if (isNetworkSharedDatabaseEnabled()) {
+            try {
+                sharedNetworkDatabase = new SharedNetworkDatabase(this);
+                networkProfileService = new SharedNetworkProfileService(this, sharedNetworkDatabase, localProfileService);
+                networkTokenService = new SharedNetworkTokenService(this, sharedNetworkDatabase, localTokenService);
+                getLogger().info("Network shared database backend enabled: " + networkProfileService.getBackendName());
+            } catch (Exception exception) {
+                closeSharedNetworkDatabase();
+                networkProfileService = localProfileService;
+                networkTokenService = localTokenService;
+                getLogger().log(Level.WARNING, "Failed to initialize the staged shared database backend. Falling back to local network services.", exception);
+            }
+        }
+
+        if (isNetworkProxyEnabled()) {
+            getLogger().info("Network proxy staging is configured, but live player transfer routing is still local-only.");
+        }
+    }
+
+    private void closeSharedNetworkDatabase() {
+        if (sharedNetworkDatabase == null) {
+            return;
+        }
+
+        try {
+            sharedNetworkDatabase.close();
+        } catch (Exception exception) {
+            getLogger().log(Level.WARNING, "Failed to close the staged shared database backend cleanly.", exception);
+        } finally {
+            sharedNetworkDatabase = null;
+        }
     }
 
     public FileConfiguration getDataConfig() { return dataConfig; }
@@ -671,6 +729,82 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private boolean ensureNetworkConfig(FileConfiguration config) {
         boolean changed = false;
 
+        if (!config.contains("network.enabled")) {
+            config.set("network.enabled", false);
+            changed = true;
+        }
+        if (!config.contains("network.staging_only")) {
+            config.set("network.staging_only", true);
+            changed = true;
+        }
+        if (!config.contains("network.proxy.enabled")) {
+            config.set("network.proxy.enabled", false);
+            changed = true;
+        }
+        if (!config.contains("network.proxy.type")) {
+            config.set("network.proxy.type", "velocity");
+            changed = true;
+        }
+        if (!config.contains("network.proxy.server_name")) {
+            config.set("network.proxy.server_name", "survival");
+            changed = true;
+        }
+        if (!config.contains("network.proxy.hub_server")) {
+            config.set("network.proxy.hub_server", "hub");
+            changed = true;
+        }
+        if (!config.contains("network.proxy.fallback_server")) {
+            config.set("network.proxy.fallback_server", "survival");
+            changed = true;
+        }
+        if (!config.contains("network.proxy.plugin_channel")) {
+            config.set("network.proxy.plugin_channel", "drowsycraft:network");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.enabled")) {
+            config.set("network.shared_database.enabled", false);
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.provider")) {
+            config.set("network.shared_database.provider", "postgresql");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.host")) {
+            config.set("network.shared_database.host", "127.0.0.1");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.port")) {
+            config.set("network.shared_database.port", 5432);
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.database")) {
+            config.set("network.shared_database.database", "drowsycraft_staging");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.username")) {
+            config.set("network.shared_database.username", "");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.password")) {
+            config.set("network.shared_database.password", "");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.ssl")) {
+            config.set("network.shared_database.ssl", false);
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.table_prefix")) {
+            config.set("network.shared_database.table_prefix", "drowsy_");
+            changed = true;
+        }
+        if (!config.contains("network.shared_database.pool_max_size")) {
+            config.set("network.shared_database.pool_max_size", 10);
+            changed = true;
+        }
+        if (!config.contains("network.routing.live_player_transfers")) {
+            config.set("network.routing.live_player_transfers", false);
+            changed = true;
+        }
         if (!config.contains("network.brand.display_name")) {
             config.set("network.brand.display_name", "DrowsyCraft Network");
             changed = true;
@@ -741,6 +875,90 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
 
         return changed;
+    }
+
+    public boolean isNetworkEnabled() {
+        return getConfig().getBoolean("network.enabled", false);
+    }
+
+    public boolean isNetworkStagingOnly() {
+        return getConfig().getBoolean("network.staging_only", true);
+    }
+
+    public boolean isNetworkProxyEnabled() {
+        return isNetworkEnabled() && getConfig().getBoolean("network.proxy.enabled", false);
+    }
+
+    public String getNetworkProxyType() {
+        return getConfig().getString("network.proxy.type", "velocity");
+    }
+
+    public String getNetworkServerName() {
+        return getConfig().getString("network.proxy.server_name", "survival");
+    }
+
+    public String getNetworkHubServerName() {
+        return getConfig().getString("network.proxy.hub_server", "hub");
+    }
+
+    public String getNetworkFallbackServerName() {
+        return getConfig().getString("network.proxy.fallback_server", "survival");
+    }
+
+    public String getNetworkProxyPluginChannel() {
+        return getConfig().getString("network.proxy.plugin_channel", "drowsycraft:network");
+    }
+
+    public boolean isNetworkSharedDatabaseEnabled() {
+        return isNetworkEnabled() && getConfig().getBoolean("network.shared_database.enabled", false);
+    }
+
+    public String getNetworkSharedDatabaseProvider() {
+        return getConfig().getString("network.shared_database.provider", "postgresql");
+    }
+
+    public String getNetworkSharedDatabaseHost() {
+        return getConfig().getString("network.shared_database.host", "127.0.0.1");
+    }
+
+    public int getNetworkSharedDatabasePort() {
+        return getConfig().getInt("network.shared_database.port", 5432);
+    }
+
+    public String getNetworkSharedDatabaseName() {
+        return getConfig().getString("network.shared_database.database", "drowsycraft_staging");
+    }
+
+    public String getNetworkSharedDatabaseUsername() {
+        return getConfig().getString("network.shared_database.username", "");
+    }
+
+    public String getNetworkSharedDatabasePassword() {
+        return getConfig().getString("network.shared_database.password", "");
+    }
+
+    public boolean isNetworkSharedDatabaseSslEnabled() {
+        return getConfig().getBoolean("network.shared_database.ssl", false);
+    }
+
+    public String getNetworkSharedDatabaseTablePrefix() {
+        return getConfig().getString("network.shared_database.table_prefix", "drowsy_");
+    }
+
+    public int getNetworkSharedDatabasePoolMaxSize() {
+        return getConfig().getInt("network.shared_database.pool_max_size", 10);
+    }
+
+    public boolean isNetworkLivePlayerTransfersEnabled() {
+        return isNetworkEnabled() && getConfig().getBoolean("network.routing.live_player_transfers", false);
+    }
+
+    public NetworkProfileService getNetworkProfileService() {
+        return networkProfileService;
+    }
+
+    public NetworkTokenService getNetworkTokenService() {
+        return networkTokenService;
     }
 
     private List<Map<String, Object>> createDefaultNetworkModes() {
@@ -2343,7 +2561,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             return true;
                         }
                         try {
-                            GameRule<?> rule = GameRule.getByName(ruleName);
+                            GameRule<?> rule = resolveGameRule(ruleName);
                             if (rule == null) {
                                 p.sendMessage(ChatColor.RED + "Unknown gamerule: " + ruleName);
                                 return true;
@@ -9689,6 +9907,34 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         saveDataFile();
     }
 
+    private GameRule<?> resolveGameRule(String ruleName) {
+        if (ruleName == null || ruleName.isBlank()) {
+            return null;
+        }
+
+        String normalizedRuleName = normalizeGameRuleName(ruleName);
+
+        for (Field field : GameRule.class.getDeclaredFields()) {
+            if (!Modifier.isStatic(field.getModifiers()) || !GameRule.class.isAssignableFrom(field.getType())) {
+                continue;
+            }
+
+            try {
+                GameRule<?> rule = (GameRule<?>) field.get(null);
+                if (rule != null && normalizeGameRuleName(field.getName()).equals(normalizedRuleName)) {
+                    return rule;
+                }
+            } catch (IllegalAccessException ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private String normalizeGameRuleName(String ruleName) {
+        return ruleName == null ? "" : ruleName.replace("_", "").toLowerCase(Locale.ROOT);
+    }
+
     private void applyWorldSettings(World world) {
         if (world == null) return;
         String worldName = world.getName();
@@ -9699,7 +9945,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (dataConfig.contains("worlds." + worldName + ".gamerules")) {
             ConfigurationSection rules = dataConfig.getConfigurationSection("worlds." + worldName + ".gamerules");
             for (String key : rules.getKeys(false)) {
-                GameRule<?> rule = GameRule.getByName(key);
+                GameRule<?> rule = resolveGameRule(key);
                 if (rule == null) continue;
                 String value = String.valueOf(rules.get(key));
                 try {

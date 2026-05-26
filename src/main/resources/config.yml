@@ -13,6 +13,21 @@ web:
 # Multi-mode network layout for DrowsyCraft.
 # Keep Phase 1 full before enabling more modes so the network never feels empty.
 network:
+  enabled: true
+  staging_only: true
+  shared_database:
+    enabled: true
+    provider: "postgresql"
+    host: "187.124.210.30"
+    port: 5432
+    database: "drowsycraft_staging"
+    username: "drowsy_network"
+    password: "drowsy2026"
+    ssl: false
+    table_prefix: "drowsy_"
+    pool_max_size: 10
+  routing:
+    live_player_transfers: false
   brand:
     display_name: "DrowsyCraft Network"
     primary_hub_name: "Drowsy Hub"
@@ -145,13 +160,13 @@ network:
 
 # Discord Integration
 discord:
-  link_required: true # Set to true to require players to link their Discord account to play.
+  link_required: false # Set to true to require players to link their Discord account to play.
   link_message: "&cPlease link your Discord account to play!\n&eUse the command: /discord link <YourDiscordUsername>"
 
 # Factions world settings for the phase-one rollout.
 # Use /dmt setfactionsspawn while standing in the configured world to set the player entry point.
 factions_world:
-  visible: true
+  visible: false
   name: "world"
   claims_enabled: true
   claims_allowed_worlds: []

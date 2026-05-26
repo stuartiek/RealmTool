@@ -729,6 +729,22 @@
             <h2>DrowsyCraft Network</h2>
 
             <div class="card">
+                <h3>Dark Launch Safety Gates</h3>
+                <p style="margin-top: 0; color: #969696;">Keep these off on production until staging is fully validated. This lets you ship network code without moving live players yet.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start;">
+                    <div>
+                        <label><input type="checkbox" id="network-enabled"> Enable network mode</label><br>
+                        <label><input type="checkbox" id="network-staging-only"> Keep network staging-only</label>
+                    </div>
+                    <div>
+                        <label><input type="checkbox" id="network-proxy-enabled"> Enable proxy integration</label><br>
+                        <label><input type="checkbox" id="network-shared-database-enabled"> Enable shared database</label><br>
+                        <label><input type="checkbox" id="network-live-player-transfers-enabled"> Allow live player transfers</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
                 <h3>Branding</h3>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
                     <div>
@@ -786,6 +802,71 @@
                     <div style="grid-column: 1 / -1;">
                         <label>Rotating Modes (one per line)</label>
                         <textarea id="network-arcade-rotate-modes" rows="4" class="full-width" placeholder="Duels&#10;Parkour&#10;TNT Run&#10;Mob Arena"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h3>Proxy Scaffolding</h3>
+                <p style="margin-top: 0; color: #969696;">These values prepare server routing without transferring live players until the runtime flags are enabled.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+                    <div>
+                        <label>Proxy Type</label>
+                        <input type="text" id="network-proxy-type" placeholder="velocity" class="full-width">
+                    </div>
+                    <div>
+                        <label>This Server Name</label>
+                        <input type="text" id="network-proxy-server-name" placeholder="survival" class="full-width">
+                    </div>
+                    <div>
+                        <label>Hub Server</label>
+                        <input type="text" id="network-proxy-hub-server" placeholder="hub" class="full-width">
+                    </div>
+                    <div>
+                        <label>Fallback Server</label>
+                        <input type="text" id="network-proxy-fallback-server" placeholder="survival" class="full-width">
+                    </div>
+                    <div style="grid-column: 1 / -1;">
+                        <label>Plugin Message Channel</label>
+                        <input type="text" id="network-proxy-plugin-channel" placeholder="drowsycraft:network" class="full-width">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h3>Shared Database Scaffolding</h3>
+                <p style="margin-top: 0; color: #969696;">Connection shape for staging. Keep secrets such as the database password in YAML or deployment secrets rather than the web panel.</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+                    <div>
+                        <label>Provider</label>
+                        <input type="text" id="network-db-provider" placeholder="postgresql" class="full-width">
+                    </div>
+                    <div>
+                        <label>Host</label>
+                        <input type="text" id="network-db-host" placeholder="127.0.0.1" class="full-width">
+                    </div>
+                    <div>
+                        <label>Port</label>
+                        <input type="number" id="network-db-port" placeholder="5432" class="full-width">
+                    </div>
+                    <div>
+                        <label>Database</label>
+                        <input type="text" id="network-db-database" placeholder="drowsycraft_staging" class="full-width">
+                    </div>
+                    <div>
+                        <label>Username</label>
+                        <input type="text" id="network-db-username" placeholder="" class="full-width">
+                    </div>
+                    <div>
+                        <label>Table Prefix</label>
+                        <input type="text" id="network-db-table-prefix" placeholder="drowsy_" class="full-width">
+                    </div>
+                    <div>
+                        <label>Pool Max Size</label>
+                        <input type="number" id="network-db-pool-max-size" placeholder="10" class="full-width">
+                    </div>
+                    <div>
+                        <label><input type="checkbox" id="network-db-ssl"> Enable SSL</label>
                     </div>
                 </div>
             </div>
@@ -3565,10 +3646,34 @@
         const settings = await apiCall('/network');
         if (!settings) return;
 
+        const runtime = settings.runtime || {};
+        const proxy = settings.proxy || {};
+        const sharedDatabase = settings.sharedDatabase || {};
         const brand = settings.brand || {};
         const progression = settings.progression || {};
         const matchmaking = settings.matchmaking || {};
         const rolloutPhases = settings.rolloutPhases || {};
+
+        document.getElementById('network-enabled').checked = runtime.enabled === true;
+        document.getElementById('network-staging-only').checked = runtime.stagingOnly !== false;
+        document.getElementById('network-proxy-enabled').checked = runtime.proxyEnabled === true;
+        document.getElementById('network-shared-database-enabled').checked = runtime.sharedDatabaseEnabled === true;
+        document.getElementById('network-live-player-transfers-enabled').checked = runtime.livePlayerTransfersEnabled === true;
+
+        document.getElementById('network-proxy-type').value = proxy.type || '';
+        document.getElementById('network-proxy-server-name').value = proxy.serverName || '';
+        document.getElementById('network-proxy-hub-server').value = proxy.hubServer || '';
+        document.getElementById('network-proxy-fallback-server').value = proxy.fallbackServer || '';
+        document.getElementById('network-proxy-plugin-channel').value = proxy.pluginChannel || '';
+
+        document.getElementById('network-db-provider').value = sharedDatabase.provider || '';
+        document.getElementById('network-db-host').value = sharedDatabase.host || '';
+        document.getElementById('network-db-port').value = sharedDatabase.port || 5432;
+        document.getElementById('network-db-database').value = sharedDatabase.database || '';
+        document.getElementById('network-db-username').value = sharedDatabase.username || '';
+        document.getElementById('network-db-table-prefix').value = sharedDatabase.tablePrefix || '';
+        document.getElementById('network-db-pool-max-size').value = sharedDatabase.poolMaxSize || 10;
+        document.getElementById('network-db-ssl').checked = sharedDatabase.ssl === true;
 
         document.getElementById('network-display-name').value = brand.displayName || '';
         document.getElementById('network-primary-hub').value = brand.primaryHubName || '';
@@ -3605,6 +3710,30 @@
         }));
 
         const data = {
+            runtime: {
+                enabled: document.getElementById('network-enabled').checked,
+                stagingOnly: document.getElementById('network-staging-only').checked,
+                proxyEnabled: document.getElementById('network-proxy-enabled').checked,
+                sharedDatabaseEnabled: document.getElementById('network-shared-database-enabled').checked,
+                livePlayerTransfersEnabled: document.getElementById('network-live-player-transfers-enabled').checked
+            },
+            proxy: {
+                type: document.getElementById('network-proxy-type').value,
+                serverName: document.getElementById('network-proxy-server-name').value,
+                hubServer: document.getElementById('network-proxy-hub-server').value,
+                fallbackServer: document.getElementById('network-proxy-fallback-server').value,
+                pluginChannel: document.getElementById('network-proxy-plugin-channel').value
+            },
+            sharedDatabase: {
+                provider: document.getElementById('network-db-provider').value,
+                host: document.getElementById('network-db-host').value,
+                port: Number(document.getElementById('network-db-port').value || 5432),
+                database: document.getElementById('network-db-database').value,
+                username: document.getElementById('network-db-username').value,
+                tablePrefix: document.getElementById('network-db-table-prefix').value,
+                poolMaxSize: Number(document.getElementById('network-db-pool-max-size').value || 10),
+                ssl: document.getElementById('network-db-ssl').checked
+            },
             brand: {
                 displayName: document.getElementById('network-display-name').value,
                 primaryHubName: document.getElementById('network-primary-hub').value,
