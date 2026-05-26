@@ -1,5 +1,6 @@
 package com.stuart.javarealmtool;
 
+import com.stuart.javarealmtool.services.NetworkPlayerProfile;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.websocket.WsContext;
@@ -162,10 +163,12 @@ public class WebServer {
 
                 org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
                 Player onlinePlayer = Bukkit.getPlayer(uuid);
-                String name = data.getString("last_seen_name." + uuidStr, offlinePlayer.getName());
+                NetworkPlayerProfile profile = resolvePlayerProfile(uuid, onlinePlayer != null && onlinePlayer.isOnline());
+                String name = profile.lastSeenName();
+                if (name == null || name.isBlank()) name = data.getString("last_seen_name." + uuidStr, offlinePlayer.getName());
                 if (name == null || name.isBlank()) name = uuidStr;
-                String rank = plugin.getPlayerRank(uuid);
-                if (rank == null || rank.isBlank()) rank = plugin.getPlayerGroup(uuid);
+                String rank = profile.rank();
+                if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
 
                 LinkedHashMap<String, Object> row = new LinkedHashMap<>();
                 row.put("uuid", uuidStr);
@@ -175,7 +178,7 @@ public class WebServer {
                 row.put("x", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getX() * 10.0) / 10.0 : "");
                 row.put("y", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getY() * 10.0) / 10.0 : "");
                 row.put("z", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getZ() * 10.0) / 10.0 : "");
-                row.put("playtimeHours", plugin.getPlaytimeHours(uuid));
+                row.put("playtimeHours", Math.max(0L, Math.round(profile.playtimeHours())));
                 row.put("warnings", data.getStringList("warnings." + uuidStr).size());
                 row.put("punished", plugin.isPunished(uuid));
                 row.put("banned", Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name));
@@ -188,6 +191,23 @@ public class WebServer {
 
         rows.sort(Comparator.comparing(row -> String.valueOf(row.get("name")), String.CASE_INSENSITIVE_ORDER));
         return rows;
+    }
+
+    private NetworkPlayerProfile resolvePlayerProfile(UUID uuid, boolean refresh) {
+        if (plugin.getNetworkProfileService() == null) {
+            return new NetworkPlayerProfile(
+                uuid,
+                uuid.toString(),
+                plugin.getPlayerRank(uuid),
+                plugin.getPlayerGroup(uuid),
+                plugin.getDiscordLink(uuid),
+                plugin.getPlaytimeHours(uuid)
+            );
+        }
+
+        return refresh
+            ? plugin.getNetworkProfileService().refreshProfile(uuid)
+            : plugin.getNetworkProfileService().getProfile(uuid);
     }
 
     private List<LinkedHashMap<String, Object>> buildEconomyExportRows() {
@@ -755,6 +775,7 @@ public class WebServer {
                 Map<String, Object> res = new HashMap<>();
                 List<Map<String, Object>> players = new ArrayList<>();
                 for (Player p : Bukkit.getOnlinePlayers()) {
+                    NetworkPlayerProfile profile = resolvePlayerProfile(p.getUniqueId(), true);
                     Map<String, Object> m = new HashMap<>();
                     m.put("name", p.getName());
                     m.put("health", Math.round(p.getHealth()));
@@ -763,12 +784,12 @@ public class WebServer {
                     m.put("z", Math.round(p.getLocation().getZ() * 10.0) / 10.0);
                     m.put("world", p.getWorld().getName());
                     m.put("warnings", plugin.getDataConfig().getStringList("warnings." + p.getUniqueId()).size());
-                    m.put("playtime", plugin.getPlaytimeHours(p.getUniqueId()));
+                    m.put("playtime", Math.max(0L, Math.round(profile.playtimeHours())));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
                     m.put("coins", plugin.getCoins(p.getUniqueId()));
-                    m.put("discord", plugin.getDiscordLink(p.getUniqueId()));
-                    String rank = plugin.getPlayerRank(p.getUniqueId());
-                    if (rank == null) rank = plugin.getPlayerGroup(p.getUniqueId());
+                    m.put("discord", profile.discordLink());
+                    String rank = profile.rank();
+                    if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
                     m.put("rank", rank);
                     m.put("rankColor", getRankHexColor(rank));
                     m.put("color", getRankHexColor(rank));

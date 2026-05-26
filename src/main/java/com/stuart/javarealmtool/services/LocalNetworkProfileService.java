@@ -26,6 +26,11 @@ public class LocalNetworkProfileService implements NetworkProfileService {
     }
 
     @Override
+    public NetworkPlayerProfile refreshProfile(UUID uuid) {
+        return getProfile(uuid);
+    }
+
+    @Override
     public void updateLastSeenName(UUID uuid, String playerName) {
         if (playerName == null || playerName.isBlank()) {
             return;

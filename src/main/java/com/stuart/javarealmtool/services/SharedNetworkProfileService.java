@@ -28,6 +28,18 @@ public class SharedNetworkProfileService implements NetworkProfileService {
     }
 
     @Override
+    public NetworkPlayerProfile refreshProfile(UUID uuid) {
+        NetworkPlayerProfile currentSnapshot = localFallback.getProfile(uuid);
+        try {
+            sharedDatabase.saveProfile(currentSnapshot);
+            return currentSnapshot;
+        } catch (SQLException exception) {
+            logFallback("refresh shared profile data", exception);
+            return currentSnapshot;
+        }
+    }
+
+    @Override
     public void updateLastSeenName(UUID uuid, String playerName) {
         localFallback.updateLastSeenName(uuid, playerName);
         if (playerName == null || playerName.isBlank()) {

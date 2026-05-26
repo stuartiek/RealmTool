@@ -5,6 +5,8 @@ import java.util.UUID;
 public interface NetworkProfileService {
     NetworkPlayerProfile getProfile(UUID uuid);
 
+    NetworkPlayerProfile refreshProfile(UUID uuid);
+
     void updateLastSeenName(UUID uuid, String playerName);
 
     void updateDiscordLink(UUID uuid, String discordTag);
