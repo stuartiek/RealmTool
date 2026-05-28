@@ -21,49 +21,116 @@ public class SharedNetworkModerationService implements NetworkModerationService 
     }
 
     @Override
-    public long getPunishmentExpiry(UUID uuid) {
+    public NetworkPunishment getPunishment(UUID uuid) {
         try {
-            Long sharedExpiry = sharedDatabase.loadPunishmentExpiry(uuid);
-            if (sharedExpiry != null) {
-                return sharedExpiry;
+            NetworkPunishment sharedPunishment = sharedDatabase.loadPunishment(uuid);
+            if (sharedPunishment != null) {
+                return sharedPunishment;
             }
 
-            long localExpiry = localFallback.getPunishmentExpiry(uuid);
-            if (localExpiry > 0L) {
-                sharedDatabase.savePunishmentExpiry(uuid, localExpiry);
+            NetworkPunishment localPunishment = localFallback.getPunishment(uuid);
+            if (localPunishment != null && localPunishment.expiresAt() > 0L) {
+                NetworkPunishment seededPunishment = localPunishment.createdAt() > 0L
+                    ? localPunishment
+                    : new NetworkPunishment(
+                        localPunishment.uuid(),
+                        localPunishment.expiresAt(),
+                        localPunishment.reason(),
+                        localPunishment.actor(),
+                        System.currentTimeMillis()
+                    );
+                sharedDatabase.savePunishment(seededPunishment);
+                return seededPunishment;
             }
-            return localExpiry;
+            return localPunishment;
         } catch (SQLException exception) {
             logFallback("read shared punishment data", exception);
-            return localFallback.getPunishmentExpiry(uuid);
+            return localFallback.getPunishment(uuid);
         }
     }
 
     @Override
-    public Map<UUID, Long> getPunishmentExpiries() {
+    public Map<UUID, NetworkPunishment> getPunishments() {
         try {
-            Map<UUID, Long> punishments = new HashMap<>(sharedDatabase.loadAllPunishmentExpiries());
-            for (Map.Entry<UUID, Long> entry : localFallback.getPunishmentExpiries().entrySet()) {
-                if (punishments.containsKey(entry.getKey()) || entry.getValue() == null || entry.getValue() <= 0L) {
+            Map<UUID, NetworkPunishment> punishments = new HashMap<>(sharedDatabase.loadAllPunishments());
+            for (Map.Entry<UUID, NetworkPunishment> entry : localFallback.getPunishments().entrySet()) {
+                NetworkPunishment punishment = entry.getValue();
+                if (punishments.containsKey(entry.getKey()) || punishment == null || punishment.expiresAt() <= 0L) {
                     continue;
                 }
-                punishments.put(entry.getKey(), entry.getValue());
-                sharedDatabase.savePunishmentExpiry(entry.getKey(), entry.getValue());
+                NetworkPunishment seededPunishment = punishment.createdAt() > 0L
+                    ? punishment
+                    : new NetworkPunishment(
+                        punishment.uuid(),
+                        punishment.expiresAt(),
+                        punishment.reason(),
+                        punishment.actor(),
+                        System.currentTimeMillis()
+                    );
+                punishments.put(entry.getKey(), seededPunishment);
+                sharedDatabase.savePunishment(seededPunishment);
             }
             return punishments;
         } catch (SQLException exception) {
             logFallback("read shared punishment list", exception);
-            return localFallback.getPunishmentExpiries();
+            return localFallback.getPunishments();
         }
     }
 
     @Override
-    public void savePunishmentExpiry(UUID uuid, long expiryTimestamp) {
-        localFallback.savePunishmentExpiry(uuid, expiryTimestamp);
+    public void savePunishment(NetworkPunishment punishment) {
+        localFallback.savePunishment(punishment);
         try {
-            sharedDatabase.savePunishmentExpiry(uuid, expiryTimestamp);
+            sharedDatabase.savePunishment(punishment);
         } catch (SQLException exception) {
             logFallback("write shared punishment data", exception);
+        }
+    }
+
+    @Override
+    public List<NetworkWarning> getWarnings(UUID uuid) {
+        try {
+            List<NetworkWarning> sharedWarnings = sharedDatabase.loadWarnings(uuid);
+            if (!sharedWarnings.isEmpty()) {
+                return sharedWarnings;
+            }
+
+            List<NetworkWarning> localWarnings = localFallback.getWarnings(uuid);
+            if (!localWarnings.isEmpty()) {
+                sharedDatabase.saveWarnings(uuid, localWarnings);
+            }
+            return localWarnings;
+        } catch (SQLException exception) {
+            logFallback("read shared warnings", exception);
+            return localFallback.getWarnings(uuid);
+        }
+    }
+
+    @Override
+    public Map<UUID, List<NetworkWarning>> getAllWarnings() {
+        try {
+            Map<UUID, List<NetworkWarning>> warnings = new HashMap<>(sharedDatabase.loadAllWarnings());
+            for (Map.Entry<UUID, List<NetworkWarning>> entry : localFallback.getAllWarnings().entrySet()) {
+                if (warnings.containsKey(entry.getKey()) || entry.getValue() == null || entry.getValue().isEmpty()) {
+                    continue;
+                }
+                warnings.put(entry.getKey(), entry.getValue());
+                sharedDatabase.saveWarnings(entry.getKey(), entry.getValue());
+            }
+            return warnings;
+        } catch (SQLException exception) {
+            logFallback("read shared warning list", exception);
+            return localFallback.getAllWarnings();
+        }
+    }
+
+    @Override
+    public void addWarning(NetworkWarning warning) {
+        localFallback.addWarning(warning);
+        try {
+            sharedDatabase.insertWarning(warning);
+        } catch (SQLException exception) {
+            logFallback("write shared warning data", exception);
         }
     }
 

@@ -14,18 +14,33 @@ public class LocalNetworkModerationService implements NetworkModerationService {
     }
 
     @Override
-    public long getPunishmentExpiry(UUID uuid) {
-        return plugin.getLocalPunishmentExpiry(uuid);
+    public NetworkPunishment getPunishment(UUID uuid) {
+        return plugin.getLocalPunishment(uuid);
     }
 
     @Override
-    public Map<UUID, Long> getPunishmentExpiries() {
-        return plugin.getAllLocalPunishments();
+    public Map<UUID, NetworkPunishment> getPunishments() {
+        return plugin.getAllLocalPunishmentRecords();
     }
 
     @Override
-    public void savePunishmentExpiry(UUID uuid, long expiryTimestamp) {
-        plugin.setLocalPunishmentExpiry(uuid, expiryTimestamp);
+    public void savePunishment(NetworkPunishment punishment) {
+        plugin.saveLocalPunishment(punishment);
+    }
+
+    @Override
+    public List<NetworkWarning> getWarnings(UUID uuid) {
+        return plugin.getLocalWarnings(uuid);
+    }
+
+    @Override
+    public Map<UUID, List<NetworkWarning>> getAllWarnings() {
+        return plugin.getAllLocalWarnings();
+    }
+
+    @Override
+    public void addWarning(NetworkWarning warning) {
+        plugin.addLocalWarning(warning);
     }
 
     @Override

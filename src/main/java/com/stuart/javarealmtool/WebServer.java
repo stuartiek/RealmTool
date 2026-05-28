@@ -1,6 +1,8 @@
 package com.stuart.javarealmtool;
 
 import com.stuart.javarealmtool.services.NetworkPlayerProfile;
+import com.stuart.javarealmtool.services.NetworkPunishment;
+import com.stuart.javarealmtool.services.NetworkWarning;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.websocket.WsContext;
@@ -148,8 +150,9 @@ public class WebServer {
         if (lastSeen != null) candidateUuids.addAll(lastSeen.getKeys(false));
         var playtime = data.getConfigurationSection("playtime");
         if (playtime != null) candidateUuids.addAll(playtime.getKeys(false));
-        var warnings = data.getConfigurationSection("warnings");
-        if (warnings != null) candidateUuids.addAll(warnings.getKeys(false));
+        for (UUID warnedPlayer : plugin.getAllWarnings().keySet()) {
+            candidateUuids.add(warnedPlayer.toString());
+        }
         var coins = economy.getConfigurationSection("coins");
         if (coins != null) candidateUuids.addAll(coins.getKeys(false));
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -179,8 +182,13 @@ public class WebServer {
                 row.put("y", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getY() * 10.0) / 10.0 : "");
                 row.put("z", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getZ() * 10.0) / 10.0 : "");
                 row.put("playtimeHours", Math.max(0L, Math.round(profile.playtimeHours())));
-                row.put("warnings", data.getStringList("warnings." + uuidStr).size());
+                row.put("warnings", plugin.getWarningCount(uuid));
                 row.put("punished", plugin.isPunished(uuid));
+                NetworkPunishment punishment = plugin.getPunishment(uuid);
+                row.put("punishmentReason", punishment != null ? punishment.reason() : "");
+                row.put("punishmentEnd", punishment != null ? punishment.expiresAt() : 0L);
+                row.put("punishedBy", punishment != null ? punishment.actor() : "");
+                row.put("punishedAt", punishment != null ? punishment.createdAt() : 0L);
                 row.put("banned", Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name));
                 row.put("coins", plugin.getCoins(uuid));
                 row.put("rank", rank != null ? rank : "");
@@ -785,7 +793,7 @@ public class WebServer {
                     m.put("y", Math.round(p.getLocation().getY() * 10.0) / 10.0);
                     m.put("z", Math.round(p.getLocation().getZ() * 10.0) / 10.0);
                     m.put("world", p.getWorld().getName());
-                    m.put("warnings", plugin.getDataConfig().getStringList("warnings." + p.getUniqueId()).size());
+                    m.put("warnings", plugin.getWarningCount(p.getUniqueId()));
                     m.put("playtime", Math.max(0L, Math.round(profile.playtimeHours())));
                     m.put("punished", plugin.isPunished(p.getUniqueId()));
                     m.put("coins", plugin.getCoins(p.getUniqueId()));
@@ -1086,11 +1094,12 @@ public class WebServer {
                 ctx.status(403).result("Forbidden");
                 return;
             }
-                String targetNameParam = ctx.queryParam("player");
+            String targetNameParam = ctx.queryParam("player");
             String reasonParam = ctx.queryParam("reason");
+            Integer minutesParam = ctx.queryParamAsClass("minutes", Integer.class).getOrDefault(null);
             
             // Try to get params from JSON body if not in query params
-                if (targetNameParam == null || reasonParam == null) {
+            if (targetNameParam == null || reasonParam == null || minutesParam == null) {
                 try {
                     String body = ctx.body();
                     if (body != null && !body.isEmpty()) {
@@ -1115,6 +1124,12 @@ public class WebServer {
                         }
                         if (targetNameParam == null) targetNameParam = extractedName;
                         if (reasonParam == null && bodyMap.get("reason") != null) reasonParam = String.valueOf(bodyMap.get("reason"));
+                        if (minutesParam == null && bodyMap.get("minutes") != null) {
+                            try {
+                                minutesParam = Integer.parseInt(String.valueOf(bodyMap.get("minutes")));
+                            } catch (NumberFormatException ignored) {
+                            }
+                        }
                     }
                 } catch (Exception e) {
                     // Continue with null params
@@ -1124,8 +1139,9 @@ public class WebServer {
             if (reasonParam == null) reasonParam = ctx.queryParam("value");
             if (reasonParam == null) reasonParam = ctx.queryParam("message");
             
-                final String targetName = targetNameParam;
+            final String targetName = targetNameParam;
             final String val = reasonParam;
+            final Integer minutes = minutesParam;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if (action.equals("broadcast")) {
@@ -1158,7 +1174,7 @@ public class WebServer {
                     }
                     else if (action.equals("warn")) {
                         String warnReason = val != null ? val : "No reason";
-                        plugin.addWarning(uuid, warnReason);
+                        plugin.addWarning(uuid, warnReason, "WebAdmin");
                         if (p != null) p.sendMessage(ChatColor.YELLOW + "You have been warned: " + warnReason);
                         plugin.addChatLog("System", "[WARNING] " + targetName + ": " + warnReason);
                         plugin.logAction("WebAdmin", "warned", targetName + " (" + warnReason + ")");
@@ -1170,11 +1186,19 @@ public class WebServer {
                         plugin.logAction("WebAdmin", "healed", targetName);
                     }
                     else if (action.equals("punish")) {
-                        long duration = 3600000L; // Default 1h
-                        if ("3h".equals(val)) duration = 10800000L;
-                        if ("24h".equals(val)) duration = 86400000L;
-                    plugin.setPunished(uuid, duration);
-                        plugin.logAction("WebAdmin", "punished", targetName + " (" + val + ")");
+                        long duration = 3600000L;
+                        if (minutes != null && minutes > 0) {
+                            duration = minutes.longValue() * 60000L;
+                        } else if ("3h".equalsIgnoreCase(val)) {
+                            duration = 10800000L;
+                        } else if ("24h".equalsIgnoreCase(val)) {
+                            duration = 86400000L;
+                        }
+                        String punishmentReason = val != null && !val.isBlank()
+                            ? val
+                            : "Punished via web panel" + (minutes != null && minutes > 0 ? " (" + minutes + " min)" : "");
+                        plugin.setPunished(uuid, duration, punishmentReason, "WebAdmin");
+                        plugin.logAction("WebAdmin", "punished", targetName + " (" + punishmentReason + ")");
                     }
                     else if (action.equals("unpunish")) {
                     plugin.removePunishment(uuid);
@@ -1395,6 +1419,68 @@ public class WebServer {
                 plugin.logAction("WebAdmin", "unmuted", targetPlayer);
             });
             ctx.result("OK");
+        });
+
+        app.get("/api/warnings", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.warnings")) return;
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
+                List<Map<String, Object>> warnings = new ArrayList<>();
+                for (Map.Entry<UUID, List<NetworkWarning>> entry : plugin.getAllWarnings().entrySet()) {
+                    UUID uuid = entry.getKey();
+                    NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
+                    String playerName = profile.lastSeenName() != null && !profile.lastSeenName().isBlank()
+                        ? profile.lastSeenName()
+                        : uuid.toString();
+                    for (NetworkWarning warning : entry.getValue()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("player", playerName);
+                        row.put("warningNumber", warning.warningNumber());
+                        row.put("reason", warning.reason());
+                        row.put("issuedBy", warning.issuedBy() != null && !warning.issuedBy().isBlank() ? warning.issuedBy() : "Unknown");
+                        row.put("date", warning.createdAt());
+                        warnings.add(row);
+                    }
+                }
+                warnings.sort((left, right) -> Long.compare(
+                    ((Number) right.get("date")).longValue(),
+                    ((Number) left.get("date")).longValue()
+                ));
+                return Map.of("warnings", warnings);
+            });
+            ctx.json(future.get());
+        });
+
+        app.post("/api/warnings", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.warn")) return;
+
+            Map<String, Object> body;
+            try {
+                body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(ctx.body(), java.util.Map.class);
+            } catch (Exception exception) {
+                ctx.status(400).result("Invalid request body");
+                return;
+            }
+
+            String player = body.get("player") != null ? String.valueOf(body.get("player")).trim() : "";
+            String reason = body.get("reason") != null ? String.valueOf(body.get("reason")).trim() : "";
+            String issuedBy = body.get("issuedBy") != null ? String.valueOf(body.get("issuedBy")).trim() : "WebAdmin";
+            if (player.isEmpty() || reason.isEmpty()) {
+                ctx.status(400).result("Missing player or reason");
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                plugin.addWarning(uuid, reason, issuedBy.isEmpty() ? "WebAdmin" : issuedBy);
+                Player onlinePlayer = Bukkit.getPlayer(player);
+                if (onlinePlayer != null) {
+                    onlinePlayer.sendMessage(ChatColor.YELLOW + "You have been warned: " + reason);
+                }
+                plugin.addChatLog("System", "[WARNING] " + player + ": " + reason);
+                plugin.logAction("WebAdmin", "warned", player + " (" + reason + ")");
+                plugin.fireDiscordEvent("warns", "Player Warned", "**" + player + "** was warned.\nReason: " + reason, 0xf1c40f, player);
+            });
+            ctx.json(Map.of("status", true));
         });
 
         // --- IPs & SESSIONS ---
@@ -1731,7 +1817,7 @@ public class WebServer {
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.kickPlayer(ChatColor.RED + (fReason != null ? fReason : "Kicked"));
                         } else if ("warn".equals(fAction)) {
-                            plugin.addWarning(uuid, fReason != null ? fReason : "No reason");
+                            plugin.addWarning(uuid, fReason != null ? fReason : "No reason", "WebAdmin");
                             Player pl = Bukkit.getPlayer(target);
                             if (pl != null) pl.sendMessage(ChatColor.YELLOW + "You have been warned: " + fReason);
                             plugin.addChatLog("System", "[WARNING] " + target + ": " + fReason);
@@ -3354,7 +3440,7 @@ public class WebServer {
             if (playerParam != null && !playerParam.isEmpty()) {
                 Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                     UUID uuid = Bukkit.getOfflinePlayer(playerParam).getUniqueId();
-                    int warnings = data.getStringList("warnings." + uuid).size();
+                    int warnings = plugin.getWarningCount(uuid);
                     boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(playerParam);
                     int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
                     long playtime = plugin.getPlaytimeHours(uuid);
@@ -3382,7 +3468,7 @@ public class WebServer {
                     String name = p.getName();
                     if (seen.contains(name)) continue;
                     seen.add(name);
-                    int warnings = data.getStringList("warnings." + uuid).size();
+                    int warnings = plugin.getWarningCount(uuid);
                     boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
                     int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
                     long playtime = plugin.getPlaytimeHours(uuid);
@@ -3396,26 +3482,24 @@ public class WebServer {
                 }
 
                 // Offline players with warnings
-                if (data.getConfigurationSection("warnings") != null) {
-                    for (String key : data.getConfigurationSection("warnings").getKeys(false)) {
-                        try {
-                            UUID uuid = UUID.fromString(key);
-                            String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
-                            if (name == null || seen.contains(name)) continue;
-                            seen.add(name);
-                            int warnings = data.getStringList("warnings." + uuid).size();
-                            boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
-                            int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
-                            long playtime = plugin.getPlaytimeHours(uuid);
-                            int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
-                            Map<String, Object> m = new HashMap<>();
-                            m.put("name", name);
-                            m.put("score", score);
-                            m.put("warnings", warnings);
-                            m.put("bans", bans);
-                            players.add(m);
-                        } catch (Exception ignored) {}
-                    }
+                for (UUID uuid : plugin.getAllWarnings().keySet()) {
+                    try {
+                        String key = uuid.toString();
+                        String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
+                        if (name == null || seen.contains(name)) continue;
+                        seen.add(name);
+                        int warnings = plugin.getWarningCount(uuid);
+                        boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
+                        int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
+                        long playtime = plugin.getPlaytimeHours(uuid);
+                        int score = (int)(playtime * 2) - (warnings * 15) - (bans * 30);
+                        Map<String, Object> m = new HashMap<>();
+                        m.put("name", name);
+                        m.put("score", score);
+                        m.put("warnings", warnings);
+                        m.put("bans", bans);
+                        players.add(m);
+                    } catch (Exception ignored) {}
                 }
 
                 // Offline players with playtime but no warnings
@@ -3426,7 +3510,7 @@ public class WebServer {
                             String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
                             if (name == null || seen.contains(name)) continue;
                             seen.add(name);
-                            int warnings = data.getStringList("warnings." + uuid).size();
+                            int warnings = plugin.getWarningCount(uuid);
                             boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name);
                             int bans = data.getInt("bans_count." + uuid, 0) + (banned ? 1 : 0);
                             long playtime = plugin.getPlaytimeHours(uuid);
@@ -4113,10 +4197,11 @@ public class WebServer {
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> punishments = new ArrayList<>();
                 long now = System.currentTimeMillis();
-                for (Map.Entry<UUID, Long> entry : plugin.getActivePunishments().entrySet()) {
+                for (Map.Entry<UUID, NetworkPunishment> entry : plugin.getActivePunishmentRecords().entrySet()) {
                     try {
                         UUID uuid = entry.getKey();
-                        long expiry = entry.getValue();
+                        NetworkPunishment punishmentRecord = entry.getValue();
+                        long expiry = punishmentRecord.expiresAt();
                         if (expiry <= now || !plugin.isPunished(uuid)) {
                             continue;
                         }
@@ -4127,7 +4212,9 @@ public class WebServer {
                         Map<String, Object> punishment = new HashMap<>();
                         punishment.put("player", profile.lastSeenName() != null ? profile.lastSeenName() : uuid.toString());
                         punishment.put("duration", minutesLeft);
-                        punishment.put("reason", "Punished in-game");
+                        punishment.put("reason", punishmentRecord.reason() != null && !punishmentRecord.reason().isBlank() ? punishmentRecord.reason() : "Punished in-game");
+                        punishment.put("issuedBy", punishmentRecord.actor() != null && !punishmentRecord.actor().isBlank() ? punishmentRecord.actor() : "Unknown");
+                        punishment.put("createdAt", punishmentRecord.createdAt() > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(punishmentRecord.createdAt())) : "Unknown");
                         punishment.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(expiry)));
                         punishments.add(punishment);
                     } catch (Exception ignored) {}
@@ -4137,6 +4224,65 @@ public class WebServer {
                 return punishments;
             });
             ctx.json(future.get());
+        });
+
+        app.post("/api/punishments/create", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.punish")) return;
+
+            Map<String, Object> body;
+            try {
+                body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(ctx.body(), java.util.Map.class);
+            } catch (Exception exception) {
+                ctx.status(400).result("Invalid request body");
+                return;
+            }
+
+            String player = body.get("player") != null ? String.valueOf(body.get("player")).trim() : "";
+            String reason = body.get("reason") != null ? String.valueOf(body.get("reason")).trim() : "";
+            int durationMinutes;
+            try {
+                durationMinutes = Integer.parseInt(String.valueOf(body.getOrDefault("duration", "0")));
+            } catch (NumberFormatException exception) {
+                ctx.status(400).result("Invalid duration");
+                return;
+            }
+
+            if (player.isEmpty() || durationMinutes <= 0) {
+                ctx.status(400).result("Missing player or duration");
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                plugin.setPunished(uuid, durationMinutes * 60000L, reason.isEmpty() ? "Punished via web panel" : reason, "WebAdmin");
+                plugin.logAction("WebAdmin", "punished", player + " (" + (reason.isEmpty() ? "Punished via web panel" : reason) + ")");
+            });
+            ctx.result("OK");
+        });
+
+        app.post("/api/punishments/remove", ctx -> {
+            if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.action.punish")) return;
+
+            Map<String, Object> body;
+            try {
+                body = new com.fasterxml.jackson.databind.ObjectMapper().readValue(ctx.body(), java.util.Map.class);
+            } catch (Exception exception) {
+                ctx.status(400).result("Invalid request body");
+                return;
+            }
+
+            String player = body.get("player") != null ? String.valueOf(body.get("player")).trim() : "";
+            if (player.isEmpty()) {
+                ctx.status(400).result("Missing player");
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
+                plugin.removePunishment(uuid);
+                plugin.logAction("WebAdmin", "unpunished", player);
+            });
+            ctx.result("OK");
         });
 
         app.get("/api/search", ctx -> {
@@ -4157,8 +4303,9 @@ public class WebServer {
                 if (lastSeen != null) candidateUuids.addAll(lastSeen.getKeys(false));
                 var playtime = data.getConfigurationSection("playtime");
                 if (playtime != null) candidateUuids.addAll(playtime.getKeys(false));
-                var warnings = data.getConfigurationSection("warnings");
-                if (warnings != null) candidateUuids.addAll(warnings.getKeys(false));
+                for (UUID warnedPlayer : plugin.getAllWarnings().keySet()) {
+                    candidateUuids.add(warnedPlayer.toString());
+                }
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     candidateUuids.add(player.getUniqueId().toString());
                 }
@@ -4171,7 +4318,7 @@ public class WebServer {
                         String playerName = data.getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
                         if (playerName == null || playerName.isBlank()) playerName = uuidStr;
                         double playtimeHours = plugin.getPlaytimeHours(uuid);
-                        int warningCount = data.getStringList("warnings." + uuidStr).size();
+                        int warningCount = plugin.getWarningCount(uuid);
                         boolean banned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(playerName);
                         boolean punished = plugin.isPunished(uuid);
                         int reputation = Math.max(-100, 100 - (warningCount * 10) - (banned ? 40 : 0) - (punished ? 20 : 0));

@@ -664,7 +664,7 @@
             </div>
             <h3 style="margin-top: 30px; color: #4ec9b0;">Active Punishments</h3>
             <table>
-                <tr><th>Player</th><th>Duration</th><th>Reason</th><th>Ends At</th><th>Actions</th></tr>
+                <tr><th>Player</th><th>Duration</th><th>Reason</th><th>Issued By</th><th>Created</th><th>Ends At</th><th>Actions</th></tr>
                 <tbody id="active-punishments"></tbody>
             </table>
         </div>
@@ -3545,10 +3545,12 @@
                 <td>${p.player}</td>
                 <td>${p.duration} min</td>
                 <td>${p.reason}</td>
+                <td>${p.issuedBy || 'Unknown'}</td>
+                <td>${p.createdAt || 'Unknown'}</td>
                 <td>${p.endsAt}</td>
                 <td><button onclick="removePunishment('${p.player}')" style="padding: 4px 8px; font-size: 11px; background: #d32f2f;">Remove</button></td>
             </tr>
-        `).join('') : '<tr><td colspan="5">No active punishments</td></tr>';
+        `).join('') : '<tr><td colspan="7">No active punishments</td></tr>';
         document.getElementById('active-punishments').innerHTML = html;
     }
 
@@ -4275,12 +4277,13 @@
             const warnings = response && response.warnings ? response.warnings : [];
             const html = warnings.length ? warnings.map(w => `
                 <tr>
+                    <td>${w.player || 'Unknown'}</td>
                     <td>${w.warningNumber || 'N/A'}</td>
                     <td>${w.reason}</td>
                     <td>${w.issuedBy}</td>
                     <td>${w.date ? new Date(w.date).toLocaleDateString() : 'Unknown'}</td>
                 </tr>
-            `).join('') : '<tr><td colspan="4">No warnings</td></tr>';
+            `).join('') : '<tr><td colspan="5">No warnings</td></tr>';
             document.getElementById('warnings-table').innerHTML = html;
         } catch (e) {
             console.error('Error loading warnings:', e);

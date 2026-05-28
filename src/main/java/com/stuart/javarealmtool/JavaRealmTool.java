@@ -9,8 +9,10 @@ import com.stuart.javarealmtool.services.LocalNetworkModerationService;
 import com.stuart.javarealmtool.services.LocalNetworkProfileService;
 import com.stuart.javarealmtool.services.LocalNetworkTokenService;
 import com.stuart.javarealmtool.services.NetworkModerationService;
+import com.stuart.javarealmtool.services.NetworkPunishment;
 import com.stuart.javarealmtool.services.NetworkProfileService;
 import com.stuart.javarealmtool.services.RankService;
+import com.stuart.javarealmtool.services.NetworkWarning;
 import com.stuart.javarealmtool.services.NetworkTokenService;
 import com.stuart.javarealmtool.services.SharedNetworkDatabase;
 import com.stuart.javarealmtool.services.SharedNetworkModerationService;
@@ -2189,12 +2191,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         return true;
                     }
                     if (args.length < 3) {
-                        p.sendMessage(ChatColor.RED + "Usage: /dmt punish <username> <duration>");
+                        p.sendMessage(ChatColor.RED + "Usage: /dmt punish <username> <duration> [reason]");
                         p.sendMessage(ChatColor.GRAY + "Duration format: 20s, 5m, 2hr, 2.5hr");
                         return true;
                     }
                     String targetName = args[1];
                     String durationStr = args[2];
+                    String punishmentReason = args.length > 3 ? String.join(" ", Arrays.copyOfRange(args, 3, args.length)) : "Punished via /dmt punish";
                     long durationMs = parseDuration(durationStr);
                     if (durationMs == -1) {
                         p.sendMessage(ChatColor.RED + "Invalid duration format. Use: 20s, 5m, 2hr, 2.5hr");
@@ -2205,9 +2208,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.RED + "Player not found.");
                         return true;
                     }
-                    setPunished(targetOffline.getUniqueId(), durationMs);
+                    setPunished(targetOffline.getUniqueId(), durationMs, punishmentReason, p.getName());
                     p.sendMessage(ChatColor.GREEN + "Punished " + targetName + " for " + durationStr);
-                    logAction(p.getName(), "punished", targetName + " (" + durationStr + ")");
+                    logAction(p.getName(), "punished", targetName + " (" + durationStr + ", " + punishmentReason + ")");
                     break;
                 case "menu":
                     if (!hasDmtCommandPermission(p, "menu")) {
@@ -5248,7 +5251,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     break;
                 case WARN: 
                     if (target != null) target.sendMessage(ChatColor.RED + "WARNING: " + ChatColor.YELLOW + reason); 
-                    if (ctx.targetName != null) addWarning(Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId(), reason);
+                    if (ctx.targetName != null) addWarning(Bukkit.getOfflinePlayer(ctx.targetName).getUniqueId(), reason, p.getName());
                     logAction(p.getName(), "warned", ctx.targetName + " (" + reason + ")");
                     addChatLog("System", "[WARNING] " + ctx.targetName + ": " + reason);
                     fireDiscordEvent("warns", "Player Warned", "**" + ctx.targetName + "** was warned by **" + p.getName() + "**.\nReason: " + reason, 0xf1c40f, ctx.targetName);
@@ -5411,6 +5414,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return networkModerationService != null ? networkModerationService.getPunishmentExpiry(uuid) : getLocalPunishmentExpiry(uuid);
     }
 
+    public NetworkPunishment getPunishment(UUID uuid) {
+        return networkModerationService != null ? networkModerationService.getPunishment(uuid) : getLocalPunishment(uuid);
+    }
+
     public Map<UUID, Long> getActivePunishments() {
         Map<UUID, Long> punishments = networkModerationService != null ? networkModerationService.getPunishmentExpiries() : getAllLocalPunishments();
         Map<UUID, Long> activePunishments = new HashMap<>();
@@ -5418,6 +5425,19 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         for (Map.Entry<UUID, Long> entry : punishments.entrySet()) {
             if (entry.getValue() != null && entry.getValue() > now) {
                 activePunishments.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return activePunishments;
+    }
+
+    public Map<UUID, NetworkPunishment> getActivePunishmentRecords() {
+        Map<UUID, NetworkPunishment> punishments = networkModerationService != null ? networkModerationService.getPunishments() : getAllLocalPunishmentRecords();
+        Map<UUID, NetworkPunishment> activePunishments = new HashMap<>();
+        long now = System.currentTimeMillis();
+        for (Map.Entry<UUID, NetworkPunishment> entry : punishments.entrySet()) {
+            NetworkPunishment punishment = entry.getValue();
+            if (punishment != null && punishment.expiresAt() > now) {
+                activePunishments.put(entry.getKey(), punishment);
             }
         }
         return activePunishments;
@@ -5463,6 +5483,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return playersConfig.getLong("punishments." + uuid, 0L);
     }
 
+    public NetworkPunishment getLocalPunishment(UUID uuid) {
+        long expiry = getLocalPunishmentExpiry(uuid);
+        if (expiry <= 0L) {
+            return null;
+        }
+
+        String basePath = "punishment_meta." + uuid;
+        return new NetworkPunishment(
+            uuid,
+            expiry,
+            playersConfig.getString(basePath + ".reason"),
+            playersConfig.getString(basePath + ".actor"),
+            playersConfig.getLong(basePath + ".created_at", 0L)
+        );
+    }
+
     public Map<UUID, Long> getAllLocalPunishments() {
         Map<UUID, Long> punishments = new HashMap<>();
         ConfigurationSection section = playersConfig.getConfigurationSection("punishments");
@@ -5479,8 +5515,38 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return punishments;
     }
 
+    public Map<UUID, NetworkPunishment> getAllLocalPunishmentRecords() {
+        Map<UUID, NetworkPunishment> punishments = new HashMap<>();
+        for (UUID uuid : getAllLocalPunishments().keySet()) {
+            NetworkPunishment punishment = getLocalPunishment(uuid);
+            if (punishment != null) {
+                punishments.put(uuid, punishment);
+            }
+        }
+        return punishments;
+    }
+
     public void setLocalPunishmentExpiry(UUID uuid, long expiryTimestamp) {
         playersConfig.set("punishments." + uuid, expiryTimestamp <= 0L ? null : expiryTimestamp);
+        savePlayersFile();
+    }
+
+    public void saveLocalPunishment(NetworkPunishment punishment) {
+        if (punishment == null || punishment.expiresAt() <= 0L) {
+            if (punishment != null) {
+                playersConfig.set("punishments." + punishment.uuid(), null);
+                playersConfig.set("punishment_meta." + punishment.uuid(), null);
+            }
+            savePlayersFile();
+            return;
+        }
+
+        String uuidKey = punishment.uuid().toString();
+        String metaPath = "punishment_meta." + uuidKey;
+        playersConfig.set("punishments." + uuidKey, punishment.expiresAt());
+        playersConfig.set(metaPath + ".reason", punishment.reason() == null || punishment.reason().isBlank() ? null : punishment.reason().trim());
+        playersConfig.set(metaPath + ".actor", punishment.actor() == null || punishment.actor().isBlank() ? null : punishment.actor().trim());
+        playersConfig.set(metaPath + ".created_at", Math.max(0L, punishment.createdAt()));
         savePlayersFile();
     }
 
@@ -6686,25 +6752,41 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openPunishedPlayersMenu(Player p) {
         Inventory gui = Bukkit.createInventory(null, 54, ChatColor.RED + "Punished Players");
         resetGridSlots();
-        if (playersConfig.contains("punishments")) {
-            for (String key : playersConfig.getConfigurationSection("punishments").getKeys(false)) {
-                UUID uuid = UUID.fromString(key);
-                if (isPunished(uuid)) {
-                    OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
-                    ItemStack head = new ItemStack(Material.PLAYER_HEAD);
-                    SkullMeta meta = (SkullMeta) head.getItemMeta();
-                    meta.setOwningPlayer(offlinePlayer);
-                    meta.setDisplayName(ChatColor.RED + offlinePlayer.getName());
-                    head.setItemMeta(meta);
-                    int slot = getNextGridSlot();
-                    if (slot != -1) gui.setItem(slot, head);
-                }
+        List<UUID> punishedPlayers = new ArrayList<>(getActivePunishments().keySet());
+        punishedPlayers.sort(Comparator.comparing(this::getStaffDisplayNameForUuid, String.CASE_INSENSITIVE_ORDER));
+
+        for (UUID uuid : punishedPlayers) {
+            if (isPunished(uuid)) {
+                OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
+                ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+                SkullMeta meta = (SkullMeta) head.getItemMeta();
+                meta.setOwningPlayer(offlinePlayer);
+                meta.setDisplayName(ChatColor.RED + getStaffDisplayNameForUuid(uuid));
+                head.setItemMeta(meta);
+                int slot = getNextGridSlot();
+                if (slot != -1) gui.setItem(slot, head);
             }
         }
         gui.setItem(53, createGuiItem(Material.REDSTONE, ChatColor.RED + "Back to Main Menu"));
         fillGUIBorders(gui);
         fillGUIEmpty(gui);
         p.openInventory(gui);
+    }
+
+    private String getStaffDisplayNameForUuid(UUID uuid) {
+        if (networkProfileService != null) {
+            try {
+                String lastSeenName = networkProfileService.getProfile(uuid).lastSeenName();
+                if (lastSeenName != null && !lastSeenName.isBlank()) {
+                    return lastSeenName;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
+        String fallbackName = offlinePlayer.getName();
+        return fallbackName != null && !fallbackName.isBlank() ? fallbackName : uuid.toString();
     }
 
     private FileConfiguration getWarpConfig() {
@@ -8418,7 +8500,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 case BARRIER: pendingActions.put(p.getUniqueId(), new PunishmentContext(targetName, ActionType.BAN)); p.sendMessage(ChatColor.AQUA + "Enter BAN reason:"); break;
                 case IRON_BARS:
                     long d = itemName.contains("1hr") ? 3600000 : itemName.contains("3hr") ? 10800000 : 86400000;
-                    setPunished(uuid, d);
+                    setPunished(uuid, d, "Punished via staff menu", p.getName());
                     p.sendMessage(ChatColor.RED + "Punished " + targetName);
                     logAction(p.getName(), "punished", targetName + " (" + itemName.replace("Punish ", "") + ")");
                     break;
@@ -9704,11 +9786,22 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public void setPunished(UUID u, long d) {
+        setPunished(u, d, "Punished in-game", null);
+    }
+
+    public void setPunished(UUID u, long d, String reason, String actor) {
         long expiryTimestamp = System.currentTimeMillis() + d;
+        NetworkPunishment punishment = new NetworkPunishment(
+            u,
+            expiryTimestamp,
+            reason == null || reason.isBlank() ? "Punished in-game" : reason.trim(),
+            actor == null || actor.isBlank() ? null : actor.trim(),
+            System.currentTimeMillis()
+        );
         if (networkModerationService != null) {
-            networkModerationService.savePunishmentExpiry(u, expiryTimestamp);
+            networkModerationService.savePunishment(punishment);
         } else {
-            setLocalPunishmentExpiry(u, expiryTimestamp);
+            saveLocalPunishment(punishment);
         }
         
         Player p = Bukkit.getPlayer(u);
@@ -9732,9 +9825,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     
     public void removePunishment(UUID u) {
         if (networkModerationService != null) {
-            networkModerationService.savePunishmentExpiry(u, 0L);
+            networkModerationService.savePunishment(new NetworkPunishment(u, 0L, null, null, 0L));
         } else {
-            setLocalPunishmentExpiry(u, 0L);
+            saveLocalPunishment(new NetworkPunishment(u, 0L, null, null, 0L));
         }
         Player p = Bukkit.getPlayer(u);
         // Restore player's original location
@@ -10548,11 +10641,103 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public void addWarning(UUID uuid, String reason) {
-        List<String> warns = dataConfig.getStringList("warnings." + uuid);
-        String entry = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " | " + reason;
+        addWarning(uuid, reason, null);
+    }
+
+    public void addWarning(UUID uuid, String reason, String issuedBy) {
+        NetworkWarning warning = new NetworkWarning(
+            uuid,
+            0,
+            reason == null || reason.isBlank() ? "No reason" : reason.trim(),
+            issuedBy == null || issuedBy.isBlank() ? null : issuedBy.trim(),
+            System.currentTimeMillis()
+        );
+        if (networkModerationService != null) {
+            networkModerationService.addWarning(warning);
+            return;
+        }
+        addLocalWarning(warning);
+    }
+
+    public List<NetworkWarning> getWarnings(UUID uuid) {
+        return new ArrayList<>(networkModerationService != null ? networkModerationService.getWarnings(uuid) : getLocalWarnings(uuid));
+    }
+
+    public Map<UUID, List<NetworkWarning>> getAllWarnings() {
+        return networkModerationService != null ? networkModerationService.getAllWarnings() : getAllLocalWarnings();
+    }
+
+    public int getWarningCount(UUID uuid) {
+        return networkModerationService != null ? networkModerationService.getWarningCount(uuid) : getLocalWarnings(uuid).size();
+    }
+
+    public List<NetworkWarning> getLocalWarnings(UUID uuid) {
+        List<String> rawWarnings = dataConfig.getStringList("warnings." + uuid);
+        List<NetworkWarning> warnings = new ArrayList<>();
+        for (int index = 0; index < rawWarnings.size(); index++) {
+            String rawWarning = rawWarnings.get(index);
+            String reason = rawWarning;
+            String issuedBy = null;
+            long createdAt = 0L;
+
+            if (rawWarning != null && rawWarning.contains(" | ")) {
+                String[] parts = rawWarning.split(" \\| ", 3);
+                if (parts.length == 3) {
+                    createdAt = parseStoredWarningTimestamp(parts[0]);
+                    issuedBy = parts[1].isBlank() ? null : parts[1].trim();
+                    reason = parts[2].trim();
+                } else if (parts.length == 2) {
+                    createdAt = parseStoredWarningTimestamp(parts[0]);
+                    reason = parts[1].trim();
+                }
+            }
+
+            warnings.add(new NetworkWarning(uuid, index + 1, reason, issuedBy, createdAt));
+        }
+        return warnings;
+    }
+
+    public Map<UUID, List<NetworkWarning>> getAllLocalWarnings() {
+        Map<UUID, List<NetworkWarning>> warningsByPlayer = new HashMap<>();
+        ConfigurationSection section = dataConfig.getConfigurationSection("warnings");
+        if (section == null) {
+            return warningsByPlayer;
+        }
+
+        for (String uuidStr : section.getKeys(false)) {
+            try {
+                UUID uuid = UUID.fromString(uuidStr);
+                List<NetworkWarning> warnings = getLocalWarnings(uuid);
+                if (!warnings.isEmpty()) {
+                    warningsByPlayer.put(uuid, warnings);
+                }
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        return warningsByPlayer;
+    }
+
+    public void addLocalWarning(NetworkWarning warning) {
+        List<String> warns = new ArrayList<>(dataConfig.getStringList("warnings." + warning.uuid()));
+        String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(warning.createdAt() > 0L ? warning.createdAt() : System.currentTimeMillis()));
+        String entry = warning.issuedBy() == null || warning.issuedBy().isBlank()
+            ? timestamp + " | " + warning.reason()
+            : timestamp + " | " + warning.issuedBy().trim() + " | " + warning.reason();
         warns.add(entry);
-        dataConfig.set("warnings." + uuid, warns);
+        dataConfig.set("warnings." + warning.uuid(), warns);
         saveDataFile();
+    }
+
+    private long parseStoredWarningTimestamp(String rawTimestamp) {
+        if (rawTimestamp == null || rawTimestamp.isBlank()) {
+            return 0L;
+        }
+
+        try {
+            return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(rawTimestamp.trim()).getTime();
+        } catch (Exception ignored) {
+            return 0L;
+        }
     }
 
     public void mutePlayer(UUID u, String playerName, String reason) {
