@@ -15,7 +15,9 @@ import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.Material;
+import org.bukkit.scheduler.BukkitTask;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.Callable;
@@ -34,13 +36,17 @@ import java.util.zip.ZipOutputStream;
 
 public class WebServer {
     private static final Pattern MINECRAFT_USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_]{1,16}$");
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
 
     private final JavaRealmTool plugin;
     private Javalin app;
     private final WebTicketController ticketController;
     private final WebRankController rankController;
     private final ConcurrentLinkedQueue<WsContext> sessions = new ConcurrentLinkedQueue<>();
+    private final Map<WsContext, String> liveSessions = new ConcurrentHashMap<>();
+    private final Map<WsContext, Map<String, String>> liveSessionSignatures = new ConcurrentHashMap<>();
     private final Map<String, String> userSessions = new HashMap<>();
+    private BukkitTask liveBroadcastTask;
 
     public WebServer(JavaRealmTool plugin) {
         this.plugin = plugin;
@@ -74,6 +80,21 @@ public class WebServer {
                             ws.onConnect(ctx -> sessions.add(ctx));
                             ws.onClose(ctx -> sessions.remove(ctx));
                         });
+                        router.ws("/api/live", ws -> {
+                            ws.onConnect(ctx -> {
+                                String authToken = normalizeAuthorizationToken(ctx.queryParam("token"));
+                                if (authToken == null || !userSessions.containsKey(authToken)) {
+                                    try { ctx.session.close(); } catch (Exception ignored) {}
+                                    return;
+                                }
+                                liveSessions.put(ctx, authToken);
+                                liveSessionSignatures.put(ctx, new HashMap<>());
+                            });
+                            ws.onClose(ctx -> {
+                                liveSessions.remove(ctx);
+                                liveSessionSignatures.remove(ctx);
+                            });
+                        });
                     });
                 });
 
@@ -82,6 +103,7 @@ public class WebServer {
                 String bindHost = plugin.getWebBindHost();
                 int bindPort = plugin.getWebPort();
                 app.start(bindHost, bindPort);
+                startLiveBroadcastTask();
                 plugin.getLogger().info("Embedded web server listening on " + bindHost + ":" + bindPort
                     + " (public base URL: " + plugin.getWebPublicBaseUrl() + ")");
             } catch (Exception e) {
@@ -433,6 +455,190 @@ public class WebServer {
         }
     }
 
+    private String normalizeAuthorizationToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return null;
+        }
+        String trimmed = rawToken.trim();
+        return trimmed.startsWith("Bearer ") ? trimmed : "Bearer " + trimmed;
+    }
+
+    private String toJson(Object payload) {
+        try {
+            return JSON_MAPPER.writeValueAsString(payload);
+        } catch (Exception exception) {
+            return "{}";
+        }
+    }
+
+    private void startLiveBroadcastTask() {
+        if (liveBroadcastTask != null) {
+            liveBroadcastTask.cancel();
+        }
+        liveBroadcastTask = Bukkit.getScheduler().runTaskTimer(plugin, this::broadcastLiveSnapshots, 20L, 20L);
+    }
+
+    private void broadcastLiveSnapshots() {
+        if (liveSessions.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> playersSnapshot = buildPlayersSnapshot();
+        List<Map<String, String>> chatSnapshot = buildChatSnapshot();
+        List<Map<String, Object>> punishmentsSnapshot = buildPunishmentsSnapshot();
+        Map<String, Object> warningsSnapshot = buildWarningsSnapshot();
+
+        broadcastLiveTopic("players", playersSnapshot, "webapp.view.players");
+        broadcastLiveTopic("chat", chatSnapshot, "webapp.view.chat");
+        broadcastLiveTopic("punishments", punishmentsSnapshot, "webapp.view.players");
+        broadcastLiveTopic("warnings", warningsSnapshot, "webapp.view.warnings");
+    }
+
+    private void broadcastLiveTopic(String topic, Object payload, String requiredPermission) {
+        String payloadJson = toJson(payload);
+        String message = toJson(Map.of("type", topic, "data", payload));
+
+        for (Map.Entry<WsContext, String> entry : new ArrayList<>(liveSessions.entrySet())) {
+            WsContext session = entry.getKey();
+            String token = entry.getValue();
+
+            if (session == null || session.session == null || !session.session.isOpen()) {
+                liveSessions.remove(session);
+                liveSessionSignatures.remove(session);
+                continue;
+            }
+
+            if (!hasPermission(token, requiredPermission)) {
+                continue;
+            }
+
+            Map<String, String> signatures = liveSessionSignatures.computeIfAbsent(session, ignored -> new HashMap<>());
+            if (payloadJson.equals(signatures.get(topic))) {
+                continue;
+            }
+
+            try {
+                session.send(message);
+                signatures.put(topic, payloadJson);
+            } catch (Exception ignored) {
+                liveSessions.remove(session);
+                liveSessionSignatures.remove(session);
+            }
+        }
+    }
+
+    private Map<String, Object> buildPlayersSnapshot() {
+        Map<String, Object> res = new HashMap<>();
+        List<Map<String, Object>> players = new ArrayList<>();
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            NetworkPlayerProfile profile = resolvePlayerProfile(p.getUniqueId(), true);
+            Map<String, Object> m = new HashMap<>();
+            m.put("name", p.getName());
+            m.put("health", Math.round(p.getHealth()));
+            m.put("x", Math.round(p.getLocation().getX() * 10.0) / 10.0);
+            m.put("y", Math.round(p.getLocation().getY() * 10.0) / 10.0);
+            m.put("z", Math.round(p.getLocation().getZ() * 10.0) / 10.0);
+            m.put("world", p.getWorld().getName());
+            m.put("warnings", plugin.getWarningCount(p.getUniqueId()));
+            m.put("playtime", Math.max(0L, Math.round(profile.playtimeHours())));
+            m.put("punished", plugin.isPunished(p.getUniqueId()));
+            m.put("coins", plugin.getCoins(p.getUniqueId()));
+            m.put("discord", profile.discordLink());
+            String rank = profile.rank();
+            if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
+            m.put("rank", rank);
+            m.put("rankColor", getRankHexColor(rank));
+            m.put("color", getRankHexColor(rank));
+            players.add(m);
+        }
+        res.put("players", players);
+        res.put("tps", Math.min(20.0, Math.round(Bukkit.getTPS()[0] * 100.0) / 100.0));
+        res.put("usedMem", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024);
+        res.put("totalMem", Runtime.getRuntime().totalMemory() / 1024 / 1024);
+        res.put("percentMem", Math.round(((double)(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / Runtime.getRuntime().totalMemory()) * 100));
+        return res;
+    }
+
+    private List<Map<String, String>> buildChatSnapshot() {
+        List<String> chat = plugin.getDataConfig().getStringList("chat_history");
+        List<Map<String, String>> messages = new ArrayList<>();
+        int start = Math.max(0, chat.size() - 50);
+        for (int i = start; i < chat.size(); i++) {
+            String msg = chat.get(i);
+            String[] parts = msg.split(" \\| ", 2);
+            if (parts.length != 2) {
+                continue;
+            }
+            String timestamp = parts[0].trim();
+            String rest = parts[1].trim();
+            int colonIdx = rest.indexOf(':');
+            if (colonIdx <= 0) {
+                continue;
+            }
+            Map<String, String> msgMap = new HashMap<>();
+            msgMap.put("timestamp", timestamp);
+            msgMap.put("player", rest.substring(0, colonIdx).trim());
+            msgMap.put("message", rest.substring(colonIdx + 1).trim());
+            messages.add(msgMap);
+        }
+        return messages;
+    }
+
+    private List<Map<String, Object>> buildPunishmentsSnapshot() {
+        List<Map<String, Object>> punishments = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (Map.Entry<UUID, NetworkPunishment> entry : plugin.getActivePunishmentRecords().entrySet()) {
+            try {
+                UUID uuid = entry.getKey();
+                NetworkPunishment punishmentRecord = entry.getValue();
+                long expiry = punishmentRecord.expiresAt();
+                if (expiry <= now || !plugin.isPunished(uuid)) {
+                    continue;
+                }
+
+                long minutesLeft = Math.max(1L, (expiry - now + 59999L) / 60000L);
+                NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
+
+                Map<String, Object> punishment = new HashMap<>();
+                punishment.put("player", profile.lastSeenName() != null ? profile.lastSeenName() : uuid.toString());
+                punishment.put("duration", minutesLeft);
+                punishment.put("reason", punishmentRecord.reason() != null && !punishmentRecord.reason().isBlank() ? punishmentRecord.reason() : "Punished in-game");
+                punishment.put("issuedBy", punishmentRecord.actor() != null && !punishmentRecord.actor().isBlank() ? punishmentRecord.actor() : "Unknown");
+                punishment.put("createdAt", punishmentRecord.createdAt() > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(punishmentRecord.createdAt())) : "Unknown");
+                punishment.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(expiry)));
+                punishments.add(punishment);
+            } catch (Exception ignored) {}
+        }
+
+        punishments.sort(Comparator.comparing(map -> String.valueOf(map.get("player"))));
+        return punishments;
+    }
+
+    private Map<String, Object> buildWarningsSnapshot() {
+        List<Map<String, Object>> warnings = new ArrayList<>();
+        for (Map.Entry<UUID, List<NetworkWarning>> entry : plugin.getAllWarnings().entrySet()) {
+            UUID uuid = entry.getKey();
+            NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
+            String playerName = profile.lastSeenName() != null && !profile.lastSeenName().isBlank()
+                ? profile.lastSeenName()
+                : uuid.toString();
+            for (NetworkWarning warning : entry.getValue()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("player", playerName);
+                row.put("warningNumber", warning.warningNumber());
+                row.put("reason", warning.reason());
+                row.put("issuedBy", warning.issuedBy() != null && !warning.issuedBy().isBlank() ? warning.issuedBy() : "Unknown");
+                row.put("date", warning.createdAt());
+                warnings.add(row);
+            }
+        }
+        warnings.sort((left, right) -> Long.compare(
+            ((Number) right.get("date")).longValue(),
+            ((Number) left.get("date")).longValue()
+        ));
+        return Map.of("warnings", warnings);
+    }
+
     private List<String> getPlayerPermissions(String username) {
         Future<List<String>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
             Player player = Bukkit.getPlayer(username);
@@ -781,37 +987,7 @@ public class WebServer {
                 return;
             }
 
-            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                Map<String, Object> res = new HashMap<>();
-                List<Map<String, Object>> players = new ArrayList<>();
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    NetworkPlayerProfile profile = resolvePlayerProfile(p.getUniqueId(), true);
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("name", p.getName());
-                    m.put("health", Math.round(p.getHealth()));
-                    m.put("x", Math.round(p.getLocation().getX() * 10.0) / 10.0);
-                    m.put("y", Math.round(p.getLocation().getY() * 10.0) / 10.0);
-                    m.put("z", Math.round(p.getLocation().getZ() * 10.0) / 10.0);
-                    m.put("world", p.getWorld().getName());
-                    m.put("warnings", plugin.getWarningCount(p.getUniqueId()));
-                    m.put("playtime", Math.max(0L, Math.round(profile.playtimeHours())));
-                    m.put("punished", plugin.isPunished(p.getUniqueId()));
-                    m.put("coins", plugin.getCoins(p.getUniqueId()));
-                    m.put("discord", profile.discordLink());
-                    String rank = profile.rank();
-                    if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
-                    m.put("rank", rank);
-                    m.put("rankColor", getRankHexColor(rank));
-                    m.put("color", getRankHexColor(rank));
-                    players.add(m);
-                }
-                res.put("players", players);
-                res.put("tps", Math.min(20.0, Math.round(Bukkit.getTPS()[0] * 100.0) / 100.0));
-                res.put("usedMem", (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024);
-                res.put("totalMem", Runtime.getRuntime().totalMemory() / 1024 / 1024);
-                res.put("percentMem", Math.round(((double)(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / Runtime.getRuntime().totalMemory()) * 100));
-                return res;
-            });
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildPlayersSnapshot);
             ctx.json(future.get());
         });
 
@@ -972,31 +1148,7 @@ public class WebServer {
 
         app.get("/api/chat", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.chat")) return;
-            
-            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<String> chat = plugin.getDataConfig().getStringList("chat_history");
-                List<Map<String, String>> messages = new ArrayList<>();
-                // Take last 50 messages in chronological order (oldest first, newest last)
-                int start = Math.max(0, chat.size() - 50);
-                for (int i = start; i < chat.size(); i++) {
-                    String msg = chat.get(i);
-                    // Format: "HH:mm:ss | Player: message"
-                    String[] parts = msg.split(" \\| ", 2);
-                    if (parts.length == 2) {
-                        String timestamp = parts[0].trim();
-                        String rest = parts[1].trim();
-                        int colonIdx = rest.indexOf(':');
-                        if (colonIdx > 0) {
-                            Map<String, String> msgMap = new HashMap<>();
-                            msgMap.put("timestamp", timestamp);
-                            msgMap.put("player", rest.substring(0, colonIdx).trim());
-                            msgMap.put("message", rest.substring(colonIdx + 1).trim());
-                            messages.add(msgMap);
-                        }
-                    }
-                }
-                return messages;
-            });
+            Future<List<Map<String, String>>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildChatSnapshot);
             ctx.json(future.get());
         });
 
@@ -1423,30 +1575,7 @@ public class WebServer {
 
         app.get("/api/warnings", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.warnings")) return;
-            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<Map<String, Object>> warnings = new ArrayList<>();
-                for (Map.Entry<UUID, List<NetworkWarning>> entry : plugin.getAllWarnings().entrySet()) {
-                    UUID uuid = entry.getKey();
-                    NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
-                    String playerName = profile.lastSeenName() != null && !profile.lastSeenName().isBlank()
-                        ? profile.lastSeenName()
-                        : uuid.toString();
-                    for (NetworkWarning warning : entry.getValue()) {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        row.put("player", playerName);
-                        row.put("warningNumber", warning.warningNumber());
-                        row.put("reason", warning.reason());
-                        row.put("issuedBy", warning.issuedBy() != null && !warning.issuedBy().isBlank() ? warning.issuedBy() : "Unknown");
-                        row.put("date", warning.createdAt());
-                        warnings.add(row);
-                    }
-                }
-                warnings.sort((left, right) -> Long.compare(
-                    ((Number) right.get("date")).longValue(),
-                    ((Number) left.get("date")).longValue()
-                ));
-                return Map.of("warnings", warnings);
-            });
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildWarningsSnapshot);
             ctx.json(future.get());
         });
 
@@ -4194,35 +4323,7 @@ public class WebServer {
 
         app.get("/api/punishments", ctx -> {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
-            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
-                List<Map<String, Object>> punishments = new ArrayList<>();
-                long now = System.currentTimeMillis();
-                for (Map.Entry<UUID, NetworkPunishment> entry : plugin.getActivePunishmentRecords().entrySet()) {
-                    try {
-                        UUID uuid = entry.getKey();
-                        NetworkPunishment punishmentRecord = entry.getValue();
-                        long expiry = punishmentRecord.expiresAt();
-                        if (expiry <= now || !plugin.isPunished(uuid)) {
-                            continue;
-                        }
-
-                        long minutesLeft = Math.max(1L, (expiry - now + 59999L) / 60000L);
-                        NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
-
-                        Map<String, Object> punishment = new HashMap<>();
-                        punishment.put("player", profile.lastSeenName() != null ? profile.lastSeenName() : uuid.toString());
-                        punishment.put("duration", minutesLeft);
-                        punishment.put("reason", punishmentRecord.reason() != null && !punishmentRecord.reason().isBlank() ? punishmentRecord.reason() : "Punished in-game");
-                        punishment.put("issuedBy", punishmentRecord.actor() != null && !punishmentRecord.actor().isBlank() ? punishmentRecord.actor() : "Unknown");
-                        punishment.put("createdAt", punishmentRecord.createdAt() > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(punishmentRecord.createdAt())) : "Unknown");
-                        punishment.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(expiry)));
-                        punishments.add(punishment);
-                    } catch (Exception ignored) {}
-                }
-
-                punishments.sort(Comparator.comparing(map -> String.valueOf(map.get("player"))));
-                return punishments;
-            });
+            Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildPunishmentsSnapshot);
             ctx.json(future.get());
         });
 
@@ -4356,7 +4457,18 @@ public class WebServer {
 
     public boolean isRunning() { return app != null; }
 
-    public void stop() { if (app != null) app.stop(); }
+    public void stop() {
+        if (liveBroadcastTask != null) {
+            liveBroadcastTask.cancel();
+            liveBroadcastTask = null;
+        }
+        for (WsContext session : new ArrayList<>(liveSessions.keySet())) {
+            try { session.session.close(); } catch (Exception ignored) {}
+        }
+        liveSessions.clear();
+        liveSessionSignatures.clear();
+        if (app != null) app.stop();
+    }
 
     private void zipDirectory(File folder, String parentFolder, ZipOutputStream zos) throws IOException {
         File[] files = folder.listFiles();
