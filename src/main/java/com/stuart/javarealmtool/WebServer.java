@@ -1878,12 +1878,6 @@ public class WebServer {
             boolean canViewPunishments = hasPermission(authToken, "webapp.view.players");
             boolean canViewMutes = hasPermission(authToken, "webapp.view.mutes");
             boolean canViewBans = hasPermission(authToken, "webapp.view.banned");
-            boolean canViewAny = canViewReputation || canViewWarnings || canViewNotes || canViewPunishments || canViewMutes || canViewBans;
-
-            if (!canViewAny) {
-                ctx.status(403).result("Forbidden");
-                return;
-            }
 
             String player = ctx.queryParam("player");
             if (player == null || player.isBlank()) {
