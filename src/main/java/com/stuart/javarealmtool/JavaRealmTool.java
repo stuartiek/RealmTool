@@ -126,6 +126,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> currentChunk = new ConcurrentHashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
     private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
+    private final Map<UUID, CachedPunishmentState> punishmentCache = new ConcurrentHashMap<>();
     private long lastStaffHourPruneEpochHour = Long.MIN_VALUE;
     private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
     private int gridSlotIndex = 0;
@@ -134,6 +135,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private static final String STAFF_HOUR_BUCKETS_PATH = "staff_hours.hourly";
     private static final String STAFF_HOUR_NAMES_PATH = "staff_hours.names";
     private static final int STAFF_HOUR_RETENTION_HOURS = 24 * 14;
+    private static final long PUNISHMENT_CACHE_TTL_MS = 1000L;
+
+    private record CachedPunishmentState(NetworkPunishment punishment, long refreshUntil) {}
 
     // Personal miner NPC helpers
     private static final Set<String> PERSONAL_CONTROL_USERS = Set.of("Will_Aetos", "Pokyopossum531");
@@ -5411,11 +5415,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public long getPunishmentExpiry(UUID uuid) {
-        return networkModerationService != null ? networkModerationService.getPunishmentExpiry(uuid) : getLocalPunishmentExpiry(uuid);
+        NetworkPunishment punishment = getPunishment(uuid);
+        return punishment != null ? Math.max(0L, punishment.expiresAt()) : 0L;
     }
 
     public NetworkPunishment getPunishment(UUID uuid) {
-        return networkModerationService != null ? networkModerationService.getPunishment(uuid) : getLocalPunishment(uuid);
+        long now = System.currentTimeMillis();
+        CachedPunishmentState cachedState = punishmentCache.get(uuid);
+        if (cachedState != null && cachedState.refreshUntil() > now) {
+            return cachedState.punishment();
+        }
+
+        NetworkPunishment punishment = networkModerationService != null
+            ? networkModerationService.getPunishment(uuid)
+            : getLocalPunishment(uuid);
+
+        if (punishment == null || punishment.expiresAt() <= now) {
+            punishmentCache.put(uuid, new CachedPunishmentState(null, now + PUNISHMENT_CACHE_TTL_MS));
+            return null;
+        }
+
+        long refreshUntil = Math.min(punishment.expiresAt(), now + PUNISHMENT_CACHE_TTL_MS);
+        punishmentCache.put(uuid, new CachedPunishmentState(punishment, refreshUntil));
+        return punishment;
     }
 
     public Map<UUID, Long> getActivePunishments() {
@@ -9803,6 +9825,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         } else {
             saveLocalPunishment(punishment);
         }
+        punishmentCache.put(u, new CachedPunishmentState(punishment, expiryTimestamp));
         
         Player p = Bukkit.getPlayer(u);
         if (p != null) {
@@ -9829,6 +9852,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         } else {
             saveLocalPunishment(new NetworkPunishment(u, 0L, null, null, 0L));
         }
+        punishmentCache.put(u, new CachedPunishmentState(null, System.currentTimeMillis() + PUNISHMENT_CACHE_TTL_MS));
         Player p = Bukkit.getPlayer(u);
         // Restore player's original location
         Location originalLoc = getLoc("player_location." + u);
