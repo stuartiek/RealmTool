@@ -491,8 +491,10 @@ public class WebServer {
         runtime.put("livePlayerTransfersEnabled", config.getBoolean("network.routing.live_player_transfers", false));
         runtime.put("profileBackend", plugin.getNetworkProfileService() != null ? plugin.getNetworkProfileService().getBackendName() : "unavailable");
         runtime.put("tokenBackend", plugin.getNetworkTokenService() != null ? plugin.getNetworkTokenService().getBackendName() : "unavailable");
+        runtime.put("moderationBackend", plugin.getNetworkModerationService() != null ? plugin.getNetworkModerationService().getBackendName() : "unavailable");
         runtime.put("profileSharedBackendActive", plugin.getNetworkProfileService() != null && plugin.getNetworkProfileService().isSharedBackendEnabled());
         runtime.put("tokenSharedBackendActive", plugin.getNetworkTokenService() != null && plugin.getNetworkTokenService().isSharedBackendEnabled());
+        runtime.put("moderationSharedBackendActive", plugin.getNetworkModerationService() != null && plugin.getNetworkModerationService().isSharedBackendEnabled());
 
         Map<String, Object> proxy = new LinkedHashMap<>();
         proxy.put("type", config.getString("network.proxy.type", "velocity"));
@@ -831,27 +833,25 @@ public class WebServer {
             if (player == null || player.isEmpty()) {
                 Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                     List<Map<String, Object>> result = new ArrayList<>();
-                    var data = plugin.getDataConfig();
-                    if (data.getConfigurationSection("notes") != null) {
-                        for (String key : data.getConfigurationSection("notes").getKeys(false)) {
-                            try {
-                                UUID uuid = UUID.fromString(key);
-                                List<String> notes = data.getStringList("notes." + key);
-                                if (notes.isEmpty()) continue;
-                                String name = data.getString("last_seen_name." + key, Bukkit.getOfflinePlayer(uuid).getName());
-                                Map<String, Object> entry = new HashMap<>();
-                                entry.put("player", name != null ? name : key);
-                                entry.put("uuid", key);
-                                entry.put("count", notes.size());
-                                // Get latest note timestamp
-                                String latest = notes.get(notes.size() - 1);
-                                if (latest.contains(" | ")) {
-                                    entry.put("lastUpdated", latest.split(" \\| ", 2)[0].trim());
-                                } else {
-                                    entry.put("lastUpdated", "Unknown");
-                                }
-                                result.add(entry);
-                            } catch (Exception ignored) {}
+                    for (Map.Entry<UUID, List<String>> noteEntry : plugin.getAllPlayerNotes().entrySet()) {
+                        try {
+                            UUID uuid = noteEntry.getKey();
+                            List<String> notes = noteEntry.getValue();
+                            if (notes == null || notes.isEmpty()) continue;
+                            NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
+                            String key = uuid.toString();
+                            Map<String, Object> entry = new HashMap<>();
+                            entry.put("player", profile.lastSeenName() != null ? profile.lastSeenName() : key);
+                            entry.put("uuid", key);
+                            entry.put("count", notes.size());
+                            String latest = notes.get(notes.size() - 1);
+                            if (latest.contains(" | ")) {
+                                entry.put("lastUpdated", latest.split(" \\| ", 2)[0].trim());
+                            } else {
+                                entry.put("lastUpdated", "Unknown");
+                            }
+                            result.add(entry);
+                        } catch (Exception ignored) {
                         }
                     }
                     result.sort((a, b) -> String.valueOf(b.get("lastUpdated")).compareTo(String.valueOf(a.get("lastUpdated"))));
@@ -863,7 +863,7 @@ public class WebServer {
             
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                List<String> notesList = plugin.getDataConfig().getStringList("notes." + uuid);
+                List<String> notesList = plugin.getPlayerNotes(uuid);
                 List<Map<String, Object>> result = new ArrayList<>();
                 if (notesList != null) {
                     for (int i = 0; i < notesList.size(); i++) {
@@ -911,11 +911,10 @@ public class WebServer {
             
             Bukkit.getScheduler().runTask(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                List<String> notes = plugin.getDataConfig().getStringList("notes." + uuid);
+                List<String> notes = plugin.getPlayerNotes(uuid);
                 if (notes != null && index >= 0 && index < notes.size()) {
                     notes.set(index, newText);
-                    plugin.getDataConfig().set("notes." + uuid, notes);
-                    plugin.saveDataFile();
+                    plugin.savePlayerNotes(uuid, notes);
                     plugin.logAction("WebAdmin", "edited note for", player);
                 }
             });
@@ -930,11 +929,10 @@ public class WebServer {
             
             Bukkit.getScheduler().runTask(plugin, () -> {
                 UUID uuid = Bukkit.getOfflinePlayer(player).getUniqueId();
-                List<String> notes = plugin.getDataConfig().getStringList("notes." + uuid);
+                List<String> notes = plugin.getPlayerNotes(uuid);
                 if (notes != null && index >= 0 && index < notes.size()) {
                     notes.remove(index);
-                    plugin.getDataConfig().set("notes." + uuid, notes);
-                    plugin.saveDataFile();
+                    plugin.savePlayerNotes(uuid, notes);
                     plugin.logAction("WebAdmin", "deleted note for", player);
                 }
             });
@@ -1183,10 +1181,7 @@ public class WebServer {
                         plugin.logAction("WebAdmin", "unpunished", targetName);
                     }
                     else if (action.equals("addnote")) {
-                        if (!plugin.getDataConfig().contains("notes." + uuid)) {
-                            plugin.getDataConfig().set("notes." + uuid, new ArrayList<>());
-                        }
-                        List<String> notes = plugin.getDataConfig().getStringList("notes." + uuid);
+                        List<String> notes = plugin.getPlayerNotes(uuid);
                         String noteText = val;
                         // Also check for 'note' field from JSON body
                         if (noteText == null) {
@@ -1205,8 +1200,7 @@ public class WebServer {
                         }
                         String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date());
                         notes.add(ts + " | " + (noteText != null ? noteText : "Note added via web"));
-                        plugin.getDataConfig().set("notes." + uuid, notes);
-                        plugin.saveDataFile();
+                        plugin.savePlayerNotes(uuid, notes);
                         plugin.logAction("WebAdmin", "added note for", targetName);
                     }
                     else if (action.equals("runcmd")) {
@@ -4118,24 +4112,20 @@ public class WebServer {
             if (!auth(ctx) || !hasPermission(ctx.header("Authorization"), "webapp.view.players")) return;
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, () -> {
                 List<Map<String, Object>> punishments = new ArrayList<>();
-                var playersConfig = plugin.getPlayersConfig();
-                var section = playersConfig.getConfigurationSection("punishments");
-                if (section == null) return punishments;
-
                 long now = System.currentTimeMillis();
-                for (String uuidStr : section.getKeys(false)) {
+                for (Map.Entry<UUID, Long> entry : plugin.getActivePunishments().entrySet()) {
                     try {
-                        UUID uuid = UUID.fromString(uuidStr);
-                        long expiry = playersConfig.getLong("punishments." + uuidStr, 0L);
+                        UUID uuid = entry.getKey();
+                        long expiry = entry.getValue();
                         if (expiry <= now || !plugin.isPunished(uuid)) {
                             continue;
                         }
 
                         long minutesLeft = Math.max(1L, (expiry - now + 59999L) / 60000L);
-                        String name = plugin.getDataConfig().getString("last_seen_name." + uuidStr, Bukkit.getOfflinePlayer(uuid).getName());
+                        NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
 
                         Map<String, Object> punishment = new HashMap<>();
-                        punishment.put("player", name != null ? name : uuidStr);
+                        punishment.put("player", profile.lastSeenName() != null ? profile.lastSeenName() : uuid.toString());
                         punishment.put("duration", minutesLeft);
                         punishment.put("reason", "Punished in-game");
                         punishment.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(expiry)));

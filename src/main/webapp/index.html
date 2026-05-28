@@ -819,12 +819,20 @@
                         <div id="network-runtime-token-backend" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
                     </div>
                     <div>
+                        <label>Moderation Backend</label>
+                        <div id="network-runtime-moderation-backend" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                    <div>
                         <label>Profile Storage Mode</label>
                         <div id="network-runtime-profile-mode" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
                     </div>
                     <div>
                         <label>Token Storage Mode</label>
                         <div id="network-runtime-token-mode" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
+                    </div>
+                    <div>
+                        <label>Moderation Storage Mode</label>
+                        <div id="network-runtime-moderation-mode" style="padding: 10px; background: #252526; border-radius: 4px; min-height: 20px;">Unknown</div>
                     </div>
                 </div>
             </div>
@@ -3726,13 +3734,18 @@
     function renderNetworkRuntimeStatus(runtime) {
         const profileShared = runtime.profileSharedBackendActive === true;
         const tokenShared = runtime.tokenSharedBackendActive === true;
+        const moderationShared = runtime.moderationSharedBackendActive === true;
 
         document.getElementById('network-runtime-profile-backend').textContent = runtime.profileBackend || 'unavailable';
         document.getElementById('network-runtime-token-backend').textContent = runtime.tokenBackend || 'unavailable';
+        document.getElementById('network-runtime-moderation-backend').textContent = runtime.moderationBackend || 'unavailable';
         document.getElementById('network-runtime-profile-mode').innerHTML = profileShared
             ? '<span style="color: #4ec9b0;">Shared backend active</span>'
             : '<span style="color: #d7ba7d;">Local fallback active</span>';
         document.getElementById('network-runtime-token-mode').innerHTML = tokenShared
+            ? '<span style="color: #4ec9b0;">Shared backend active</span>'
+            : '<span style="color: #d7ba7d;">Local fallback active</span>';
+        document.getElementById('network-runtime-moderation-mode').innerHTML = moderationShared
             ? '<span style="color: #4ec9b0;">Shared backend active</span>'
             : '<span style="color: #d7ba7d;">Local fallback active</span>';
     }

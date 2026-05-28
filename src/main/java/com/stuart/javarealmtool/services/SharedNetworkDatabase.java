@@ -7,7 +7,12 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
@@ -20,6 +25,8 @@ public final class SharedNetworkDatabase implements AutoCloseable {
     private final String password;
     private final String profilesTableName;
     private final String tokensTableName;
+    private final String punishmentsTableName;
+    private final String notesTableName;
 
     public SharedNetworkDatabase(JavaRealmTool plugin) throws SQLException {
         this.plugin = plugin;
@@ -31,6 +38,8 @@ public final class SharedNetworkDatabase implements AutoCloseable {
         String tablePrefix = sanitizeTablePrefix(plugin.getNetworkSharedDatabaseTablePrefix());
         this.profilesTableName = tablePrefix + "network_profiles";
         this.tokensTableName = tablePrefix + "network_tokens";
+        this.punishmentsTableName = tablePrefix + "network_punishments";
+        this.notesTableName = tablePrefix + "network_notes";
 
         ensureDriver();
         ensureSchema();
@@ -71,6 +80,51 @@ public final class SharedNetworkDatabase implements AutoCloseable {
     public synchronized void saveTokens(UUID uuid, long amount) throws SQLException {
         try (Connection connection = openConnection()) {
             upsertTokenBalance(connection, uuid, amount);
+        }
+    }
+
+    public synchronized Long loadPunishmentExpiry(UUID uuid) throws SQLException {
+        try (Connection connection = openConnection()) {
+            return loadPunishmentExpiry(connection, uuid);
+        }
+    }
+
+    public synchronized Map<UUID, Long> loadAllPunishmentExpiries() throws SQLException {
+        try (Connection connection = openConnection()) {
+            return loadAllPunishmentExpiries(connection);
+        }
+    }
+
+    public synchronized void savePunishmentExpiry(UUID uuid, long expiryTimestamp) throws SQLException {
+        try (Connection connection = openConnection()) {
+            upsertPunishmentExpiry(connection, uuid, expiryTimestamp);
+        }
+    }
+
+    public synchronized List<String> loadNotes(UUID uuid) throws SQLException {
+        try (Connection connection = openConnection()) {
+            return loadNotes(connection, uuid);
+        }
+    }
+
+    public synchronized Map<UUID, List<String>> loadAllNotes() throws SQLException {
+        try (Connection connection = openConnection()) {
+            return loadAllNotes(connection);
+        }
+    }
+
+    public synchronized void saveNotes(UUID uuid, List<String> notes) throws SQLException {
+        try (Connection connection = openConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                replaceNotes(connection, uuid, notes);
+                connection.commit();
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
         }
     }
 
@@ -118,9 +172,25 @@ public final class SharedNetworkDatabase implements AutoCloseable {
                      "uuid VARCHAR(36) PRIMARY KEY, " +
                      "token_balance BIGINT NOT NULL DEFAULT 0, " +
                      "updated_at BIGINT NOT NULL" +
+                 ")");
+             PreparedStatement createPunishments = connection.prepareStatement(
+                 "CREATE TABLE IF NOT EXISTS " + punishmentsTableName + " (" +
+                     "uuid VARCHAR(36) PRIMARY KEY, " +
+                     "expires_at BIGINT NOT NULL, " +
+                     "updated_at BIGINT NOT NULL" +
+                 ")");
+             PreparedStatement createNotes = connection.prepareStatement(
+                 "CREATE TABLE IF NOT EXISTS " + notesTableName + " (" +
+                     "uuid VARCHAR(36) NOT NULL, " +
+                     "note_index INTEGER NOT NULL, " +
+                     "note_text TEXT NOT NULL, " +
+                     "updated_at BIGINT NOT NULL, " +
+                     "PRIMARY KEY (uuid, note_index)" +
                  ")")) {
             createProfiles.executeUpdate();
             createTokens.executeUpdate();
+            createPunishments.executeUpdate();
+            createNotes.executeUpdate();
         }
     }
 
@@ -192,6 +262,103 @@ public final class SharedNetworkDatabase implements AutoCloseable {
             statement.setLong(2, amount);
             statement.setLong(3, System.currentTimeMillis());
             statement.executeUpdate();
+        }
+    }
+
+    private Long loadPunishmentExpiry(Connection connection, UUID uuid) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT expires_at FROM " + punishmentsTableName + " WHERE uuid = ?")) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    return null;
+                }
+                return resultSet.getLong("expires_at");
+            }
+        }
+    }
+
+    private Map<UUID, Long> loadAllPunishmentExpiries(Connection connection) throws SQLException {
+        Map<UUID, Long> punishments = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT uuid, expires_at FROM " + punishmentsTableName);
+             ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                punishments.put(UUID.fromString(resultSet.getString("uuid")), resultSet.getLong("expires_at"));
+            }
+        }
+        return punishments;
+    }
+
+    private void upsertPunishmentExpiry(Connection connection, UUID uuid, long expiryTimestamp) throws SQLException {
+        if (expiryTimestamp <= 0L) {
+            try (PreparedStatement delete = connection.prepareStatement(
+                "DELETE FROM " + punishmentsTableName + " WHERE uuid = ?")) {
+                delete.setString(1, uuid.toString());
+                delete.executeUpdate();
+            }
+            return;
+        }
+
+        try (PreparedStatement statement = connection.prepareStatement(
+            "INSERT INTO " + punishmentsTableName + " (uuid, expires_at, updated_at) VALUES (?, ?, ?) " +
+                "ON CONFLICT (uuid) DO UPDATE SET expires_at = EXCLUDED.expires_at, updated_at = EXCLUDED.updated_at")) {
+            statement.setString(1, uuid.toString());
+            statement.setLong(2, expiryTimestamp);
+            statement.setLong(3, System.currentTimeMillis());
+            statement.executeUpdate();
+        }
+    }
+
+    private List<String> loadNotes(Connection connection, UUID uuid) throws SQLException {
+        List<String> notes = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT note_text FROM " + notesTableName + " WHERE uuid = ? ORDER BY note_index ASC")) {
+            statement.setString(1, uuid.toString());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    notes.add(resultSet.getString("note_text"));
+                }
+            }
+        }
+        return notes;
+    }
+
+    private Map<UUID, List<String>> loadAllNotes(Connection connection) throws SQLException {
+        Map<UUID, List<String>> notesByPlayer = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT uuid, note_text FROM " + notesTableName + " ORDER BY uuid ASC, note_index ASC");
+             ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                UUID uuid = UUID.fromString(resultSet.getString("uuid"));
+                notesByPlayer.computeIfAbsent(uuid, ignored -> new ArrayList<>()).add(resultSet.getString("note_text"));
+            }
+        }
+        return notesByPlayer;
+    }
+
+    private void replaceNotes(Connection connection, UUID uuid, List<String> notes) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement(
+            "DELETE FROM " + notesTableName + " WHERE uuid = ?")) {
+            delete.setString(1, uuid.toString());
+            delete.executeUpdate();
+        }
+
+        if (notes == null || notes.isEmpty()) {
+            return;
+        }
+
+        try (PreparedStatement insert = connection.prepareStatement(
+            "INSERT INTO " + notesTableName + " (uuid, note_index, note_text, updated_at) VALUES (?, ?, ?, ?)")) {
+            long updatedAt = System.currentTimeMillis();
+            for (int index = 0; index < notes.size(); index++) {
+                insert.setString(1, uuid.toString());
+                insert.setInt(2, index);
+                insert.setString(3, Objects.requireNonNullElse(notes.get(index), ""));
+                insert.setLong(4, updatedAt);
+                insert.addBatch();
+            }
+            insert.executeBatch();
         }
     }
 
