@@ -652,6 +652,34 @@
             </table>
         </div>
 
+        <div id="reputation-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; overflow-y: auto;">
+            <div style="background: var(--card-bg); border: 1px solid var(--card-border); margin: 40px auto; padding: 20px; width: 90%; max-width: 520px; border-radius: 12px; color: var(--text-main); box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                <h2>â­ Reputation for <span id="modal-rep-player">Player</span></h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px;">
+                    <div class="card" style="text-align: center; padding: 1rem !important;">
+                        <div class="label">Reputation Score</div>
+                        <div class="stats" style="font-size: 3rem;" id="modal-rep-score">0</div>
+                    </div>
+                    <div class="card" style="text-align: center; padding: 1rem !important;">
+                        <div class="label">Status</div>
+                        <div class="stats" style="font-size: 2rem;" id="modal-rep-status">Neutral</div>
+                    </div>
+                </div>
+                <div style="margin-top: 25px;">
+                    <h3 style="color: var(--text-dim); font-size: 1rem; margin-bottom: 10px;">Breakdown</h3>
+                    <ul style="list-style: none; padding-left: 0; font-size: 1rem;">
+                        <li style="padding: 10px 5px; display: flex; justify-content: space-between; border-top: 1px solid var(--card-border);"><span>Warnings:</span> <span id="modal-rep-warnings" style="font-weight: bold;">0</span></li>
+                        <li style="padding: 10px 5px; display: flex; justify-content: space-between; border-top: 1px solid var(--card-border);"><span>Mutes:</span> <span id="modal-rep-mutes" style="font-weight: bold;">0</span></li>
+                        <li style="padding: 10px 5px; display: flex; justify-content: space-between; border-top: 1px solid var(--card-border);"><span>Bans:</span> <span id="modal-rep-bans" style="font-weight: bold;">0</span></li>
+                        <li style="padding: 10px 5px; display: flex; justify-content: space-between; border-top: 1px solid var(--card-border); border-bottom: 1px solid var(--card-border);"><span>Positive Notes:</span> <span id="modal-rep-positive" style="font-weight: bold;">0</span></li>
+                    </ul>
+                </div>
+                <div style="margin-top: 30px; text-align: right;">
+                    <button onclick="document.getElementById('reputation-modal').style.display = 'none';" style="padding: 8px 16px; background: #666;">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- CUSTOM PUNISHMENTS -->
         <div id="punishments" class="tab">
             <h2>â±ï¸ Custom Punishments</h2>
@@ -3985,7 +4013,15 @@
     async function viewPlayerReputation(player) {
         const rep = await apiCall('/reputation', 'GET', { player });
         if (rep) {
-            alert(`${player} Reputation\nScore: ${rep.score}\nWarnings: ${rep.warnings}\nBans: ${rep.bans}`);
+            const score = typeof rep.score === 'number' ? rep.score : 0;
+            document.getElementById('modal-rep-player').textContent = player;
+            document.getElementById('modal-rep-score').textContent = score;
+            document.getElementById('modal-rep-status').textContent = score >= 50 ? 'Good' : (score <= -50 ? 'Bad' : 'Neutral');
+            document.getElementById('modal-rep-warnings').textContent = rep.warnings || 0;
+            document.getElementById('modal-rep-mutes').textContent = rep.mutes || 0;
+            document.getElementById('modal-rep-bans').textContent = rep.bans || 0;
+            document.getElementById('modal-rep-positive').textContent = rep.positiveNotes || 0;
+            document.getElementById('reputation-modal').style.display = 'block';
         }
     }
 

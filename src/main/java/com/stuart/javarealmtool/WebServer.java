@@ -487,11 +487,15 @@ public class WebServer {
         List<Map<String, String>> chatSnapshot = buildChatSnapshot();
         List<Map<String, Object>> punishmentsSnapshot = buildPunishmentsSnapshot();
         Map<String, Object> warningsSnapshot = buildWarningsSnapshot();
+        List<Map<String, Object>> ticketsSnapshot = buildTicketsSnapshot(null, null);
+        List<Map<String, String>> mutedSnapshot = buildMutedSnapshot();
 
         broadcastLiveTopic("players", playersSnapshot, "webapp.view.players");
         broadcastLiveTopic("chat", chatSnapshot, "webapp.view.chat");
         broadcastLiveTopic("punishments", punishmentsSnapshot, "webapp.view.players");
         broadcastLiveTopic("warnings", warningsSnapshot, "webapp.view.warnings");
+        broadcastLiveTopic("tickets", ticketsSnapshot, "webapp.view.tickets");
+        broadcastLiveTopic("muted", mutedSnapshot, "webapp.view.mutes");
     }
 
     private void broadcastLiveTopic(String topic, Object payload, String requiredPermission) {
@@ -637,6 +641,258 @@ public class WebServer {
             ((Number) left.get("date")).longValue()
         ));
         return Map.of("warnings", warnings);
+    }
+
+    private Map<String, Object> buildModerationTimelineSnapshot(
+        String playerName,
+        boolean includeReputation,
+        boolean includeWarnings,
+        boolean includeNotes,
+        boolean includePunishments,
+        boolean includeMutes,
+        boolean includeBans,
+        boolean includePlaytime
+    ) {
+        UUID uuid = Bukkit.getOfflinePlayer(playerName).getUniqueId();
+        NetworkPlayerProfile profile = resolvePlayerProfile(uuid, false);
+        String resolvedName = profile.lastSeenName() != null && !profile.lastSeenName().isBlank()
+            ? profile.lastSeenName()
+            : playerName;
+        long now = System.currentTimeMillis();
+        List<Map<String, Object>> timeline = new ArrayList<>();
+        int warningCount = 0;
+        int positiveNotes = 0;
+        Integer muteCount = null;
+        Integer banCount = null;
+        Long playtime = includePlaytime ? plugin.getPlaytimeHours(uuid) : null;
+        boolean hasUndatedEntries = false;
+
+        if (includeWarnings) {
+            for (NetworkWarning warning : plugin.getWarnings(uuid)) {
+                warningCount += 1;
+                Map<String, Object> event = new LinkedHashMap<>();
+                event.put("type", "warning");
+                event.put("title", "Warning #" + warning.warningNumber());
+                event.put("detail", warning.reason() != null && !warning.reason().isBlank() ? warning.reason() : "No reason");
+                event.put("actor", warning.issuedBy() != null && !warning.issuedBy().isBlank() ? warning.issuedBy() : "Unknown");
+                event.put("timestamp", warning.createdAt());
+                event.put("timestampLabel", warning.createdAt() > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(warning.createdAt())) : "Unknown date");
+                event.put("sortTimestamp", warning.createdAt());
+                event.put("hasTimestamp", warning.createdAt() > 0L);
+                timeline.add(event);
+            }
+        }
+
+        if (includeNotes) {
+            for (String rawNote : plugin.getPlayerNotes(uuid)) {
+                String timestamp = "";
+                String category = "INFO";
+                String text = rawNote;
+
+                if (rawNote != null && rawNote.contains(" | ")) {
+                    String[] parts = rawNote.split(" \\| ", 2);
+                    timestamp = parts[0].trim();
+                    text = parts[1].trim();
+                    if (text.startsWith("[")) {
+                        int endBracket = text.indexOf(']');
+                        if (endBracket > 0) {
+                            category = text.substring(1, endBracket).trim().toUpperCase(Locale.ROOT);
+                            text = text.substring(endBracket + 1).trim();
+                        }
+                    }
+                }
+
+                if ("POSITIVE".equalsIgnoreCase(category)) {
+                    positiveNotes += 1;
+                }
+
+                long noteTimestamp = parseModerationTimestamp(timestamp);
+                if (noteTimestamp <= 0L) {
+                    hasUndatedEntries = true;
+                }
+
+                Map<String, Object> event = new LinkedHashMap<>();
+                event.put("type", "note");
+                event.put("title", category + " note");
+                event.put("detail", text != null && !text.isBlank() ? text : "No content");
+                event.put("category", category);
+                event.put("timestamp", noteTimestamp > 0L ? noteTimestamp : null);
+                event.put("timestampLabel", noteTimestamp > 0L ? timestamp : "Undated note");
+                event.put("sortTimestamp", noteTimestamp);
+                event.put("hasTimestamp", noteTimestamp > 0L);
+                timeline.add(event);
+            }
+        }
+
+        NetworkPunishment punishment = plugin.getPunishment(uuid);
+        boolean hasActivePunishment = includePunishments && punishment != null && punishment.expiresAt() > now && plugin.isPunished(uuid);
+        if (hasActivePunishment) {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("type", "punishment");
+            event.put("title", "Active punishment");
+            event.put("detail", punishment.reason() != null && !punishment.reason().isBlank() ? punishment.reason() : "Punished in-game");
+            event.put("actor", punishment.actor() != null && !punishment.actor().isBlank() ? punishment.actor() : "Unknown");
+            event.put("timestamp", punishment.createdAt() > 0L ? punishment.createdAt() : null);
+            event.put("timestampLabel", punishment.createdAt() > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(punishment.createdAt())) : "Active punishment");
+            event.put("endsAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date(punishment.expiresAt())));
+            event.put("sortTimestamp", Math.max(0L, punishment.createdAt()));
+            event.put("hasTimestamp", punishment.createdAt() > 0L);
+            timeline.add(event);
+            if (punishment.createdAt() <= 0L) {
+                hasUndatedEntries = true;
+            }
+        }
+
+        if (includeMutes) {
+            muteCount = 0;
+            for (Map<String, String> muted : buildMutedSnapshot()) {
+                String mutedUuid = muted.get("uuid");
+                String mutedName = muted.get("name");
+                if ((mutedUuid != null && mutedUuid.equals(uuid.toString()))
+                    || (mutedName != null && mutedName.equalsIgnoreCase(resolvedName))) {
+                    muteCount = 1;
+                    Map<String, Object> event = new LinkedHashMap<>();
+                    event.put("type", "mute");
+                    event.put("title", "Active mute");
+                    event.put("detail", muted.getOrDefault("reason", "No reason"));
+                    event.put("timestamp", null);
+                    event.put("timestampLabel", "Active mute");
+                    event.put("sortTimestamp", 0L);
+                    event.put("hasTimestamp", false);
+                    timeline.add(event);
+                    hasUndatedEntries = true;
+                    break;
+                }
+            }
+        }
+
+        if (includeBans) {
+            banCount = 0;
+            org.bukkit.BanEntry nameBanEntry = null;
+            try {
+                nameBanEntry = (org.bukkit.BanEntry) Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getBanEntry(resolvedName);
+                if (nameBanEntry == null && !resolvedName.equalsIgnoreCase(playerName)) {
+                    nameBanEntry = (org.bukkit.BanEntry) Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getBanEntry(playerName);
+                }
+            } catch (Throwable ignored) {
+            }
+
+            boolean currentlyBanned = Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(resolvedName)
+                || (!resolvedName.equalsIgnoreCase(playerName) && Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(playerName));
+            banCount = plugin.getDataConfig().getInt("bans_count." + uuid, 0) + (currentlyBanned ? 1 : 0);
+
+            if (nameBanEntry != null) {
+                Date created = nameBanEntry.getCreated();
+                long banTimestamp = created != null ? created.getTime() : 0L;
+                Map<String, Object> event = new LinkedHashMap<>();
+                event.put("type", "ban");
+                event.put("title", "Active ban");
+                event.put("detail", nameBanEntry.getReason() != null && !nameBanEntry.getReason().isBlank() ? nameBanEntry.getReason() : "No reason");
+                event.put("actor", nameBanEntry.getSource() != null && !nameBanEntry.getSource().isBlank() ? nameBanEntry.getSource() : "Unknown");
+                event.put("timestamp", banTimestamp > 0L ? banTimestamp : null);
+                event.put("timestampLabel", banTimestamp > 0L ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(created) : "Active ban");
+                event.put("endsAt", nameBanEntry.getExpiration() != null ? new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(nameBanEntry.getExpiration()) : "Never");
+                event.put("sortTimestamp", banTimestamp);
+                event.put("hasTimestamp", banTimestamp > 0L);
+                timeline.add(event);
+                if (banTimestamp <= 0L) {
+                    hasUndatedEntries = true;
+                }
+            }
+        }
+
+        timeline.sort(
+            Comparator.comparingLong((Map<String, Object> event) -> ((Number) event.getOrDefault("sortTimestamp", 0L)).longValue())
+                .reversed()
+                .thenComparing(event -> String.valueOf(event.get("type")))
+        );
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("player", resolvedName);
+        response.put("timeline", timeline);
+        response.put("hasUndatedEntries", hasUndatedEntries);
+        response.put("warnings", includeWarnings ? warningCount : null);
+        response.put("mutes", muteCount);
+        response.put("bans", banCount);
+        response.put("positiveNotes", includeNotes ? positiveNotes : null);
+        response.put("playtime", playtime);
+        response.put("punished", includePunishments ? hasActivePunishment : null);
+
+        if (includeReputation) {
+            long scorePlaytime = playtime != null ? playtime : plugin.getPlaytimeHours(uuid);
+            int scoreWarningCount = includeWarnings ? warningCount : plugin.getWarningCount(uuid);
+            int scoreBanCount = banCount != null ? banCount : plugin.getDataConfig().getInt("bans_count." + uuid, 0);
+            int score = (int) (scorePlaytime * 2) - (scoreWarningCount * 15) - (scoreBanCount * 30);
+            response.put("score", score);
+            response.put("status", score >= 50 ? "Good" : (score <= -50 ? "Bad" : "Neutral"));
+        } else {
+            response.put("score", null);
+            response.put("status", "Restricted");
+        }
+
+        return response;
+    }
+
+    private long parseModerationTimestamp(String rawTimestamp) {
+        if (rawTimestamp == null || rawTimestamp.isBlank()) {
+            return 0L;
+        }
+
+        try {
+            return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(rawTimestamp.trim()).getTime();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    public List<Map<String, Object>> buildTicketsSnapshot(String status, String priority) {
+        List<Map<String, Object>> tickets = new ArrayList<>();
+        if (!plugin.getTicketConfig().contains("tickets")) {
+            return tickets;
+        }
+
+        for (String key : plugin.getTicketConfig().getConfigurationSection("tickets").getKeys(false)) {
+            if (key.equals("next_id")) continue;
+            String ticketStatus = plugin.getTicketConfig().getString("tickets." + key + ".status", "open");
+            String ticketPriority = plugin.getTicketConfig().getString("tickets." + key + ".priority", "medium");
+
+            if ((status == null || status.isEmpty() || status.equals(ticketStatus))
+                && (priority == null || priority.isEmpty() || priority.equals(ticketPriority))) {
+                Map<String, Object> ticket = new HashMap<>();
+                ticket.put("id", key);
+                ticket.put("player", plugin.getTicketConfig().getString("tickets." + key + ".player"));
+                ticket.put("message", plugin.getTicketConfig().getString("tickets." + key + ".message"));
+                ticket.put("status", ticketStatus);
+                ticket.put("priority", ticketPriority);
+                ticket.put("category", plugin.getTicketConfig().getString("tickets." + key + ".category", "other"));
+                ticket.put("assignee", plugin.getTicketConfig().getString("tickets." + key + ".assignee", ""));
+                ticket.put("time", plugin.getTicketConfig().getString("tickets." + key + ".timestamp"));
+                tickets.add(ticket);
+            }
+        }
+
+        return tickets;
+    }
+
+    public List<Map<String, String>> buildMutedSnapshot() {
+        List<String> raw = plugin.getDataConfig().getStringList("muted");
+        List<Map<String, String>> result = new ArrayList<>();
+        for (String entry : raw) {
+            Map<String, String> muted = new HashMap<>();
+            String[] parts = entry.split("\\|", 3);
+            if (parts.length >= 3) {
+                muted.put("uuid", parts[0]);
+                muted.put("name", parts[1]);
+                muted.put("reason", parts[2]);
+            } else if (parts.length == 1) {
+                String name = Bukkit.getOfflinePlayer(UUID.fromString(parts[0])).getName();
+                muted.put("uuid", parts[0]);
+                muted.put("name", name != null ? name : parts[0]);
+                muted.put("reason", "No reason");
+            }
+            result.add(muted);
+        }
+        return result;
     }
 
     private List<String> getPlayerPermissions(String username) {
@@ -1610,6 +1866,44 @@ public class WebServer {
                 plugin.fireDiscordEvent("warns", "Player Warned", "**" + player + "** was warned.\nReason: " + reason, 0xf1c40f, player);
             });
             ctx.json(Map.of("status", true));
+        });
+
+        app.get("/api/moderation/timeline", ctx -> {
+            if (!auth(ctx)) return;
+
+            String authToken = ctx.header("Authorization");
+            boolean canViewReputation = hasPermission(authToken, "webapp.view.reputation");
+            boolean canViewWarnings = hasPermission(authToken, "webapp.view.warnings");
+            boolean canViewNotes = hasPermission(authToken, "webapp.view.notes");
+            boolean canViewPunishments = hasPermission(authToken, "webapp.view.players");
+            boolean canViewMutes = hasPermission(authToken, "webapp.view.mutes");
+            boolean canViewBans = hasPermission(authToken, "webapp.view.banned");
+            boolean canViewAny = canViewReputation || canViewWarnings || canViewNotes || canViewPunishments || canViewMutes || canViewBans;
+
+            if (!canViewAny) {
+                ctx.status(403).result("Forbidden");
+                return;
+            }
+
+            String player = ctx.queryParam("player");
+            if (player == null || player.isBlank()) {
+                ctx.status(400).result("Missing player");
+                return;
+            }
+
+            Future<Map<String, Object>> future = Bukkit.getScheduler().callSyncMethod(plugin, () ->
+                buildModerationTimelineSnapshot(
+                    player.trim(),
+                    canViewReputation,
+                    canViewWarnings || canViewReputation,
+                    canViewNotes,
+                    canViewPunishments || canViewReputation,
+                    canViewMutes || canViewReputation,
+                    canViewBans || canViewReputation,
+                    canViewPunishments || canViewReputation
+                )
+            );
+            ctx.json(future.get());
         });
 
         // --- IPs & SESSIONS ---

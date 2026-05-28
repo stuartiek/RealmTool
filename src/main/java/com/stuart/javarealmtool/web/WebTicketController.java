@@ -28,31 +28,7 @@ public class WebTicketController {
             String status = ctx.queryParam("status");
             String priority = ctx.queryParam("priority");
 
-            Callable<List<Map<String, Object>>> task = () -> {
-                List<Map<String, Object>> tickets = new ArrayList<>();
-                if (plugin.getTicketConfig().contains("tickets")) {
-                    for (String key : plugin.getTicketConfig().getConfigurationSection("tickets").getKeys(false)) {
-                        if (key.equals("next_id")) continue;
-                        String ticketStatus = plugin.getTicketConfig().getString("tickets." + key + ".status", "open");
-                        String ticketPriority = plugin.getTicketConfig().getString("tickets." + key + ".priority", "medium");
-
-                        if ((status == null || status.isEmpty() || status.equals(ticketStatus)) &&
-                            (priority == null || priority.isEmpty() || priority.equals(ticketPriority))) {
-                            Map<String, Object> t = new HashMap<>();
-                            t.put("id", key);
-                            t.put("player", plugin.getTicketConfig().getString("tickets." + key + ".player"));
-                            t.put("message", plugin.getTicketConfig().getString("tickets." + key + ".message"));
-                            t.put("status", ticketStatus);
-                            t.put("priority", ticketPriority);
-                            t.put("category", plugin.getTicketConfig().getString("tickets." + key + ".category", "other"));
-                            t.put("assignee", plugin.getTicketConfig().getString("tickets." + key + ".assignee", ""));
-                            t.put("time", plugin.getTicketConfig().getString("tickets." + key + ".timestamp"));
-                            tickets.add(t);
-                        }
-                    }
-                }
-                return tickets;
-            };
+            Callable<List<Map<String, Object>>> task = () -> webServer.buildTicketsSnapshot(status, priority);
 
             Future<List<Map<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, task);
             ctx.json(future.get());
