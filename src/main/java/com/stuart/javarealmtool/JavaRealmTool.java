@@ -126,9 +126,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private final Map<UUID, String> currentChunk = new ConcurrentHashMap<>();
     private final Map<String, Material> chunksCornerBlocks = new HashMap<>();
     private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastToolMenuOpenAt = new ConcurrentHashMap<>();
     private final Map<UUID, CachedPunishmentState> punishmentCache = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> activePunishmentExpiries = new ConcurrentHashMap<>();
+    private volatile CachedWarningsSnapshot warningsSnapshotCache;
+    private volatile CachedPunishmentRecordsSnapshot activePunishmentRecordsSnapshotCache;
     private long lastStaffHourPruneEpochHour = Long.MIN_VALUE;
     private final Map<UUID, PermissionAttachment> permissionAttachments = new HashMap<>();
+    private final Map<String, UUID> claimOwnerIndex = new ConcurrentHashMap<>();
+    private final Object claimOwnerIndexLock = new Object();
+    private volatile boolean claimOwnerIndexDirty = true;
     private int gridSlotIndex = 0;
     private int gridRowIndex = 0;
 
@@ -136,8 +143,15 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private static final String STAFF_HOUR_NAMES_PATH = "staff_hours.names";
     private static final int STAFF_HOUR_RETENTION_HOURS = 24 * 14;
     private static final long PUNISHMENT_CACHE_TTL_MS = 1000L;
+    private static final long MODERATION_AGGREGATE_CACHE_TTL_MS = 5000L;
+    private static final long AUTO_SAVE_INITIAL_DELAY_TICKS = 600L;
+    private static final long AUTO_SAVE_INTERVAL_TICKS = 100L;
+    private static final long TOOL_MENU_OPEN_DEBOUNCE_MS = 750L;
+    private static final String MANAGED_WORLDS_PATH = "managed_worlds";
 
     private record CachedPunishmentState(NetworkPunishment punishment, long refreshUntil) {}
+    private record CachedWarningsSnapshot(Map<UUID, List<NetworkWarning>> warnings, long expiresAt) {}
+    private record CachedPunishmentRecordsSnapshot(Map<UUID, NetworkPunishment> punishments, long expiresAt) {}
 
     // Personal miner NPC helpers
     private static final Set<String> PERSONAL_CONTROL_USERS = Set.of("Will_Aetos", "Pokyopossum531");
@@ -353,8 +367,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             Bukkit.getPluginManager().registerEvents(this, this);
             registerCitizensClickListener();
 
-            // Load any worlds that exist on disk but were not automatically loaded by Spigot at server start.
-            // This ensures worlds created in-game (e.g., hub worlds) persist after a restart.
+            // Reload managed admin-created worlds first, then any remaining world folders on disk.
             loadPersistedWorlds();
 
             // --- MIGRATE EXISTING RANK COLORS ---
@@ -503,7 +516,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         addFilter.invoke(minecraftLog4j, log4jFilter);
                     }
                 } catch (ClassNotFoundException ignored2) {
-                    // Log4j not present or unavailable, skip.
+                                    // Citizens not present; ignore.
                 } catch (Exception ignored2) {
                     // ignore other reflection problems
                 }
@@ -554,12 +567,12 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Start anti-lag ground item cleanup (configurable)
         startAntiLagCleanup();
 
-        // Start auto-save task (every 5 seconds) to prevent main-thread lag during heavy usage
+        // Start auto-save shortly after startup rather than during the enable window.
         autoSaveTaskId = Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
             if (dataConfigDirty || playersConfigDirty || economyConfigDirty) {
                 performDataSave();
             }
-        }, 100L, 100L);
+        }, AUTO_SAVE_INITIAL_DELAY_TICKS, AUTO_SAVE_INTERVAL_TICKS);
 
         getLogger().info("Drowsy Management Tool Fully Loaded!");
         } catch (Throwable t) {
@@ -590,6 +603,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         personalMiners.clear();
 
+        saveLoadedWorlds();
+
         saveDataFile();
         if (playersConfigDirty) {
             try {
@@ -601,8 +616,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             }
         }
         if (economyConfigDirty) {
-            try {
-                synchronized (saveLock) {
+                try {
+                    synchronized (saveLock) {
                     economyConfig.save(economyFile);
                 }
             } catch (IOException e) {
@@ -2350,7 +2365,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                                     p.teleport(lastLocation);
                                     p.sendMessage(ChatColor.GREEN + "Teleported to " + tpWorld + " at your last location.");
                                 } else {
-                                    p.teleport(w.getSpawnLocation());
+                                    Location entryLocation = resolveSafeWorldEntryLocation(w);
+                                    p.teleport(entryLocation != null ? entryLocation : w.getSpawnLocation());
                                     p.sendMessage(ChatColor.GREEN + "Teleported to world '" + tpWorld + "'.");
                                 }
                             }
@@ -5165,76 +5181,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         break;
                     }
                     Bukkit.getScheduler().runTask(this, () -> {
-                        WorldCreator wc = new WorldCreator(worldName);
-                        if ("flat".equals(type)) {
-                            wc.type(WorldType.FLAT);
-                        } else if ("void".equals(type)) {
-                            // Custom void world generator that creates a solid grass baseplate and a smooth cloud layer
-                            wc.generator(new org.bukkit.generator.ChunkGenerator() {
-                                private static final int BASE_Y = 64;
-                                private static final int BASE_RADIUS = 40;
-                                private static final int CLOUD_Y = 120;
-                                private static final int CLOUD_RADIUS = 40;
-                                private static final int CLOUD_CORE_RADIUS = 30;
-
-                                @Override
-                                public ChunkData generateChunkData(World world, Random random, int chunkX, int chunkZ, org.bukkit.generator.ChunkGenerator.BiomeGrid biome) {
-                                    ChunkData data = createChunkData(world);
-                                    int baseStartX = chunkX * 16;
-                                    int baseStartZ = chunkZ * 16;
-
-                                    // Precompute cloud puff centers for this chunk (deterministic by world + chunk coords)
-                                    Random cloudRand = new Random(world.getSeed() ^ ((long)chunkX * 341873128712L) ^ ((long)chunkZ * 132897987541L));
-                                    int puffCount = 3;
-                                    int[][] puffs = new int[puffCount][3]; // centerX, centerZ, radius
-                                    for (int i = 0; i < puffCount; i++) {
-                                        double angle = cloudRand.nextDouble() * Math.PI * 2;
-                                        double dist = cloudRand.nextDouble() * (CLOUD_RADIUS * 0.7);
-                                        int centerX = (int) Math.round(Math.cos(angle) * dist);
-                                        int centerZ = (int) Math.round(Math.sin(angle) * dist);
-                                        int radius = 8 + cloudRand.nextInt(6);
-                                        puffs[i][0] = centerX;
-                                        puffs[i][1] = centerZ;
-                                        puffs[i][2] = radius;
-                                    }
-
-                                    for (int dx = 0; dx < 16; dx++) {
-                                        int wx = baseStartX + dx;
-                                        for (int dz = 0; dz < 16; dz++) {
-                                            int wz = baseStartZ + dz;
-
-                                            // Grass baseplate with a white wool outline (no holes)
-                                            if (Math.abs(wx) <= BASE_RADIUS && Math.abs(wz) <= BASE_RADIUS) {
-                                                boolean onBorder = Math.abs(wx) == BASE_RADIUS || Math.abs(wz) == BASE_RADIUS;
-                                                data.setBlock(dx, BASE_Y, dz, onBorder ? Material.WHITE_WOOL : Material.GRASS_BLOCK);
-                                            }
-
-                                            // Cloud layer: cartoony, solid puffs that fade at the edges (no holes)
-                                            double bestDist = Double.MAX_VALUE;
-                                            int bestRadius = 0;
-                                            for (int[] puff : puffs) {
-                                                int cx = puff[0];
-                                                int cz = puff[1];
-                                                int r = puff[2];
-                                                double d = Math.sqrt((double)(wx - cx) * (wx - cx) + (double)(wz - cz) * (wz - cz));
-                                                if (d < bestDist && d <= r) {
-                                                    bestDist = d;
-                                                    bestRadius = r;
-                                                }
-                                            }
-                                            if (bestDist <= bestRadius) {
-                                                Material cloudMat = bestDist <= (bestRadius - 2) ? Material.WHITE_WOOL : Material.WHITE_STAINED_GLASS;
-                                                // make cloud thicker for a cartoony volume
-                                                data.setBlock(dx, CLOUD_Y, dz, cloudMat);
-                                                data.setBlock(dx, CLOUD_Y + 1, dz, Material.WHITE_WOOL);
-                                            }
-                                        }
-                                    }
-                                    return data;
-                                }
-                            });
-                            wc.generateStructures(false);
-                        }
+                        WorldCreator wc = buildManagedWorldCreator(worldName, type);
                         World created = null;
                         try {
                             created = Bukkit.createWorld(wc);
@@ -5243,6 +5190,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                             getLogger().log(java.util.logging.Level.SEVERE, "Failed to create world", ex);
                         }
                         if (created != null) {
+                            rememberManagedWorld(worldName, type);
+                            initializeCreatedWorld(created, type);
                             p.sendMessage(ChatColor.GREEN + "World '" + worldName + "' created (" + type + ").");
                         } else if (created == null) {
                             // if an exception occurred it has already been reported
@@ -5423,6 +5372,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         long now = System.currentTimeMillis();
         CachedPunishmentState cachedState = punishmentCache.get(uuid);
         if (cachedState != null && cachedState.refreshUntil() > now) {
+            if (cachedState.punishment() != null && cachedState.punishment().expiresAt() > now) {
+                activePunishmentExpiries.put(uuid, cachedState.punishment().expiresAt());
+            } else {
+                activePunishmentExpiries.remove(uuid);
+            }
             return cachedState.punishment();
         }
 
@@ -5432,11 +5386,13 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         if (punishment == null || punishment.expiresAt() <= now) {
             punishmentCache.put(uuid, new CachedPunishmentState(null, now + PUNISHMENT_CACHE_TTL_MS));
+            activePunishmentExpiries.remove(uuid);
             return null;
         }
 
         long refreshUntil = Math.min(punishment.expiresAt(), now + PUNISHMENT_CACHE_TTL_MS);
         punishmentCache.put(uuid, new CachedPunishmentState(punishment, refreshUntil));
+        activePunishmentExpiries.put(uuid, punishment.expiresAt());
         return punishment;
     }
 
@@ -5453,15 +5409,21 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public Map<UUID, NetworkPunishment> getActivePunishmentRecords() {
+        long now = System.currentTimeMillis();
+        CachedPunishmentRecordsSnapshot cachedSnapshot = activePunishmentRecordsSnapshotCache;
+        if (cachedSnapshot != null && cachedSnapshot.expiresAt() > now) {
+            return new HashMap<>(cachedSnapshot.punishments());
+        }
+
         Map<UUID, NetworkPunishment> punishments = networkModerationService != null ? networkModerationService.getPunishments() : getAllLocalPunishmentRecords();
         Map<UUID, NetworkPunishment> activePunishments = new HashMap<>();
-        long now = System.currentTimeMillis();
         for (Map.Entry<UUID, NetworkPunishment> entry : punishments.entrySet()) {
             NetworkPunishment punishment = entry.getValue();
             if (punishment != null && punishment.expiresAt() > now) {
                 activePunishments.put(entry.getKey(), punishment);
             }
         }
+        activePunishmentRecordsSnapshotCache = new CachedPunishmentRecordsSnapshot(new HashMap<>(activePunishments), now + MODERATION_AGGREGATE_CACHE_TTL_MS);
         return activePunishments;
     }
 
@@ -5847,7 +5809,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         tickets.setItemMeta(tiMeta);
         gui.setItem(getNextGridSlot(), tickets);
         
-        if (areFactionsFeaturesVisible()) {
+        if (areClaimFeaturesAvailableInWorld(p.getWorld())) {
             // Chunk Claims
             ItemStack claims = new ItemStack(Material.CRYING_OBSIDIAN);
             ItemMeta cMeta = claims.getItemMeta();
@@ -6668,7 +6630,225 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         p.openInventory(gui);
     }
 
+    private WorldCreator buildManagedWorldCreator(String worldName, String type) {
+        WorldCreator creator = new WorldCreator(worldName);
+        if ("flat".equalsIgnoreCase(type)) {
+            creator.type(WorldType.FLAT);
+        } else if ("void".equalsIgnoreCase(type)) {
+            creator.generator(new org.bukkit.generator.ChunkGenerator() {
+                private static final int BASE_Y = 64;
+                private static final int BASE_RADIUS = 40;
+                private static final int CLOUD_Y = 120;
+                private static final int CLOUD_RADIUS = 40;
+
+                @Override
+                public ChunkData generateChunkData(World world, Random random, int chunkX, int chunkZ, org.bukkit.generator.ChunkGenerator.BiomeGrid biome) {
+                    ChunkData data = createChunkData(world);
+                    int baseStartX = chunkX * 16;
+                    int baseStartZ = chunkZ * 16;
+
+                    Random cloudRand = new Random(world.getSeed() ^ ((long) chunkX * 341873128712L) ^ ((long) chunkZ * 132897987541L));
+                    int puffCount = 3;
+                    int[][] puffs = new int[puffCount][3];
+                    for (int i = 0; i < puffCount; i++) {
+                        double angle = cloudRand.nextDouble() * Math.PI * 2;
+                        double dist = cloudRand.nextDouble() * (CLOUD_RADIUS * 0.7);
+                        int centerX = (int) Math.round(Math.cos(angle) * dist);
+                        int centerZ = (int) Math.round(Math.sin(angle) * dist);
+                        int radius = 8 + cloudRand.nextInt(6);
+                        puffs[i][0] = centerX;
+                        puffs[i][1] = centerZ;
+                        puffs[i][2] = radius;
+                    }
+
+                    for (int dx = 0; dx < 16; dx++) {
+                        int wx = baseStartX + dx;
+                        for (int dz = 0; dz < 16; dz++) {
+                            int wz = baseStartZ + dz;
+
+                            if (Math.abs(wx) <= BASE_RADIUS && Math.abs(wz) <= BASE_RADIUS) {
+                                boolean onBorder = Math.abs(wx) == BASE_RADIUS || Math.abs(wz) == BASE_RADIUS;
+                                data.setBlock(dx, BASE_Y, dz, onBorder ? Material.WHITE_WOOL : Material.GRASS_BLOCK);
+                            }
+
+                            double bestDist = Double.MAX_VALUE;
+                            int bestRadius = 0;
+                            for (int[] puff : puffs) {
+                                int cx = puff[0];
+                                int cz = puff[1];
+                                int radius = puff[2];
+                                double distance = Math.sqrt((double) (wx - cx) * (wx - cx) + (double) (wz - cz) * (wz - cz));
+                                if (distance < bestDist && distance <= radius) {
+                                    bestDist = distance;
+                                    bestRadius = radius;
+                                }
+                            }
+
+                            if (bestDist <= bestRadius) {
+                                Material cloudMaterial = bestDist <= (bestRadius - 2) ? Material.WHITE_WOOL : Material.WHITE_STAINED_GLASS;
+                                data.setBlock(dx, CLOUD_Y, dz, cloudMaterial);
+                                data.setBlock(dx, CLOUD_Y + 1, dz, Material.WHITE_WOOL);
+                            }
+                        }
+                    }
+
+                    return data;
+                }
+            });
+            creator.generateStructures(false);
+        }
+
+        return creator;
+    }
+
+    private void rememberManagedWorld(String worldName, String type) {
+        if (worldName == null || worldName.isBlank()) {
+            return;
+        }
+
+        String basePath = MANAGED_WORLDS_PATH + "." + worldName;
+        dataConfig.set(basePath + ".type", type == null || type.isBlank() ? "normal" : type.toLowerCase(Locale.ROOT));
+        saveDataFile();
+    }
+
+    private void forgetManagedWorld(String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return;
+        }
+
+        dataConfig.set(MANAGED_WORLDS_PATH + "." + worldName, null);
+        saveDataFile();
+    }
+
+    private void loadManagedWorldsFromConfig() {
+        ConfigurationSection managedWorlds = dataConfig.getConfigurationSection(MANAGED_WORLDS_PATH);
+        if (managedWorlds == null) {
+            return;
+        }
+
+        for (String worldName : managedWorlds.getKeys(false)) {
+            if (Bukkit.getWorld(worldName) != null) {
+                continue;
+            }
+
+            String type = managedWorlds.getString(worldName + ".type", "normal");
+            try {
+                World world = Bukkit.createWorld(buildManagedWorldCreator(worldName, type));
+                if (world != null) {
+                    initializeCreatedWorld(world, type);
+                }
+            } catch (Exception ex) {
+                getLogger().warning("Failed to load managed world '" + worldName + "': " + ex.getMessage());
+            }
+        }
+    }
+
+    private void saveLoadedWorlds() {
+        for (World world : Bukkit.getWorlds()) {
+            try {
+                world.save();
+            } catch (Exception ex) {
+                getLogger().warning("Failed to save world '" + world.getName() + "' during disable: " + ex.getMessage());
+            }
+        }
+    }
+
+    private void persistCreatedWorld(World world) {
+        if (world == null) {
+            return;
+        }
+
+        try {
+            world.save();
+        } catch (Exception ex) {
+            getLogger().warning("Failed to immediately save world '" + world.getName() + "': " + ex.getMessage());
+        }
+    }
+
+    private void initializeCreatedWorld(World world, String type) {
+        if (world == null) {
+            return;
+        }
+
+        world.setAutoSave(true);
+
+        if ("void".equalsIgnoreCase(type)) {
+            world.setSpawnLocation(0, 65, 0);
+        } else {
+            Location safeSpawn = resolveSafeWorldEntryLocation(world);
+            if (safeSpawn != null) {
+                world.setSpawnLocation(safeSpawn.getBlockX(), safeSpawn.getBlockY(), safeSpawn.getBlockZ());
+            }
+        }
+
+        persistCreatedWorld(world);
+    }
+
+    private Location resolveSafeWorldEntryLocation(World world) {
+        if (world == null) {
+            return null;
+        }
+
+        Location spawn = world.getSpawnLocation();
+        Location exactSpawn = resolveSafeExactWorldEntryLocation(spawn);
+        if (exactSpawn != null) {
+            return exactSpawn;
+        }
+
+        Location safeSpawn = resolveSafeSurfaceLocation(world, spawn != null ? spawn.getBlockX() : 0, spawn != null ? spawn.getBlockZ() : 0, spawn);
+        if (safeSpawn != null) {
+            return safeSpawn;
+        }
+
+        return resolveSafeSurfaceLocation(world, 0, 0, spawn);
+    }
+
+    private Location resolveSafeExactWorldEntryLocation(Location location) {
+        if (location == null || location.getWorld() == null) {
+            return null;
+        }
+
+        World world = location.getWorld();
+        int x = location.getBlockX();
+        int z = location.getBlockZ();
+
+        try {
+            world.getChunkAt(x >> 4, z >> 4).load();
+        } catch (Exception ignored) {
+        }
+
+        Block feet = location.getBlock();
+        Block head = feet.getRelative(BlockFace.UP);
+        Block ground = feet.getRelative(BlockFace.DOWN);
+        if (!feet.isPassable() || !head.isPassable()) {
+            return null;
+        }
+        if (ground.isPassable() || !ground.getType().isSolid()) {
+            return null;
+        }
+
+        return location.clone();
+    }
+
+    private Location resolveSafeSurfaceLocation(World world, int x, int z, Location fallback) {
+        try {
+            world.getChunkAt(x >> 4, z >> 4).load();
+        } catch (Exception ignored) {
+        }
+
+        int highestY = world.getHighestBlockYAt(x, z);
+        if (highestY > world.getMinHeight()) {
+            float yaw = fallback != null ? fallback.getYaw() : 0.0f;
+            float pitch = fallback != null ? fallback.getPitch() : 0.0f;
+            return new Location(world, x + 0.5, highestY + 1.0, z + 0.5, yaw, pitch);
+        }
+
+        return null;
+    }
+
     private void loadPersistedWorlds() {
+        loadManagedWorldsFromConfig();
+
         File worldContainer = getServer().getWorldContainer();
         if (worldContainer == null || !worldContainer.isDirectory()) return;
 
@@ -6939,21 +7119,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private void openClaimsMenu(Player p) {
-        if (!areFactionsFeaturesVisible()) {
-            p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+        if (!areClaimFeaturesAvailableInWorld(p.getWorld())) {
+            p.sendMessage(ChatColor.RED + "Claims are not enabled in this world.");
             return;
         }
         Inventory gui = Bukkit.createInventory(null, 27, GUI_CLAIMS);
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
         
         UUID uuid = p.getUniqueId();
+        String worldName = p.getWorld().getName();
         int chunkLimit = getChunkLimit(uuid);
-        int claimedChunks = getClaimedChunks(uuid).size();
+        int claimedChunks = getClaimedChunks(uuid, worldName).size();
         
         ItemStack chunks = new ItemStack(Material.ARMOR_STAND);
         ItemMeta chkMeta = chunks.getItemMeta();
         chkMeta.setDisplayName(ChatColor.AQUA + "Chunks Available");
-        chkMeta.setLore(Arrays.asList(ChatColor.YELLOW + "Limit: " + chunkLimit, ChatColor.YELLOW + "Claimed: " + claimedChunks));
+        chkMeta.setLore(Arrays.asList(
+            ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName,
+            ChatColor.YELLOW + "Limit: " + chunkLimit,
+            ChatColor.YELLOW + "Claimed: " + claimedChunks
+        ));
         chunks.setItemMeta(chkMeta);
         gui.setItem(10, chunks);
         
@@ -6974,14 +7159,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         ItemStack trust = new ItemStack(Material.EMERALD_BLOCK);
         ItemMeta trMeta = trust.getItemMeta();
         trMeta.setDisplayName(ChatColor.GREEN + "Trust Player");
-        trMeta.setLore(Arrays.asList(ChatColor.GRAY + "Add trusted player"));
+        trMeta.setLore(Arrays.asList(
+            ChatColor.GRAY + "Add trusted player",
+            ChatColor.DARK_GRAY + "Scope: " + ChatColor.GRAY + worldName
+        ));
         trust.setItemMeta(trMeta);
         gui.setItem(11, trust);
         
         ItemStack untrust = new ItemStack(Material.REDSTONE_BLOCK);
         ItemMeta untrMeta = untrust.getItemMeta();
         untrMeta.setDisplayName(ChatColor.RED + "Remove Trusted");
-        untrMeta.setLore(Arrays.asList(ChatColor.GRAY + "Remove trusted player"));
+        untrMeta.setLore(Arrays.asList(
+            ChatColor.GRAY + "Remove trusted player",
+            ChatColor.DARK_GRAY + "Scope: " + ChatColor.GRAY + worldName
+        ));
         untrust.setItemMeta(untrMeta);
         gui.setItem(13, untrust);
         
@@ -7075,6 +7266,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openTrustPlayerMenu(Player p, int page) {
         Inventory gui = Bukkit.createInventory(null, 27, GUI_TRUST_PLAYER);
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        String worldName = p.getWorld().getName();
+
+        ItemStack scope = new ItemStack(Material.MAP);
+        ItemMeta scopeMeta = scope.getItemMeta();
+        scopeMeta.setDisplayName(ChatColor.AQUA + "Trust Scope");
+        scopeMeta.setLore(Arrays.asList(ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName));
+        scope.setItemMeta(scopeMeta);
+        gui.setItem(4, scope);
         
         List<Player> onlinePlayers = new ArrayList<>();
         for (Player online : Bukkit.getOnlinePlayers()) {
@@ -7125,8 +7324,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     private void openUntrustPlayerMenu(Player p, int page) {
         Inventory gui = Bukkit.createInventory(null, 27, GUI_UNTRUST_PLAYER);
         for (int i = 0; i < 27; i++) gui.setItem(i, createGuiItem(Material.GRAY_STAINED_GLASS_PANE, " "));
+        String worldName = p.getWorld().getName();
+
+        ItemStack scope = new ItemStack(Material.MAP);
+        ItemMeta scopeMeta = scope.getItemMeta();
+        scopeMeta.setDisplayName(ChatColor.AQUA + "Trust Scope");
+        scopeMeta.setLore(Arrays.asList(ChatColor.GRAY + "World: " + ChatColor.WHITE + worldName));
+        scope.setItemMeta(scopeMeta);
+        gui.setItem(4, scope);
         
-        List<String> trusted = getTrustedList(p.getUniqueId());
+        List<String> trusted = getTrustedList(p.getUniqueId(), worldName);
         int playersPerPage = 7;
         int start = page * playersPerPage;
         int end = Math.min(start + playersPerPage, trusted.size());
@@ -7201,6 +7408,58 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return playersConfig.contains("claims") ? playersConfig : dataConfig;
     }
 
+    private void invalidateClaimOwnerIndex() {
+        claimOwnerIndexDirty = true;
+    }
+
+    private Map<String, UUID> getClaimOwnerIndex() {
+        if (!claimOwnerIndexDirty) {
+            return claimOwnerIndex;
+        }
+
+        synchronized (claimOwnerIndexLock) {
+            if (!claimOwnerIndexDirty) {
+                return claimOwnerIndex;
+            }
+
+            Map<String, UUID> rebuiltIndex = new HashMap<>();
+            collectClaimOwnerIndex(playersConfig, rebuiltIndex);
+            collectClaimOwnerIndex(dataConfig, rebuiltIndex);
+
+            claimOwnerIndex.clear();
+            claimOwnerIndex.putAll(rebuiltIndex);
+            claimOwnerIndexDirty = false;
+        }
+
+        return claimOwnerIndex;
+    }
+
+    private void collectClaimOwnerIndex(FileConfiguration config, Map<String, UUID> target) {
+        if (config == null) {
+            return;
+        }
+
+        ConfigurationSection claimsSection = config.getConfigurationSection("claims");
+        if (claimsSection == null) {
+            return;
+        }
+
+        for (String ownerKey : claimsSection.getKeys(false)) {
+            UUID ownerId;
+            try {
+                ownerId = UUID.fromString(ownerKey);
+            } catch (IllegalArgumentException ignored) {
+                continue;
+            }
+
+            for (String chunkKey : claimsSection.getStringList(ownerKey + ".claimed")) {
+                if (chunkKey != null && !chunkKey.isBlank()) {
+                    target.put(chunkKey, ownerId);
+                }
+            }
+        }
+    }
+
     private FileConfiguration getPwarpConfig() {
         return playersConfig.contains("pwarps") ? playersConfig : dataConfig;
     }
@@ -7221,16 +7480,41 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return dataConfig.getStringList(path);
     }
 
+    private List<String> getTrustedList(UUID uuid, String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return getTrustedList(uuid);
+        }
+
+        String path = "claims." + uuid + ".trusted_by_world." + worldName;
+        if (playersConfig.contains(path)) return playersConfig.getStringList(path);
+        if (dataConfig.contains(path)) return dataConfig.getStringList(path);
+        return getTrustedList(uuid);
+    }
+
     private void setClaimList(UUID uuid, List<String> chunks) {
         String path = "claims." + uuid + ".claimed";
         playersConfig.set(path, chunks);
         dataConfig.set(path, null);
+        invalidateClaimOwnerIndex();
         savePlayersFile();
         saveDataFile();
     }
 
     private void setTrustedList(UUID uuid, List<String> trusted) {
         String path = "claims." + uuid + ".trusted";
+        playersConfig.set(path, trusted);
+        dataConfig.set(path, null);
+        savePlayersFile();
+        saveDataFile();
+    }
+
+    private void setTrustedList(UUID uuid, String worldName, List<String> trusted) {
+        if (worldName == null || worldName.isBlank()) {
+            setTrustedList(uuid, trusted);
+            return;
+        }
+
+        String path = "claims." + uuid + ".trusted_by_world." + worldName;
         playersConfig.set(path, trusted);
         dataConfig.set(path, null);
         savePlayersFile();
@@ -8023,7 +8307,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.RED + "That world is locked.");
                     } else {
                         p.closeInventory();
-                        p.teleport(w.getSpawnLocation());
+                        Location entryLocation = resolveSafeWorldEntryLocation(w);
+                        p.teleport(entryLocation != null ? entryLocation : w.getSpawnLocation());
                         p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName);
                     }
                 } else p.sendMessage(ChatColor.RED + "World not found.");
@@ -8067,6 +8352,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                     Bukkit.unloadWorld(w, false);
                     deleteWorldFolder(new File(w.getWorldFolder().getPath()));
                 }
+                forgetManagedWorld(worldName);
                 dataConfig.set("worldlocks." + worldName, null);
                 saveDataFile();
                 p.sendMessage(ChatColor.GREEN + "World " + worldName + " deleted.");
@@ -8075,9 +8361,9 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         }
         // Claims Menu
         if (title.equals(GUI_CLAIMS)) {
-            if (!areFactionsFeaturesVisible()) {
+            if (!areClaimFeaturesAvailableInWorld(p.getWorld())) {
                 p.closeInventory();
-                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                p.sendMessage(ChatColor.RED + "Claims are not enabled in this world.");
                 return;
             }
             if (type == Material.GRASS_BLOCK) {
@@ -8112,10 +8398,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Claim Confirmation Menu
         if (title.equals(GUI_CLAIM_CONFIRM) || title.equals(GUI_UNCLAIM_CONFIRM)) {
-            if (!areFactionsFeaturesVisible()) {
+            if (!areClaimFeaturesAvailableInWorld(p.getWorld())) {
                 pendingClaimAction.remove(p.getUniqueId());
                 p.closeInventory();
-                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                p.sendMessage(ChatColor.RED + "Claims are not enabled in this world.");
                 return;
             }
             String action = pendingClaimAction.get(p.getUniqueId());
@@ -8141,7 +8427,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                         p.sendMessage(ChatColor.RED + "This chunk is already claimed by someone else.");
                     } else {
                         int limit = getChunkLimit(p.getUniqueId());
-                        int claimed = getClaimedChunks(p.getUniqueId()).size();
+                        int claimed = getClaimedChunks(p.getUniqueId(), getChunkWorldName(chunkKey)).size();
                         if (claimed < limit) {
                             claimChunk(p.getUniqueId(), chunkKey);
                             p.sendMessage(ChatColor.GREEN + "Chunk claimed!");
@@ -8170,14 +8456,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Trust Player Menu
         if (title.equals(GUI_TRUST_PLAYER)) {
-            if (!areFactionsFeaturesVisible()) {
+            if (!areClaimFeaturesAvailableInWorld(p.getWorld())) {
                 p.closeInventory();
-                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                p.sendMessage(ChatColor.RED + "Claims are not enabled in this world.");
                 return;
             }
             if (type == Material.PLAYER_HEAD) {
                 String playerName = itemName;
-                trustPlayer(p.getUniqueId(), playerName);
+                trustPlayer(p.getUniqueId(), p.getWorld().getName(), playerName);
                 p.sendMessage(ChatColor.GREEN + "Trusted " + playerName + "!");
                 p.closeInventory();
                 openClaimsMenu(p);
@@ -8192,14 +8478,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
         // Untrust Player Menu
         if (title.equals(GUI_UNTRUST_PLAYER)) {
-            if (!areFactionsFeaturesVisible()) {
+            if (!areClaimFeaturesAvailableInWorld(p.getWorld())) {
                 p.closeInventory();
-                p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                p.sendMessage(ChatColor.RED + "Claims are not enabled in this world.");
                 return;
             }
             if (type == Material.NAME_TAG) {
                 String playerName = itemName;
-                untrustPlayer(p.getUniqueId(), playerName);
+                untrustPlayer(p.getUniqueId(), p.getWorld().getName(), playerName);
                 p.sendMessage(ChatColor.RED + "Removed trust from " + playerName + "!");
                 p.closeInventory();
                 openClaimsMenu(p);
@@ -8568,6 +8854,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         // Chunk Entry/Exit Logic
         Player p = e.getPlayer();
         if (e.getTo() == null) return;
+        if (e.getFrom().getWorld() != null
+                && e.getTo().getWorld() != null
+                && e.getFrom().getWorld().equals(e.getTo().getWorld())
+                && e.getFrom().getBlockX() == e.getTo().getBlockX()
+                && e.getFrom().getBlockY() == e.getTo().getBlockY()
+                && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) {
+            return;
+        }
 
         boolean wasInFactionsSafeZone = isInsideFactionsSafeZone(e.getFrom());
         boolean isInFactionsSafeZone = isInsideFactionsSafeZone(e.getTo());
@@ -9062,8 +9356,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if (e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
                 e.setCancelled(true);
                 Player p = e.getPlayer();
-                if (!areFactionsFeaturesVisible()) {
-                    p.sendMessage(ChatColor.RED + "Factions features are currently hidden.");
+                if (!areClaimsEnabled()) {
+                    p.sendMessage(ChatColor.RED + "Claims are currently disabled.");
                     return;
                 }
                 String chunkKey = getChunkKey(e.getClickedBlock().getLocation());
@@ -9222,7 +9516,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
                 if (saved != null) {
                     p.teleport(saved);
                 } else {
-                    p.teleport(w.getSpawnLocation());
+                    Location entryLocation = resolveSafeWorldEntryLocation(w);
+                    p.teleport(entryLocation != null ? entryLocation : w.getSpawnLocation());
                 }
             }
             p.sendMessage(ChatColor.GREEN + "Teleported to " + worldName + ".");
@@ -9298,12 +9593,20 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     @EventHandler(ignoreCancelled = false, priority = EventPriority.HIGHEST)
     public void onToolUse(PlayerInteractEvent e) {
         if (e.getAction() != Action.RIGHT_CLICK_AIR && e.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (e.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
 
         ItemStack item = e.getItem();
         if (item == null || !item.hasItemMeta()) return;
         if (!item.getItemMeta().getDisplayName().equals(TOOL_NAME)) return;
 
         Player p = e.getPlayer();
+        long now = System.currentTimeMillis();
+        Long lastOpenAt = lastToolMenuOpenAt.get(p.getUniqueId());
+        if (lastOpenAt != null && now - lastOpenAt < TOOL_MENU_OPEN_DEBOUNCE_MS) {
+            e.setCancelled(true);
+            return;
+        }
+        lastToolMenuOpenAt.put(p.getUniqueId(), now);
         e.setCancelled(true);
 
         // Keep the tool locked to the last hotbar slot
@@ -9826,6 +10129,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             saveLocalPunishment(punishment);
         }
         punishmentCache.put(u, new CachedPunishmentState(punishment, expiryTimestamp));
+        activePunishmentExpiries.put(u, expiryTimestamp);
+        invalidateModerationAggregateCaches();
         
         Player p = Bukkit.getPlayer(u);
         if (p != null) {
@@ -9853,6 +10158,8 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             saveLocalPunishment(new NetworkPunishment(u, 0L, null, null, 0L));
         }
         punishmentCache.put(u, new CachedPunishmentState(null, System.currentTimeMillis() + PUNISHMENT_CACHE_TTL_MS));
+        activePunishmentExpiries.remove(u);
+        invalidateModerationAggregateCaches();
         Player p = Bukkit.getPlayer(u);
         // Restore player's original location
         Location originalLoc = getLoc("player_location." + u);
@@ -9935,6 +10242,10 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             return true;
         }
 
+        if (isPrimarySmpWorld(world)) {
+            return true;
+        }
+
         for (String worldName : getConfig().getStringList("factions_world.claims_allowed_worlds")) {
             if (worldName != null && world.getName().equalsIgnoreCase(worldName.trim())) {
                 return true;
@@ -9944,11 +10255,16 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return false;
     }
 
+    private boolean areClaimsEnabled() {
+        return getConfig().getBoolean("factions_world.claims_enabled", true);
+    }
+
+    private boolean areClaimFeaturesAvailableInWorld(World world) {
+        return world != null && areClaimsEnabled() && isConfiguredClaimWorld(world);
+    }
+
     private boolean isClaimingAllowedInWorld(World world) {
-        return areFactionsFeaturesVisible()
-            && world != null
-            && isConfiguredClaimWorld(world)
-            && getConfig().getBoolean("factions_world.claims_enabled", true);
+        return areClaimFeaturesAvailableInWorld(world);
     }
 
     private Location getFactionsSpawnLocation() {
@@ -9991,7 +10307,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     private boolean shouldProtectClaim(String chunkKey) {
-        return areFactionsFeaturesVisible() && isChunkClaimed(chunkKey);
+        return areClaimsEnabled() && isChunkClaimed(chunkKey);
     }
 
     private void sendActionBar(Player p, String message) {
@@ -10098,6 +10414,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             List<ItemStack> armor = (List<ItemStack>) dataConfig.getList(base + ".armor");
             if (armor != null && armor.size() == 4) p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
         }
+        ensurePlayerHasTool(p);
     }
 
     private void saveInventoryToShared(Player p) {
@@ -10128,6 +10445,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             List<ItemStack> armor = (List<ItemStack>) dataConfig.getList(base + ".armor");
             if (armor != null && armor.size() == 4) p.getInventory().setArmorContents(armor.toArray(new ItemStack[0]));
         }
+        ensurePlayerHasTool(p);
     }
 
     private void clearInventoryForWorld(Player p, String worldName) {
@@ -10678,9 +10996,11 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         );
         if (networkModerationService != null) {
             networkModerationService.addWarning(warning);
+            invalidateModerationAggregateCaches();
             return;
         }
         addLocalWarning(warning);
+        invalidateModerationAggregateCaches();
     }
 
     public List<NetworkWarning> getWarnings(UUID uuid) {
@@ -10688,7 +11008,29 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
     }
 
     public Map<UUID, List<NetworkWarning>> getAllWarnings() {
-        return networkModerationService != null ? networkModerationService.getAllWarnings() : getAllLocalWarnings();
+        long now = System.currentTimeMillis();
+        CachedWarningsSnapshot cachedSnapshot = warningsSnapshotCache;
+        if (cachedSnapshot != null && cachedSnapshot.expiresAt() > now) {
+            return copyWarningsSnapshot(cachedSnapshot.warnings());
+        }
+
+        Map<UUID, List<NetworkWarning>> warnings = networkModerationService != null ? networkModerationService.getAllWarnings() : getAllLocalWarnings();
+        Map<UUID, List<NetworkWarning>> snapshot = copyWarningsSnapshot(warnings);
+        warningsSnapshotCache = new CachedWarningsSnapshot(snapshot, now + MODERATION_AGGREGATE_CACHE_TTL_MS);
+        return copyWarningsSnapshot(snapshot);
+    }
+
+    private void invalidateModerationAggregateCaches() {
+        warningsSnapshotCache = null;
+        activePunishmentRecordsSnapshotCache = null;
+    }
+
+    private Map<UUID, List<NetworkWarning>> copyWarningsSnapshot(Map<UUID, List<NetworkWarning>> warnings) {
+        Map<UUID, List<NetworkWarning>> copy = new HashMap<>();
+        for (Map.Entry<UUID, List<NetworkWarning>> entry : warnings.entrySet()) {
+            copy.put(entry.getKey(), entry.getValue() == null ? List.of() : new ArrayList<>(entry.getValue()));
+        }
+        return copy;
     }
 
     public int getWarningCount(UUID uuid) {
@@ -10959,6 +11301,30 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         return getClaimList(uuid);
     }
 
+    private List<String> getClaimedChunks(UUID uuid, String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return getClaimedChunks(uuid);
+        }
+
+        String prefix = worldName + ":";
+        return getClaimList(uuid).stream()
+            .filter(chunkKey -> chunkKey != null && chunkKey.startsWith(prefix))
+            .toList();
+    }
+
+    private String getChunkWorldName(String chunkKey) {
+        if (chunkKey == null || chunkKey.isBlank()) {
+            return "";
+        }
+
+        int separatorIndex = chunkKey.indexOf(':');
+        if (separatorIndex <= 0) {
+            return "";
+        }
+
+        return chunkKey.substring(0, separatorIndex);
+    }
+
     private void claimChunk(UUID uuid, String chunkKey) {
         UUID owner = getChunkOwner(chunkKey);
         if (owner != null) {
@@ -10986,55 +11352,28 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         String worldName = parts[0];
         int targetX = Integer.parseInt(parts[1]);
         int targetZ = Integer.parseInt(parts[2]);
-        FileConfiguration claimsCfg = getClaimsConfig();
+        for (Map.Entry<String, UUID> entry : getClaimOwnerIndex().entrySet()) {
+            String[] cParts = entry.getKey().split(":");
+            if (cParts.length != 3) continue;
+            if (!worldName.equals(cParts[0])) continue;
 
-        for (String key : claimsCfg.getKeys(true)) {
-            if (key.contains("claims") && key.contains("claimed")) {
-                String ownerId = key.split("\\.")[1];
-                List<String> chunks = claimsCfg.getStringList(key);
-                for (String c : chunks) {
-                    String[] cParts = c.split(":");
-                    if (cParts.length != 3) continue;
-                    if (!worldName.equals(cParts[0])) continue;
-                    int chunkX = Integer.parseInt(cParts[1]);
-                    int chunkZ = Integer.parseInt(cParts[2]);
-                    int dx = Math.abs(chunkX - targetX);
-                    int dz = Math.abs(chunkZ - targetZ);
-                    if (dx <= radius && dz <= radius) {
-                        if (chunkX == targetX && chunkZ == targetZ) continue;
-                        try {
-                            return UUID.fromString(ownerId);
-                        } catch (IllegalArgumentException ignored) {
-                        }
-                    }
-                }
+            int chunkX;
+            int chunkZ;
+            try {
+                chunkX = Integer.parseInt(cParts[1]);
+                chunkZ = Integer.parseInt(cParts[2]);
+            } catch (NumberFormatException ignored) {
+                continue;
+            }
+
+            int dx = Math.abs(chunkX - targetX);
+            int dz = Math.abs(chunkZ - targetZ);
+            if (dx <= radius && dz <= radius) {
+                if (chunkX == targetX && chunkZ == targetZ) continue;
+                return entry.getValue();
             }
         }
 
-        if (claimsCfg != dataConfig) {
-            for (String key : dataConfig.getKeys(true)) {
-                if (key.contains("claims") && key.contains("claimed")) {
-                    String ownerId = key.split("\\.")[1];
-                    List<String> chunks = dataConfig.getStringList(key);
-                    for (String c : chunks) {
-                        String[] cParts = c.split(":");
-                        if (cParts.length != 3) continue;
-                        if (!worldName.equals(cParts[0])) continue;
-                        int chunkX = Integer.parseInt(cParts[1]);
-                        int chunkZ = Integer.parseInt(cParts[2]);
-                        int dx = Math.abs(chunkX - targetX);
-                        int dz = Math.abs(chunkZ - targetZ);
-                        if (dx <= radius && dz <= radius) {
-                            if (chunkX == targetX && chunkZ == targetZ) continue;
-                            try {
-                                return UUID.fromString(ownerId);
-                            } catch (IllegalArgumentException ignored) {
-                            }
-                        }
-                    }
-                }
-            }
-        }
         return null;
     }
 
@@ -11049,75 +11388,26 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         setClaimList(uuid, claimed);
     }
 
-    private void trustPlayer(UUID owner, String trustedName) {
-        List<String> trusted = getTrustedList(owner);
+    private void trustPlayer(UUID owner, String worldName, String trustedName) {
+        List<String> trusted = new ArrayList<>(getTrustedList(owner, worldName));
         if (!trusted.contains(trustedName)) {
             trusted.add(trustedName);
-            setTrustedList(owner, trusted);
+            setTrustedList(owner, worldName, trusted);
         }
     }
 
-    private void untrustPlayer(UUID owner, String trustedName) {
-        List<String> trusted = getTrustedList(owner);
+    private void untrustPlayer(UUID owner, String worldName, String trustedName) {
+        List<String> trusted = new ArrayList<>(getTrustedList(owner, worldName));
         trusted.remove(trustedName);
-        setTrustedList(owner, trusted);
+        setTrustedList(owner, worldName, trusted);
     }
 
     private boolean isChunkClaimed(String chunkKey) {
-        FileConfiguration config = getClaimsConfig();
-        for (String key : config.getKeys(true)) {
-            if (key.contains("claims") && key.contains("claimed")) {
-                List<String> chunks = config.getStringList(key);
-                if (chunks.contains(chunkKey)) return true;
-            }
-        }
-        // fallback to old data where claims are still in dataConfig
-        if (config != dataConfig) {
-            for (String key : dataConfig.getKeys(true)) {
-                if (key.contains("claims") && key.contains("claimed")) {
-                    List<String> chunks = dataConfig.getStringList(key);
-                    if (chunks.contains(chunkKey)) return true;
-                }
-            }
-        }
-        return false;
+        return getClaimOwnerIndex().containsKey(chunkKey);
     }
 
     private UUID getChunkOwner(String chunkKey) {
-        FileConfiguration config = getClaimsConfig();
-        for (String key : config.getKeys(true)) {
-            if (key.contains("claims") && key.contains("claimed")) {
-                List<String> chunks = config.getStringList(key);
-                if (chunks.contains(chunkKey)) {
-                    String[] parts = key.split("\\.");
-                    if (parts.length > 1) {
-                        try {
-                            return UUID.fromString(parts[1]);
-                        } catch (IllegalArgumentException e) {
-                            return null;
-                        }
-                    }
-                }
-            }
-        }
-        if (config != dataConfig) {
-            for (String key : dataConfig.getKeys(true)) {
-                if (key.contains("claims") && key.contains("claimed")) {
-                    List<String> chunks = dataConfig.getStringList(key);
-                    if (chunks.contains(chunkKey)) {
-                        String[] parts = key.split("\\.");
-                        if (parts.length > 1) {
-                            try {
-                                return UUID.fromString(parts[1]);
-                            } catch (IllegalArgumentException e) {
-                                return null;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return null;
+        return getClaimOwnerIndex().get(chunkKey);
     }
 
     private boolean isTrustedInChunk(Player p, String chunkKey) {
@@ -11130,7 +11420,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
         if (owner == null) return true;
         if (p.getUniqueId().equals(owner)) return true;
 
-        List<String> trusted = getTrustedList(owner);
+        List<String> trusted = getTrustedList(owner, getChunkWorldName(chunkKey));
         return trusted.contains(p.getName());
     }
 
@@ -11150,9 +11440,14 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
 
     private void startPunishmentChecker() {
         Bukkit.getScheduler().scheduleSyncRepeatingTask(this, () -> {
-            Map<UUID, Long> punishments = networkModerationService != null ? networkModerationService.getPunishmentExpiries() : getAllLocalPunishments();
-            for (Map.Entry<UUID, Long> entry : punishments.entrySet()) {
-                if (System.currentTimeMillis() > entry.getValue()) {
+            if (activePunishmentExpiries.isEmpty()) {
+                return;
+            }
+
+            long now = System.currentTimeMillis();
+            for (Map.Entry<UUID, Long> entry : new HashMap<>(activePunishmentExpiries).entrySet()) {
+                Long expiry = entry.getValue();
+                if (expiry == null || now > expiry) {
                     removePunishment(entry.getKey());
                 }
             }

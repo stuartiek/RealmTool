@@ -46,7 +46,15 @@ public class WebServer {
     private final Map<WsContext, String> liveSessions = new ConcurrentHashMap<>();
     private final Map<WsContext, Map<String, String>> liveSessionSignatures = new ConcurrentHashMap<>();
     private final Map<String, String> userSessions = new HashMap<>();
+    private final Map<String, CachedExportRows> exportRowsCache = new ConcurrentHashMap<>();
     private BukkitTask liveBroadcastTask;
+    private BukkitTask playerExportSnapshotTask;
+    private volatile CachedExportRows playerExportSnapshot;
+
+    private static final long EXPORT_ROWS_CACHE_TTL_MS = 5000L;
+    private static final long PLAYER_EXPORT_REFRESH_TICKS = 100L;
+
+    private record CachedExportRows(List<LinkedHashMap<String, Object>> rows, long expiresAt) {}
 
     public WebServer(JavaRealmTool plugin) {
         this.plugin = plugin;
@@ -104,6 +112,7 @@ public class WebServer {
                 int bindPort = plugin.getWebPort();
                 app.start(bindHost, bindPort);
                 startLiveBroadcastTask();
+                startPlayerExportSnapshotTask();
                 plugin.getLogger().info("Embedded web server listening on " + bindHost + ":" + bindPort
                     + " (public base URL: " + plugin.getWebPublicBaseUrl() + ")");
             } catch (Exception e) {
@@ -151,7 +160,20 @@ public class WebServer {
     }
 
     private List<LinkedHashMap<String, Object>> buildSheetsExportRows(String dataset) {
-        return switch (dataset) {
+        if ("players".equals(dataset)) {
+            CachedExportRows cachedSnapshot = playerExportSnapshot;
+            if (cachedSnapshot != null) {
+                return copyExportRows(cachedSnapshot.rows());
+            }
+        }
+
+        long now = System.currentTimeMillis();
+        CachedExportRows cachedRows = exportRowsCache.get(dataset);
+        if (cachedRows != null && cachedRows.expiresAt() > now) {
+            return copyExportRows(cachedRows.rows());
+        }
+
+        List<LinkedHashMap<String, Object>> rows = switch (dataset) {
             case "players" -> buildPlayerExportRows();
             case "economy" -> buildEconomyExportRows();
             case "tickets" -> buildTicketExportRows("tickets", false);
@@ -159,12 +181,27 @@ public class WebServer {
             case "staff-hours" -> buildStaffHourExportRows();
             default -> throw new IllegalArgumentException("Unsupported dataset: " + dataset);
         };
+
+        exportRowsCache.put(dataset, new CachedExportRows(copyExportRows(rows), now + EXPORT_ROWS_CACHE_TTL_MS));
+        return rows;
+    }
+
+    private List<LinkedHashMap<String, Object>> copyExportRows(List<LinkedHashMap<String, Object>> rows) {
+        List<LinkedHashMap<String, Object>> copy = new ArrayList<>(rows.size());
+        for (LinkedHashMap<String, Object> row : rows) {
+            copy.add(new LinkedHashMap<>(row));
+        }
+        return copy;
     }
 
     private List<LinkedHashMap<String, Object>> buildPlayerExportRows() {
         List<LinkedHashMap<String, Object>> rows = new ArrayList<>();
         Set<UUID> seen = new HashSet<>();
         Set<String> candidateUuids = new HashSet<>();
+        Set<String> bannedNames = getNameBanLookup();
+        Map<UUID, List<NetworkWarning>> warningsByPlayer = plugin.getAllWarnings();
+        Map<UUID, NetworkPunishment> punishmentsByPlayer = plugin.getActivePunishmentRecords();
+        Map<UUID, Player> onlinePlayers = new HashMap<>();
         var data = plugin.getDataConfig();
         var economy = plugin.getEconomyConfig();
 
@@ -172,12 +209,16 @@ public class WebServer {
         if (lastSeen != null) candidateUuids.addAll(lastSeen.getKeys(false));
         var playtime = data.getConfigurationSection("playtime");
         if (playtime != null) candidateUuids.addAll(playtime.getKeys(false));
-        for (UUID warnedPlayer : plugin.getAllWarnings().keySet()) {
+        for (UUID warnedPlayer : warningsByPlayer.keySet()) {
             candidateUuids.add(warnedPlayer.toString());
+        }
+        for (UUID punishedPlayer : punishmentsByPlayer.keySet()) {
+            candidateUuids.add(punishedPlayer.toString());
         }
         var coins = economy.getConfigurationSection("coins");
         if (coins != null) candidateUuids.addAll(coins.getKeys(false));
         for (Player player : Bukkit.getOnlinePlayers()) {
+            onlinePlayers.put(player.getUniqueId(), player);
             candidateUuids.add(player.getUniqueId().toString());
         }
 
@@ -186,14 +227,15 @@ public class WebServer {
                 UUID uuid = UUID.fromString(uuidStr);
                 if (!seen.add(uuid)) continue;
 
-                org.bukkit.OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(uuid);
-                Player onlinePlayer = Bukkit.getPlayer(uuid);
-                NetworkPlayerProfile profile = resolvePlayerProfile(uuid, onlinePlayer != null && onlinePlayer.isOnline());
+                Player onlinePlayer = onlinePlayers.get(uuid);
+                NetworkPlayerProfile profile = buildLocalSnapshotProfile(uuid);
                 String name = profile.lastSeenName();
-                if (name == null || name.isBlank()) name = data.getString("last_seen_name." + uuidStr, offlinePlayer.getName());
+                if (name == null || name.isBlank()) name = data.getString("last_seen_name." + uuidStr);
+                if (name == null || name.isBlank()) name = Bukkit.getOfflinePlayer(uuid).getName();
                 if (name == null || name.isBlank()) name = uuidStr;
                 String rank = profile.rank();
                 if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
+                NetworkPunishment punishment = punishmentsByPlayer.get(uuid);
 
                 LinkedHashMap<String, Object> row = new LinkedHashMap<>();
                 row.put("uuid", uuidStr);
@@ -204,15 +246,14 @@ public class WebServer {
                 row.put("y", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getY() * 10.0) / 10.0 : "");
                 row.put("z", onlinePlayer != null ? Math.round(onlinePlayer.getLocation().getZ() * 10.0) / 10.0 : "");
                 row.put("playtimeHours", Math.max(0L, Math.round(profile.playtimeHours())));
-                row.put("warnings", plugin.getWarningCount(uuid));
-                row.put("punished", plugin.isPunished(uuid));
-                NetworkPunishment punishment = plugin.getPunishment(uuid);
+                row.put("warnings", warningsByPlayer.getOrDefault(uuid, List.of()).size());
+                row.put("punished", punishment != null);
                 row.put("punishmentReason", punishment != null ? punishment.reason() : "");
                 row.put("punishmentEnd", punishment != null ? punishment.expiresAt() : 0L);
                 row.put("punishedBy", punishment != null ? punishment.actor() : "");
                 row.put("punishedAt", punishment != null ? punishment.createdAt() : 0L);
-                row.put("banned", Bukkit.getBanList(org.bukkit.BanList.Type.NAME).isBanned(name));
-                row.put("coins", plugin.getCoins(uuid));
+                row.put("banned", name != null && bannedNames.contains(name.toLowerCase(Locale.ROOT)));
+                row.put("coins", plugin.getLocalCoins(uuid));
                 row.put("rank", rank != null ? rank : "");
                 rows.add(row);
             } catch (Exception ignored) {
@@ -238,6 +279,31 @@ public class WebServer {
         return refresh
             ? plugin.getNetworkProfileService().refreshProfile(uuid)
             : plugin.getNetworkProfileService().getProfile(uuid);
+    }
+
+    private Set<String> getNameBanLookup() {
+        Set<String> bannedNames = new HashSet<>();
+        for (Object entry : Bukkit.getBanList(org.bukkit.BanList.Type.NAME).getEntries()) {
+            if (entry instanceof org.bukkit.BanEntry<?> banEntry) {
+                Object target = banEntry.getTarget();
+                if (target instanceof String name && !name.isBlank()) {
+                    bannedNames.add(name.toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return bannedNames;
+    }
+
+    private NetworkPlayerProfile buildLocalSnapshotProfile(UUID uuid) {
+        String uuidKey = uuid.toString();
+        return new NetworkPlayerProfile(
+            uuid,
+            plugin.getDataConfig().getString("last_seen_name." + uuidKey, uuidKey),
+            plugin.getPlayerRank(uuid),
+            plugin.getPlayerGroup(uuid),
+            plugin.getDiscordLink(uuid),
+            plugin.getPlaytimeHours(uuid)
+        );
     }
 
     private List<LinkedHashMap<String, Object>> buildEconomyExportRows() {
@@ -478,24 +544,70 @@ public class WebServer {
         liveBroadcastTask = Bukkit.getScheduler().runTaskTimer(plugin, this::broadcastLiveSnapshots, 20L, 20L);
     }
 
+    private void startPlayerExportSnapshotTask() {
+        if (playerExportSnapshotTask != null) {
+            playerExportSnapshotTask.cancel();
+        }
+
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, this::refreshPlayerExportSnapshot);
+        playerExportSnapshotTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
+            plugin,
+            this::refreshPlayerExportSnapshot,
+            PLAYER_EXPORT_REFRESH_TICKS,
+            PLAYER_EXPORT_REFRESH_TICKS
+        );
+    }
+
+    private void refreshPlayerExportSnapshot() {
+        try {
+            Future<List<LinkedHashMap<String, Object>>> future = Bukkit.getScheduler().callSyncMethod(plugin, this::buildPlayerExportRows);
+            List<LinkedHashMap<String, Object>> rows = future.get();
+            CachedExportRows snapshot = new CachedExportRows(copyExportRows(rows), System.currentTimeMillis() + EXPORT_ROWS_CACHE_TTL_MS);
+            playerExportSnapshot = snapshot;
+            exportRowsCache.put("players", snapshot);
+        } catch (Exception exception) {
+            plugin.getLogger().log(java.util.logging.Level.FINE, "Failed to refresh player export snapshot", exception);
+        }
+    }
+
     private void broadcastLiveSnapshots() {
         if (liveSessions.isEmpty()) {
             return;
         }
 
-        Map<String, Object> playersSnapshot = buildPlayersSnapshot();
-        List<Map<String, String>> chatSnapshot = buildChatSnapshot();
-        List<Map<String, Object>> punishmentsSnapshot = buildPunishmentsSnapshot();
-        Map<String, Object> warningsSnapshot = buildWarningsSnapshot();
-        List<Map<String, Object>> ticketsSnapshot = buildTicketsSnapshot(null, null);
-        List<Map<String, String>> mutedSnapshot = buildMutedSnapshot();
+        if (hasLiveSubscribers("webapp.view.players")) {
+            broadcastLiveTopic("players", buildPlayersSnapshot(), "webapp.view.players");
+            broadcastLiveTopic("punishments", buildPunishmentsSnapshot(), "webapp.view.players");
+        }
+        if (hasLiveSubscribers("webapp.view.chat")) {
+            broadcastLiveTopic("chat", buildChatSnapshot(), "webapp.view.chat");
+        }
+        if (hasLiveSubscribers("webapp.view.warnings")) {
+            broadcastLiveTopic("warnings", buildWarningsSnapshot(), "webapp.view.warnings");
+        }
+        if (hasLiveSubscribers("webapp.view.tickets")) {
+            broadcastLiveTopic("tickets", buildTicketsSnapshot(null, null), "webapp.view.tickets");
+        }
+        if (hasLiveSubscribers("webapp.view.mutes")) {
+            broadcastLiveTopic("muted", buildMutedSnapshot(), "webapp.view.mutes");
+        }
+    }
 
-        broadcastLiveTopic("players", playersSnapshot, "webapp.view.players");
-        broadcastLiveTopic("chat", chatSnapshot, "webapp.view.chat");
-        broadcastLiveTopic("punishments", punishmentsSnapshot, "webapp.view.players");
-        broadcastLiveTopic("warnings", warningsSnapshot, "webapp.view.warnings");
-        broadcastLiveTopic("tickets", ticketsSnapshot, "webapp.view.tickets");
-        broadcastLiveTopic("muted", mutedSnapshot, "webapp.view.mutes");
+    private boolean hasLiveSubscribers(String requiredPermission) {
+        for (Map.Entry<WsContext, String> entry : new ArrayList<>(liveSessions.entrySet())) {
+            WsContext session = entry.getKey();
+            if (session == null || session.session == null || !session.session.isOpen()) {
+                liveSessions.remove(session);
+                liveSessionSignatures.remove(session);
+                continue;
+            }
+
+            if (hasPermission(entry.getValue(), requiredPermission)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void broadcastLiveTopic(String topic, Object payload, String requiredPermission) {
@@ -534,8 +646,13 @@ public class WebServer {
     private Map<String, Object> buildPlayersSnapshot() {
         Map<String, Object> res = new HashMap<>();
         List<Map<String, Object>> players = new ArrayList<>();
+        Map<UUID, List<NetworkWarning>> warningsByPlayer = plugin.getAllWarnings();
+        Map<UUID, NetworkPunishment> punishmentsByPlayer = plugin.getActivePunishmentRecords();
         for (Player p : Bukkit.getOnlinePlayers()) {
-            NetworkPlayerProfile profile = resolvePlayerProfile(p.getUniqueId(), true);
+            UUID uuid = p.getUniqueId();
+            NetworkPlayerProfile profile = buildLocalSnapshotProfile(uuid);
+            String rank = profile.rank();
+            if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
             Map<String, Object> m = new HashMap<>();
             m.put("name", p.getName());
             m.put("health", Math.round(p.getHealth()));
@@ -543,13 +660,11 @@ public class WebServer {
             m.put("y", Math.round(p.getLocation().getY() * 10.0) / 10.0);
             m.put("z", Math.round(p.getLocation().getZ() * 10.0) / 10.0);
             m.put("world", p.getWorld().getName());
-            m.put("warnings", plugin.getWarningCount(p.getUniqueId()));
+            m.put("warnings", warningsByPlayer.getOrDefault(uuid, List.of()).size());
             m.put("playtime", Math.max(0L, Math.round(profile.playtimeHours())));
-            m.put("punished", plugin.isPunished(p.getUniqueId()));
-            m.put("coins", plugin.getCoins(p.getUniqueId()));
+            m.put("punished", punishmentsByPlayer.containsKey(uuid));
+            m.put("coins", plugin.getLocalCoins(uuid));
             m.put("discord", profile.discordLink());
-            String rank = profile.rank();
-            if (rank == null || rank.isBlank() || "default".equalsIgnoreCase(rank)) rank = profile.group();
             m.put("rank", rank);
             m.put("rankColor", getRankHexColor(rank));
             m.put("color", getRankHexColor(rank));
@@ -2673,21 +2788,38 @@ public class WebServer {
             final String fMessage = (message != null && !message.isEmpty()) ? message : "Server is under maintenance...";
             final String fStartTime = startTime;
             final String fEndTime = endTime;
+            final long now = System.currentTimeMillis();
+
+            boolean scheduleForFuture = false;
+            if (enabled && fStartTime != null && !fStartTime.isEmpty()) {
+                try {
+                    long startMs = java.time.LocalDateTime.parse(fStartTime)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toInstant()
+                            .toEpochMilli();
+                    scheduleForFuture = startMs > now;
+                } catch (Exception ignored) {
+                    scheduleForFuture = false;
+                }
+            }
+
+            final boolean fScheduleForFuture = scheduleForFuture;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
                 boolean wasEnabled = plugin.getDataConfig().getBoolean("maintenance.enabled", false);
                 boolean changedNow = false;
 
-                // Only manually toggle if no start time is provided
-                if (fStartTime == null || fStartTime.isEmpty()) {
+                if (fScheduleForFuture) {
+                    plugin.getDataConfig().set("maintenance.enabled", false);
+                } else {
                     plugin.getDataConfig().set("maintenance.enabled", enabled);
                     if (enabled && !wasEnabled) changedNow = true;
                     if (!enabled && wasEnabled) changedNow = true;
                 }
 
                 plugin.getDataConfig().set("maintenance.message", fMessage);
-                plugin.getDataConfig().set("maintenance.startTime", fStartTime != null ? fStartTime : "");
-                if (fEndTime != null) plugin.getDataConfig().set("maintenance.endTime", fEndTime);
+                plugin.getDataConfig().set("maintenance.startTime", fScheduleForFuture ? fStartTime : "");
+                plugin.getDataConfig().set("maintenance.endTime", enabled && fEndTime != null ? fEndTime : "");
                 plugin.saveDataFile();
                 plugin.logAction("WebAdmin", enabled ? "enabled" : "disabled", "maintenance mode");
 
@@ -4749,6 +4881,10 @@ public class WebServer {
         if (liveBroadcastTask != null) {
             liveBroadcastTask.cancel();
             liveBroadcastTask = null;
+        }
+        if (playerExportSnapshotTask != null) {
+            playerExportSnapshotTask.cancel();
+            playerExportSnapshotTask = null;
         }
         for (WsContext session : new ArrayList<>(liveSessions.keySet())) {
             try { session.session.close(); } catch (Exception ignored) {}
