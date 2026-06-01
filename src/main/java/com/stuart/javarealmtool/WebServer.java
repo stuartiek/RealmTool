@@ -2803,7 +2803,21 @@ public class WebServer {
                 }
             }
 
+            boolean keepEndTime = false;
+            if (enabled && fEndTime != null && !fEndTime.isEmpty()) {
+                try {
+                    long endMs = java.time.LocalDateTime.parse(fEndTime)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toInstant()
+                            .toEpochMilli();
+                    keepEndTime = endMs > now;
+                } catch (Exception ignored) {
+                    keepEndTime = false;
+                }
+            }
+
             final boolean fScheduleForFuture = scheduleForFuture;
+            final boolean fKeepEndTime = keepEndTime;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
                 boolean wasEnabled = plugin.getDataConfig().getBoolean("maintenance.enabled", false);
@@ -2819,7 +2833,7 @@ public class WebServer {
 
                 plugin.getDataConfig().set("maintenance.message", fMessage);
                 plugin.getDataConfig().set("maintenance.startTime", fScheduleForFuture ? fStartTime : "");
-                plugin.getDataConfig().set("maintenance.endTime", enabled && fEndTime != null ? fEndTime : "");
+                plugin.getDataConfig().set("maintenance.endTime", fKeepEndTime ? fEndTime : "");
                 plugin.saveDataFile();
                 plugin.logAction("WebAdmin", enabled ? "enabled" : "disabled", "maintenance mode");
 
