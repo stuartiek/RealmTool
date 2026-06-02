@@ -2,6 +2,7 @@ package com.stuart.javarealmtool;
 
 import com.stuart.javarealmtool.commands.BalanceCommand;
 import com.stuart.javarealmtool.commands.FactionCommand;
+import com.stuart.javarealmtool.commands.MaintenanceCommand;
 import com.stuart.javarealmtool.commands.TicketCommand;
 import com.stuart.javarealmtool.services.EconomyService;
 import com.stuart.javarealmtool.services.FactionService;
@@ -417,6 +418,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             TicketCommand ticketCmd = new TicketCommand(this);
             BalanceCommand balanceCmd = new BalanceCommand(this);
             FactionCommand factionCommand = new FactionCommand(factionService);
+            MaintenanceCommand maintenanceCommand = new MaintenanceCommand(this);
 
             registerCommand("dmt", this, this, registeredCommands, missingCommands);
             registerCommand("ticket", ticketCmd, ticketCmd, registeredCommands, missingCommands);
@@ -438,6 +440,7 @@ public class JavaRealmTool extends JavaPlugin implements Listener, TabCompleter 
             registerCommand("balance", balanceCmd, balanceCmd, registeredCommands, missingCommands);
             registerCommand("economy", this, this, registeredCommands, missingCommands);
             registerCommand("discord", this, this, registeredCommands, missingCommands);
+            registerCommand("maintenance", maintenanceCommand, maintenanceCommand, registeredCommands, missingCommands);
             registerCommand("spawn", this, this, registeredCommands, missingCommands);
             registerCommand("factions", this, this, registeredCommands, missingCommands);
             registerCommand("f", factionCommand, factionCommand, registeredCommands, missingCommands);

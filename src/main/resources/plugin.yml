@@ -90,6 +90,9 @@ commands:
   discord:
     description: Link your Discord account
     usage: /discord link <YourDiscordTag>
+  maintenance:
+    description: Toggle server maintenance mode
+    usage: /maintenance <on|off|status> [message]
 permissions:
   dmt.admin:
     description: Allows use of admin tools
